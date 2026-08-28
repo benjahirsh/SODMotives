@@ -15,13 +15,25 @@ namespace SODMotives
         internal static float WeightExponent = 0.6f;   // <1 compresses score gaps so weaker motive types surface
         internal static float SameTypePenalty = 0.4f;  // multiplier applied to a motive type that was just used
         internal static bool StripSignatures = true;   // remove serial-killer calling card/moniker/graffiti on motivated cases
-        internal static float VanillaChance = 0.2f;     // chance to leave a murder as a full vanilla serial-killer case
+        // Deterministic (V2 design): force a vanilla case every Nth handled case so the
+        // classic serial-killer hunt never disappears. 0 (or less) = never force vanilla.
+        // TESTING DEFAULT = 0 so every new sandbox yields a mod case to test.
+        internal static int VanillaCaseEvery = 0;
+        private static int _casesSinceForced = 0;
 
         private static readonly Random _rng = new Random();
 
         // Occasionally leave a case entirely to vanilla, preserving classic
         // serial-killer hunts (signature and all) for variety.
-        internal static bool ShouldLeaveVanilla() => _rng.NextDouble() < VanillaChance;
+        // Call once per handled case. Returns true when this case should be left to
+        // vanilla to honour the "guaranteed vanilla every N" cadence.
+        internal static bool ShouldForceVanilla()
+        {
+            if (VanillaCaseEvery <= 0) return false;   // testing: never force vanilla
+            _casesSinceForced++;
+            if (_casesSinceForced >= VanillaCaseEvery) { _casesSinceForced = 0; return true; }
+            return false;
+        }
 
         // Victims whose case we overrode -> used to strip serial-killer signatures.
         internal static readonly HashSet<int> OverriddenVictimIds = new HashSet<int>();

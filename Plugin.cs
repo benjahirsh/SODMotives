@@ -37,8 +37,8 @@ namespace SODMotives
                 "Weight multiplier for a motive type used in the previous murder (lower = more variety between cases).").Value;
             MurderSelector.StripSignatures = Config.Bind("Flavour", "StripSignatures", true,
                 "Remove serial-killer calling card/moniker/graffiti from motivated cases so they read as personal crimes.").Value;
-            MurderSelector.VanillaChance = Config.Bind("Flavour", "VanillaSerialKillerChance", 0.2f,
-                "Chance (0..1) to leave a murder as a full vanilla serial-killer case (signature and all) instead of a motivated one.").Value;
+            MurderSelector.VanillaCaseEvery = Config.Bind("Flavour", "VanillaCaseEvery", 0,
+                "Force a full vanilla serial-killer case every Nth case (deterministic). 0 = never force vanilla (testing: every case is a mod case). Production suggestion: 3-4.").Value;
             ClueInjector.Enable = Config.Bind("Clues", "InjectClues", true,
                 "Inject deliberately-ambiguous physical notes per motivated case, hinting at motives.").Value;
             ClueInjector.MaxClues = Config.Bind("Clues", "MaxCluesPerCase", 3,
@@ -329,9 +329,9 @@ namespace SODMotives
                     MotivesPlugin.Log.LogInfo($"[SODMotives] override: special case type '{preset.caseType}' (kidnap/sniper) — leaving vanilla, untouched.");
                     return;
                 }
-                if (MurderSelector.ShouldLeaveVanilla())
+                if (MurderSelector.ShouldForceVanilla())
                 {
-                    MotivesPlugin.Log.LogInfo("[SODMotives] override: rolled a VANILLA case this time (serial-killer variety) — leaving it untouched, signature and all.");
+                    MotivesPlugin.Log.LogInfo("[SODMotives] override: forced VANILLA case (every-N cadence) — leaving it untouched, signature and all.");
                     return;
                 }
             }

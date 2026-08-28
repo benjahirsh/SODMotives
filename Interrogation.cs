@@ -110,27 +110,48 @@ namespace SODMotives
                 string name = "someone"; try { name = npc.citizenName; } catch { }
 
                 if (EventStore.Count == 0) AffairSim.SeedForNewGame(); // safety net if OnStartGame was too early
+
+                // What this NPC can tell us about OTHERS (never their own affair).
                 var known = EventStore.KnownBy(npc.humanID);
+                var tellable = new System.Collections.Generic.List<SocialEvent>();
+                if (known != null)
+                    foreach (var e in known)
+                    {
+                        int ai = e.a != null ? e.a.humanID : -1, bi = e.b != null ? e.b.humanID : -1;
+                        if (ai != npc.humanID && bi != npc.humanID) tellable.Add(e);
+                    }
+
                 string text;
-                if (known != null && known.Count > 0)
+                if (tellable.Count > 0)
                 {
-                    // Cycle through what this NPC knows on repeated asks.
                     int c = _askCount.TryGetValue(npc.humanID, out int v) ? v : 0;
                     _askCount[npc.humanID] = c + 1;
-                    var ev = known[c % known.Count];
-                    text = ev.Testimony(c);
+                    text = tellable[c % tellable.Count].Testimony(c);
                 }
-                else
-                {
-                    text = "Can't say I've noticed anything out of the ordinary.";
-                }
+                else text = "Can't say I've noticed anything out of the ordinary.";
 
-                string ansId = "MOD_Motives_Ans_" + (_answerCounter++);
-                InjectMessage(ansId, text);
-                MotivesPlugin.Log.LogInfo($"[SODMotives][interro] {name} (knows {(known != null ? known.Count : 0)}) -> \"{text}\"");
-                npc.speechController.Speak(ansId);
+                MotivesPlugin.Log.LogInfo($"[SODMotives][interro] {name} (tellable {tellable.Count}) -> \"{text}\"");
+                SpeakLine(npc, text);
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] Answer error: {e}"); }
+        }
+
+        // Speak an arbitrary line through an NPC using the reliable direct path:
+        // register the text in the Strings "dds.blocks" table and speak by dictionary+key
+        // (no DDS message wrapper, which rendered unreliably for runtime messages).
+        private static void SpeakLine(Human npc, string text)
+        {
+            try
+            {
+                string blockId = "MOD_Ans_" + (_answerCounter++);
+                var tb = Toolbox.Instance;
+                var block = new DDSSaveClasses.DDSBlockSave();
+                block.name = text; block.id = blockId;
+                tb.allDDSBlocks[blockId] = block;
+                Strings.WriteToDictionary("dds.blocks", blockId, "SODMotives", text);
+                npc.speechController.Speak("dds.blocks", blockId, false);
+            }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] SpeakLine error: {e.Message}"); }
         }
 
         internal static void AddOptionIfMissing(Il2CppOptionList list)

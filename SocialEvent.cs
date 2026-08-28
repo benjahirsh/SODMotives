@@ -27,12 +27,14 @@ namespace SODMotives
             switch (type)
             {
                 case SocialEventType.Affair:
-                    string place = string.IsNullOrEmpty(placeName) ? "" : $" over near {placeName}";
+                    // Phrased as rumour/knowledge, not a specific eyewitness claim, so every
+                    // word stays TRUE and corroboratable against the real relationship graph
+                    // (we don't simulate an actual sighting at a place/time).
                     switch (idx % 3)
                     {
-                        case 0: return $"Between us? I've seen {an} and {bn} getting awfully cosy{place}. Don't think their partners know.";
-                        case 1: return $"You didn't hear it from me, but {an} and {bn} have been sneaking around together{place}.";
-                        default: return $"There's something going on with {an} and {bn}. More than friends, if you catch my meaning.";
+                        case 0: return $"Word is, {an} and {bn} are seeing each other on the sly.";
+                        case 1: return $"You didn't hear it from me, but {an} and {bn} have something going on behind their partners' backs.";
+                        default: return $"There's talk about {an} and {bn}. More than just friends, if you follow me.";
                     }
             }
             return "Nothing comes to mind.";

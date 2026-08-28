@@ -12,7 +12,7 @@ namespace SODMotives
     // It intentionally changes NOTHING in the game yet — this is how we lock the
     // design to reality (call order, whether victim depends on murderer, and the
     // actual range/meaning of Acquaintance.like) before writing the override.
-    [BepInPlugin(Guid, "SOD Motives (Observation)", "0.1.0")]
+    [BepInPlugin(Guid, "SOD Motives", "1.0.0")]
     public class MotivesPlugin : BasePlugin
     {
         public const string Guid = "com.benhirsh.sodmotives";
@@ -57,7 +57,7 @@ namespace SODMotives
         private void Banner()
         {
             Log.LogInfo("========================================================");
-            Log.LogInfo("==  SOD MOTIVES MOD  —  v0.1.0                         ==");
+            Log.LogInfo("==  SOD MOTIVES MOD  —  v1.0.0                        ==");
             Log.LogInfo("==  If you can read this, the mod is LOADED & ACTIVE.  ==");
             Log.LogInfo("==  Murders will be driven by NPC relationships.       ==");
             Log.LogInfo("========================================================");

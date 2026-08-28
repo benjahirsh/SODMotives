@@ -54,6 +54,22 @@ namespace SODMotives
                 try { _preset.responses = new Il2CppSystem.Collections.Generic.List<AIActionPreset.AISpeechPreset>(); } catch { }
 
                 MotivesPlugin.Log.LogInfo("[SODMotives][interro] question preset built + label injected.");
+
+                // Self-test: does our injected DDS message actually parse to text?
+                try
+                {
+                    var cits = CityData.Instance != null ? CityData.Instance.citizenDirectory : null;
+                    if (cits != null && cits.Count > 0)
+                    {
+                        var h = cits[0];
+                        Il2CppSystem.Collections.Generic.List<int> groups;
+                        var lines = h.ParseDDSMessage(QuestionMsgId, null, out groups);
+                        int n = lines != null ? lines.Count : -1;
+                        string first = (lines != null && lines.Count > 0) ? lines[0] : "<none>";
+                        MotivesPlugin.Log.LogInfo($"[SODMotives][interro] DDS self-test: lines={n} first=\"{first}\"");
+                    }
+                }
+                catch (Exception e2) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] self-test error: {e2.Message}"); }
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] init error: {e}"); }
         }
@@ -71,6 +87,12 @@ namespace SODMotives
                 block.id = blockId;
                 tb.allDDSBlocks[blockId] = block;
 
+                // THE KEY FIX: display text lives in the Strings table ("dds.blocks"),
+                // keyed by block id — NOT the JSON name field. Without this the parser
+                // returns the block id and everything renders blank.
+                try { Strings.WriteToDictionary("dds.blocks", blockId, "SODMotives", text); }
+                catch (Exception se) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] WriteToDictionary: {se.Message}"); }
+
                 var cond = new DDSSaveClasses.DDSBlockCondition();
                 cond.blockID = blockId;
                 cond.instanceID = msgId + "_inst";
@@ -83,6 +105,16 @@ namespace SODMotives
                 msg.blocks = new Il2CppSystem.Collections.Generic.List<DDSSaveClasses.DDSBlockCondition>();
                 msg.blocks.Add(cond);
                 tb.allDDSMessages[msgId] = msg;
+
+                // Verify inserts persisted and the text field is what we set.
+                try
+                {
+                    bool hasB = tb.allDDSBlocks.ContainsKey(blockId);
+                    bool hasM = tb.allDDSMessages.ContainsKey(msgId);
+                    string bn = hasB ? tb.allDDSBlocks[blockId].name : "<missing>";
+                    MotivesPlugin.Log.LogInfo($"[SODMotives][interro] inject verify: block={hasB} msg={hasM} blockName=\"{bn}\" blocksCount={tb.allDDSBlocks.Count}");
+                }
+                catch (Exception ev) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] verify err: {ev.Message}"); }
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] InjectMessage('{msgId}') error: {e}"); }
         }
@@ -145,12 +177,14 @@ namespace SODMotives
     [HarmonyPatch(typeof(DialogController), nameof(DialogController.ExecuteDialog))]
     internal static class Patch_ExecuteDialog
     {
-        static bool Prefix(Il2CppDialogOption dialog, Interactable saysTo)
+        static bool Prefix(DialogController __instance, Il2CppDialogOption dialog, Interactable saysTo)
         {
             try
             {
                 if (dialog == null || !Interrogation.IsOurPreset(dialog.preset)) return true; // vanilla
-                Human npc = saysTo != null ? saysTo.TryCast<Human>() : null;
+                Human npc = null;
+                try { if (__instance != null) npc = __instance.askTarget; } catch { }
+                if (npc == null && saysTo != null) { try { var a = saysTo.isActor; if (a != null) npc = a.TryCast<Human>(); } catch { } }
                 Interrogation.Answer(npc);
                 return false; // handled
             }

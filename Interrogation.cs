@@ -102,7 +102,7 @@ namespace SODMotives
         // Compose + speak the answer through the interviewed NPC, from what they KNOW.
         private static readonly System.Collections.Generic.Dictionary<int, int> _askCount = new System.Collections.Generic.Dictionary<int, int>();
 
-        internal static void Answer(Human npc)
+        internal static void Answer(Human npc, Interactable speakingTo, Human.InteractionDialogInstance interactionInstance)
         {
             try
             {
@@ -131,7 +131,7 @@ namespace SODMotives
                 else text = "Can't say I've noticed anything out of the ordinary.";
 
                 MotivesPlugin.Log.LogInfo($"[SODMotives][interro] {name} (tellable {tellable.Count}) -> \"{text}\"");
-                SpeakLine(npc, text);
+                SpeakLine(npc, speakingTo, interactionInstance, text);
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] Answer error: {e}"); }
         }
@@ -139,13 +139,35 @@ namespace SODMotives
         // Speak an arbitrary line through an NPC using the reliable direct path:
         // register the text in the Strings "dds.blocks" table and speak by dictionary+key
         // (no DDS message wrapper, which rendered unreliably for runtime messages).
-        private static void SpeakLine(Human npc, string text)
+        private static void SpeakLine(Human npc, Interactable speakingTo, Human.InteractionDialogInstance interactionInstance, string text)
         {
             try
             {
-                string ansId = "MOD_Motives_Ans_" + (_answerCounter++);
-                InjectMessage(ansId, text);                 // block + message + Strings text
-                npc.speechController.Speak(ansId, false, /*interupt:*/ true);
+                string blockId = "MOD_Motives_Ans_" + (_answerCounter++);
+                var tb = Toolbox.Instance;
+                var block = new DDSSaveClasses.DDSBlockSave();
+                block.name = text; block.id = blockId;
+                tb.allDDSBlocks[blockId] = block;
+                Strings.WriteToDictionary("dds.blocks", blockId, "SODMotives", text);
+
+                // Full overload with the interrogation bindings (speakingTo + interactionInstance)
+                // that route the line to the on-screen subtitle. interupt clears stuck elements.
+                npc.speechController.Speak(
+                    "dds.blocks", blockId,
+                    false,   // useParsing
+                    false,   // shout
+                    true,    // interupt
+                    0f,      // delay
+                    false,   // forceColour
+                    default(Color),
+                    null,    // speakingAbout
+                    false,   // endsDialog
+                    false,   // jobHandIn
+                    null,    // sideJob
+                    _preset, // dialogPreset
+                    null,    // dialog (AISpeechPreset)
+                    speakingTo,
+                    interactionInstance);
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] SpeakLine error: {e.Message}"); }
         }
@@ -184,7 +206,7 @@ namespace SODMotives
     [HarmonyPatch(typeof(DialogController), nameof(DialogController.ExecuteDialog))]
     internal static class Patch_ExecuteDialog
     {
-        static bool Prefix(DialogController __instance, Il2CppDialogOption dialog, Interactable saysTo)
+        static bool Prefix(DialogController __instance, Il2CppDialogOption dialog, Interactable saysTo, Human.InteractionDialogInstance interactionInstance)
         {
             try
             {
@@ -192,7 +214,7 @@ namespace SODMotives
                 Human npc = null;
                 try { if (__instance != null) npc = __instance.askTarget; } catch { }
                 if (npc == null && saysTo != null) { try { var a = saysTo.isActor; if (a != null) npc = a.TryCast<Human>(); } catch { } }
-                Interrogation.Answer(npc);
+                Interrogation.Answer(npc, saysTo, interactionInstance);
                 return false; // handled
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] ExecuteDialog prefix error: {e.Message}"); return true; }

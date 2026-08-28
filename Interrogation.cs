@@ -99,17 +99,35 @@ namespace SODMotives
             try { return p != null && p.msgID == QuestionMsgId; } catch { return false; }
         }
 
-        // Compose + speak the answer through the interviewed NPC.
+        // Compose + speak the answer through the interviewed NPC, from what they KNOW.
+        private static readonly System.Collections.Generic.Dictionary<int, int> _askCount = new System.Collections.Generic.Dictionary<int, int>();
+
         internal static void Answer(Human npc)
         {
             try
             {
                 if (npc == null || npc.speechController == null) { MotivesPlugin.Log.LogInfo("[SODMotives][interro] no npc/speech."); return; }
                 string name = "someone"; try { name = npc.citizenName; } catch { }
-                string text = $"(Motives) I'm {name}. Nothing unusual comes to mind right now.";
+
+                if (EventStore.Count == 0) AffairSim.SeedForNewGame(); // safety net if OnStartGame was too early
+                var known = EventStore.KnownBy(npc.humanID);
+                string text;
+                if (known != null && known.Count > 0)
+                {
+                    // Cycle through what this NPC knows on repeated asks.
+                    int c = _askCount.TryGetValue(npc.humanID, out int v) ? v : 0;
+                    _askCount[npc.humanID] = c + 1;
+                    var ev = known[c % known.Count];
+                    text = ev.Testimony(c);
+                }
+                else
+                {
+                    text = "Can't say I've noticed anything out of the ordinary.";
+                }
+
                 string ansId = "MOD_Motives_Ans_" + (_answerCounter++);
                 InjectMessage(ansId, text);
-                MotivesPlugin.Log.LogInfo($"[SODMotives][interro] {name} answering -> \"{text}\"");
+                MotivesPlugin.Log.LogInfo($"[SODMotives][interro] {name} (knows {(known != null ? known.Count : 0)}) -> \"{text}\"");
                 npc.speechController.Speak(ansId);
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] Answer error: {e}"); }

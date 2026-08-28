@@ -10,7 +10,9 @@ namespace SODMotives
     internal static class AffairSim
     {
         // How many of each participant's acquaintances start out "in the know".
-        internal static int WitnessesPerParticipant = 4;
+        // (Placeholder distribution until real sighting-based witnessing lands; kept
+        // generous for now so interrogation testing is fruitful.)
+        internal static int WitnessesPerParticipant = 10;
 
         internal static void SeedForNewGame()
         {

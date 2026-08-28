@@ -143,13 +143,9 @@ namespace SODMotives
         {
             try
             {
-                string blockId = "MOD_Ans_" + (_answerCounter++);
-                var tb = Toolbox.Instance;
-                var block = new DDSSaveClasses.DDSBlockSave();
-                block.name = text; block.id = blockId;
-                tb.allDDSBlocks[blockId] = block;
-                Strings.WriteToDictionary("dds.blocks", blockId, "SODMotives", text);
-                npc.speechController.Speak("dds.blocks", blockId, false);
+                string ansId = "MOD_Motives_Ans_" + (_answerCounter++);
+                InjectMessage(ansId, text);                 // block + message + Strings text
+                npc.speechController.Speak(ansId, false, /*interupt:*/ true);
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] SpeakLine error: {e.Message}"); }
         }

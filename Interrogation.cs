@@ -53,23 +53,7 @@ namespace SODMotives
                 _preset.followingSyntax = "";
                 try { _preset.responses = new Il2CppSystem.Collections.Generic.List<AIActionPreset.AISpeechPreset>(); } catch { }
 
-                MotivesPlugin.Log.LogInfo("[SODMotives][interro] question preset built + label injected.");
-
-                // Self-test: does our injected DDS message actually parse to text?
-                try
-                {
-                    var cits = CityData.Instance != null ? CityData.Instance.citizenDirectory : null;
-                    if (cits != null && cits.Count > 0)
-                    {
-                        var h = cits[0];
-                        Il2CppSystem.Collections.Generic.List<int> groups;
-                        var lines = h.ParseDDSMessage(QuestionMsgId, null, out groups);
-                        int n = lines != null ? lines.Count : -1;
-                        string first = (lines != null && lines.Count > 0) ? lines[0] : "<none>";
-                        MotivesPlugin.Log.LogInfo($"[SODMotives][interro] DDS self-test: lines={n} first=\"{first}\"");
-                    }
-                }
-                catch (Exception e2) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] self-test error: {e2.Message}"); }
+                MotivesPlugin.Log.LogInfo("[SODMotives][interro] question ready.");
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] init error: {e}"); }
         }
@@ -106,15 +90,6 @@ namespace SODMotives
                 msg.blocks.Add(cond);
                 tb.allDDSMessages[msgId] = msg;
 
-                // Verify inserts persisted and the text field is what we set.
-                try
-                {
-                    bool hasB = tb.allDDSBlocks.ContainsKey(blockId);
-                    bool hasM = tb.allDDSMessages.ContainsKey(msgId);
-                    string bn = hasB ? tb.allDDSBlocks[blockId].name : "<missing>";
-                    MotivesPlugin.Log.LogInfo($"[SODMotives][interro] inject verify: block={hasB} msg={hasM} blockName=\"{bn}\" blocksCount={tb.allDDSBlocks.Count}");
-                }
-                catch (Exception ev) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] verify err: {ev.Message}"); }
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] InjectMessage('{msgId}') error: {e}"); }
         }
@@ -167,11 +142,8 @@ namespace SODMotives
         static void Postfix(Il2CppOptionList __result) => Interrogation.AddOptionIfMissing(__result);
     }
 
-    [HarmonyPatch(typeof(EvidenceWitness), nameof(EvidenceWitness.GetDialogOptions), new Type[] { typeof(Il2CppSystem.Collections.Generic.List<Evidence.DataKey>) })]
-    internal static class Patch_GetDialogOptions_Multi
-    {
-        static void Postfix(Il2CppOptionList __result) => Interrogation.AddOptionIfMissing(__result);
-    }
+    // NOTE: only the single-DataKey overload is patched; the List overload calls it
+    // internally, so patching both produced duplicate menu entries.
 
     // Answer our question ourselves (skip vanilla handling for it).
     [HarmonyPatch(typeof(DialogController), nameof(DialogController.ExecuteDialog))]

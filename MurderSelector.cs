@@ -35,6 +35,67 @@ namespace SODMotives
             return false;
         }
 
+        // V2: pick a murder motivated by a REAL, gossiped affair — a betrayed partner
+        // kills the cheater or the lover. So the affair NPCs are gossiping about IS the
+        // motive, and the murder is solvable by interrogation. Populates the same
+        // bookkeeping as TryPick so clue injection / signature stripping still work.
+        internal static bool TryPickFromAffairs(out Human murderer, out Human victim, out SocialEvent affair)
+        {
+            murderer = null; victim = null; affair = null;
+            var all = EventStore.All;
+            if (all == null || all.Count == 0) return false;
+
+            var kCand = new List<Human>();
+            var vCand = new List<Human>();
+            var eCand = new List<SocialEvent>();
+            var enemyCount = new Dictionary<int, int>();
+
+            void AddCand(Human k, Human v, SocialEvent e)
+            {
+                if (!IsValidActor(k) || !IsValidActor(v) || Motive.Same(k, v)) return;
+                kCand.Add(k); vCand.Add(v); eCand.Add(e);
+                enemyCount[v.humanID] = enemyCount.TryGetValue(v.humanID, out int c) ? c + 1 : 1;
+            }
+
+            for (int i = 0; i < all.Count; i++)
+            {
+                var e = all[i];
+                if (e == null || e.type != SocialEventType.Affair) continue;
+                Human a = e.a, b = e.b;
+                Human pa = null, pb = null;
+                try { pa = a != null ? a.partner : null; } catch { }
+                try { pb = b != null ? b.partner : null; } catch { }
+                if (pa != null) { AddCand(pa, a, e); AddCand(pa, b, e); } // betrayed kills cheater OR lover
+                if (pb != null) { AddCand(pb, b, e); AddCand(pb, a, e); }
+            }
+
+            if (kCand.Count == 0) return false;
+
+            // Weight toward victims with several motivated enemies (natural red herrings).
+            double total = 0; var w = new double[kCand.Count];
+            for (int i = 0; i < kCand.Count; i++)
+            {
+                int ec = enemyCount[vCand[i].humanID];
+                w[i] = 1.0 + RedHerringBonusPer * (ec - 1);
+                total += w[i];
+            }
+            double roll = _rng.NextDouble() * total, acc = 0; int idx = 0;
+            for (int i = 0; i < kCand.Count; i++) { acc += w[i]; if (roll <= acc) { idx = i; break; } }
+
+            murderer = kCand[idx]; victim = vCand[idx]; affair = eCand[idx];
+
+            OverriddenVictimIds.Add(victim.humanID);
+            MotiveByVictim[victim.humanID] = new MotiveResult
+            {
+                type = MotiveType.Infidelity,
+                target = victim,
+                score = 120f,
+                detail = $"an affair between {SocialEvent.SafeName(affair.a)} and {SocialEvent.SafeName(affair.b)}",
+            };
+            EventStore.MarkKnown(affair, murderer.humanID); // the killer (betrayed) knows — assume-known
+            return true;
+        }
+
         // Victims whose case we overrode -> used to strip serial-killer signatures.
         internal static readonly HashSet<int> OverriddenVictimIds = new HashSet<int>();
         // Motive chosen per victim -> used by the clue injector to pick clue text.

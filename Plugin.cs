@@ -338,18 +338,28 @@ namespace SODMotives
             catch { }
             try
             {
-                if (MurderSelector.TryPick(out Human m, out Human v, out MotiveResult mot))
+                Human m, v;
+                // V2 FIRST: a murder driven by a REAL gossiped affair (betrayed partner kills
+                // cheater/lover) — so interrogating NPCs about the affair actually solves it.
+                if (MurderSelector.TryPickFromAffairs(out m, out v, out SocialEvent affair))
                 {
-                    MotivesPlugin.Log.LogInfo("[SODMotives] ****************** MOTIVE OVERRIDE ******************");
+                    MotivesPlugin.Log.LogInfo("[SODMotives] ************ AFFAIR MURDER (V2) ************");
                     MotivesPlugin.Log.LogInfo($"[SODMotives]   vanilla would have been: {MotivesPlugin.Name(newMurderer)} -> {MotivesPlugin.Name(newVictim)}");
-                    MotivesPlugin.Log.LogInfo($"[SODMotives]   MOTIVATED PICK:          {MotivesPlugin.Name(m)} -> {MotivesPlugin.Name(v)}");
-                    MotivesPlugin.Log.LogInfo($"[SODMotives]   MOTIVE: [{mot.type}] {mot.detail}  (score {MotivesPlugin.F(mot.score)})");
-                    MotivesPlugin.Log.LogInfo("[SODMotives] ****************************************************");
-                    newMurderer = m;
-                    newVictim = v;
-                    victimSite = null; // force the game to recompute the site for the new victim
-                    __instance.currentMurderer = m;
-                    __instance.currentVictim = v;
+                    MotivesPlugin.Log.LogInfo($"[SODMotives]   {MotivesPlugin.Name(m)} (betrayed) kills {MotivesPlugin.Name(v)}");
+                    MotivesPlugin.Log.LogInfo($"[SODMotives]   over the affair between {MotivesPlugin.Name(affair.a)} and {MotivesPlugin.Name(affair.b)}");
+                    MotivesPlugin.Log.LogInfo("[SODMotives] *******************************************");
+                    newMurderer = m; newVictim = v; victimSite = null;
+                    __instance.currentMurderer = m; __instance.currentVictim = v;
+                }
+                // V1 FALLBACK: like-based scorer (professional/money/feud/other) until those
+                // become real event types too.
+                else if (MurderSelector.TryPick(out m, out v, out MotiveResult mot))
+                {
+                    MotivesPlugin.Log.LogInfo("[SODMotives] ****************** MOTIVE OVERRIDE (V1 fallback) ******************");
+                    MotivesPlugin.Log.LogInfo($"[SODMotives]   {MotivesPlugin.Name(m)} -> {MotivesPlugin.Name(v)}  [{mot.type}] {mot.detail} (score {MotivesPlugin.F(mot.score)})");
+                    MotivesPlugin.Log.LogInfo("[SODMotives] *****************************************************************");
+                    newMurderer = m; newVictim = v; victimSite = null;
+                    __instance.currentMurderer = m; __instance.currentVictim = v;
                 }
                 else
                 {

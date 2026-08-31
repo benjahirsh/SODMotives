@@ -49,12 +49,25 @@ namespace SODMotives
             var vCand = new List<Human>();
             var eCand = new List<SocialEvent>();
             var enemyCount = new Dictionary<int, int>();
+            var seenPair = new HashSet<long>();
 
             void AddCand(Human k, Human v, SocialEvent e)
             {
                 if (!IsValidActor(k) || !IsValidActor(v) || Motive.Same(k, v)) return;
+                long pk = ((long)k.humanID << 32) | (uint)v.humanID;
+                if (!seenPair.Add(pk)) return;   // dedupe pairs shared across triangles
                 kCand.Add(k); vCand.Add(v); eCand.Add(e);
                 enemyCount[v.humanID] = enemyCount.TryGetValue(v.humanID, out int c) ? c + 1 : 1;
+            }
+
+            // Any member of a love triangle can kill any other; the affair is the shared
+            // motive (betrayed spouse, the cheater, or the lover — 6 directed pairings).
+            void AddTriangle(SocialEvent e, Human x, Human y, Human z)
+            {
+                var m = new[] { x, y, z };
+                for (int i = 0; i < m.Length; i++)
+                    for (int j = 0; j < m.Length; j++)
+                        if (i != j) AddCand(m[i], m[j], e);
             }
 
             for (int i = 0; i < all.Count; i++)
@@ -65,8 +78,9 @@ namespace SODMotives
                 Human pa = null, pb = null;
                 try { pa = a != null ? a.partner : null; } catch { }
                 try { pb = b != null ? b.partner : null; } catch { }
-                if (pa != null) { AddCand(pa, a, e); AddCand(pa, b, e); } // betrayed kills cheater OR lover
-                if (pb != null) { AddCand(pb, b, e); AddCand(pb, a, e); }
+                if (pa != null) AddTriangle(e, pa, a, b);   // {betrayed, cheater, lover}
+                if (pb != null) AddTriangle(e, pb, b, a);   // the lover's own triangle
+                if (pa == null && pb == null) { AddCand(a, b, e); AddCand(b, a, e); } // volatile lovers
             }
 
             if (kCand.Count == 0) return false;

@@ -78,12 +78,24 @@ namespace SODMotives
             {
                 var tb = Toolbox.Instance;
                 string blockId = msgId + "_blk";
-                var block = new DDSSaveClasses.DDSBlockSave { name = text, id = blockId };
+
+                // Explicit field assignments — object initializers on Il2CppInterop types
+                // don't reliably set fields, which left condition.blockID empty -> blank label.
+                var block = new DDSSaveClasses.DDSBlockSave();
+                block.name = text;
+                block.id = blockId;
                 tb.allDDSBlocks[blockId] = block;
                 Strings.WriteToDictionary("dds.blocks", blockId, "SODMotives", text);
 
-                var cond = new DDSSaveClasses.DDSBlockCondition { blockID = blockId, instanceID = msgId + "_inst", alwaysDisplay = true, group = 0 };
-                var msg = new DDSSaveClasses.DDSMessageSave { name = msgId, id = msgId };
+                var cond = new DDSSaveClasses.DDSBlockCondition();
+                cond.blockID = blockId;
+                cond.instanceID = msgId + "_inst";
+                cond.alwaysDisplay = true;
+                cond.group = 0;
+
+                var msg = new DDSSaveClasses.DDSMessageSave();
+                msg.name = msgId;
+                msg.id = msgId;
                 msg.blocks = new Il2CppSystem.Collections.Generic.List<DDSSaveClasses.DDSBlockCondition>();
                 msg.blocks.Add(cond);
                 tb.allDDSMessages[msgId] = msg;
@@ -225,7 +237,8 @@ namespace SODMotives
             {
                 string blockId = "MOD_Motives_Ans_" + (_answerCounter++);
                 var tb = Toolbox.Instance;
-                var block = new DDSSaveClasses.DDSBlockSave { name = text, id = blockId };
+                var block = new DDSSaveClasses.DDSBlockSave();
+                block.name = text; block.id = blockId;
                 tb.allDDSBlocks[blockId] = block;
                 Strings.WriteToDictionary("dds.blocks", blockId, "SODMotives", text);
 

@@ -6,27 +6,58 @@ using Il2CppInterop.Runtime;
 
 namespace SODMotives
 {
-    // V2 interrogation, piggybacking the NATIVE "Do you know this person?" flow:
-    //   - the player picks any citizen X in the vanilla photo picker
-    //   - we capture X, and after the vanilla answer we ADD what this NPC knows about X
-    //     (their affairs), spoken through the NPC.
-    // No custom dialog option, no menu injection — the game already provides the UI.
+    // V2 interrogation, piggybacking the NATIVE "Do you know this person?" flow.
+    //
+    // Two-hook "arm then fire" model (the old single-hook version replayed a stale pick
+    // and fired even on a reject-without-bribe):
+    //   1) The player clicks "Do you know this person?" -> DialogController.DoYouKnowThisPerson
+    //      (+Bribe1/2/3) runs at DECISION time with a success flag but NO picked citizen.
+    //      We ARM here, and ONLY when accepted (success==true), recording which NPC is
+    //      talking. We never speak here — there is no pick yet.
+    //   2) The photo picker opens; the player clicks a face -> PhotoSelectButtonController
+    //      .OnLeftClick carries the chosen citizen. If armed, we speak what THIS npc knows
+    //      about the FRESHLY-picked person, then disarm (one-shot).
+    // Guarantees: fresh pick, accepted-only, and appended AFTER the vanilla answer.
     internal static class Interrogation
     {
         internal static bool Enable = true;
-        internal static Human LastPicked;   // set by the photo-picker prefix
 
+        // Pending "knowName was accepted" context, consumed by the next photo pick.
+        private static bool _armed;
+        private static Citizen _npc;
+        private static Interactable _speakingTo;
         private static int _answerCounter;
 
-        // Called from the DoYouKnowThisPerson postfix(es).
-        internal static void OnAskedAboutPerson(Citizen npc, Interactable speakingTo, bool success)
+        // Postfix target for DoYouKnowThisPerson(+Bribe1/2/3): ARM ONLY, never speak.
+        internal static void ArmForPick(Citizen npc, Interactable speakingTo, bool success)
         {
             if (!Enable) return;
             try
             {
-                if (npc == null || npc.speechController == null) return;
-                Human subject = LastPicked;
-                if (subject == null) return;
+                if (success && npc != null)
+                {
+                    _armed = true; _npc = npc; _speakingTo = speakingTo;
+                    MotivesPlugin.Log.LogInfo($"[SODMotives][interro] armed — {Name(npc)} accepted 'do you know this person?'");
+                }
+                else
+                {
+                    // Reject (needs a bribe / refused): clear so the next pick can't replay us.
+                    _armed = false; _npc = null; _speakingTo = null;
+                }
+            }
+            catch { _armed = false; _npc = null; _speakingTo = null; }
+        }
+
+        // Postfix target for PhotoSelectButtonController.OnLeftClick: fire once on the fresh pick.
+        internal static void OnPicked(Human subject)
+        {
+            if (!Enable || !_armed) return;
+            Citizen npc = _npc; Interactable speakingTo = _speakingTo;
+            _armed = false; _npc = null; _speakingTo = null;   // one-shot: never double-fire/replay
+
+            try
+            {
+                if (npc == null || subject == null || npc.speechController == null) return;
                 if (EventStore.Count == 0) AffairSim.SeedForNewGame();
 
                 string text = ComposeAbout(npc, subject);
@@ -38,7 +69,7 @@ namespace SODMotives
                 MotivesPlugin.Log.LogInfo($"[SODMotives][interro] {Name(npc)} asked about {Name(subject)} -> \"{text}\"");
                 SpeakLine(npc, speakingTo, inter, subject, text);
             }
-            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] OnAsked error: {e.Message}"); }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] OnPicked error: {e.Message}"); }
         }
 
         // What this NPC can add about the picked person (never their own affair).
@@ -100,42 +131,43 @@ namespace SODMotives
         }
     }
 
-    // Capture the picked citizen the moment a photo button is clicked.
+    // Fire the gossip on the FRESH photo pick — runs AFTER the vanilla answer, and only
+    // when a "do you know this person?" was armed (accepted) just before.
     [HarmonyPatch(typeof(PhotoSelectButtonController), nameof(PhotoSelectButtonController.OnLeftClick))]
     internal static class Patch_PhotoPick
     {
-        static void Prefix(PhotoSelectButtonController __instance)
+        static void Postfix(PhotoSelectButtonController __instance)
         {
-            try { Interrogation.LastPicked = __instance.citizen; } catch { }
+            try { Interrogation.OnPicked(__instance.citizen); } catch { }
         }
     }
 
-    // After the native "Do you know this person?" answer, add our knowledge about the pick.
+    // Arm on the "Do you know this person?" decision (accept only). No speech here.
     [HarmonyPatch(typeof(DialogController), nameof(DialogController.DoYouKnowThisPerson))]
     internal static class Patch_DoYouKnow
     {
         static void Postfix(Citizen saysTo, Interactable saysToInteractable, bool success)
-            => Interrogation.OnAskedAboutPerson(saysTo, saysToInteractable, success);
+            => Interrogation.ArmForPick(saysTo, saysToInteractable, success);
     }
 
     [HarmonyPatch(typeof(DialogController), nameof(DialogController.DoYouKnowThisPersonBribe1))]
     internal static class Patch_DoYouKnowB1
     {
         static void Postfix(Citizen saysTo, Interactable saysToInteractable, bool success)
-            => Interrogation.OnAskedAboutPerson(saysTo, saysToInteractable, success);
+            => Interrogation.ArmForPick(saysTo, saysToInteractable, success);
     }
 
     [HarmonyPatch(typeof(DialogController), nameof(DialogController.DoYouKnowThisPersonBribe2))]
     internal static class Patch_DoYouKnowB2
     {
         static void Postfix(Citizen saysTo, Interactable saysToInteractable, bool success)
-            => Interrogation.OnAskedAboutPerson(saysTo, saysToInteractable, success);
+            => Interrogation.ArmForPick(saysTo, saysToInteractable, success);
     }
 
     [HarmonyPatch(typeof(DialogController), nameof(DialogController.DoYouKnowThisPersonBribe3))]
     internal static class Patch_DoYouKnowB3
     {
         static void Postfix(Citizen saysTo, Interactable saysToInteractable, bool success)
-            => Interrogation.OnAskedAboutPerson(saysTo, saysToInteractable, success);
+            => Interrogation.ArmForPick(saysTo, saysToInteractable, success);
     }
 }

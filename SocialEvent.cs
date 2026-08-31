@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using UnityEngine;
 
 namespace SODMotives
 {
@@ -46,26 +47,83 @@ namespace SODMotives
             try { return h.citizenName; } catch { return "someone"; }
         }
 
-        // Testing aid: up to `max` names of NPCs (excluding the participants) who know
-        // this event — i.e. people the player can interview to uncover it.
-        internal string KnowerSample(int max)
+        // Testing aid: the `max` NPCs (excluding the participants) who know this event whose
+        // HOME is nearest the given scene position — so the player can teleport to the scene
+        // and interview the neighbours/coworkers standing closest. Formatted "Name — Address
+        // (bldg B/floor F) — Dm", nearest first. One directory scan; call once per case, not per frame.
+        internal List<string> NearestKnowers(Vector3 scenePos, int max)
         {
-            var names = new List<string>();
+            var scored = new List<(float d, string line)>();
             try
             {
                 var dir = CityData.Instance != null ? CityData.Instance.citizenDirectory : null;
                 if (dir != null)
-                    for (int i = 0; i < dir.Count && names.Count < max; i++)
+                    for (int i = 0; i < dir.Count; i++)
                     {
                         var h = dir[i];
                         if (h == null) continue;
                         int id = h.humanID;
                         if ((a != null && a.humanID == id) || (b != null && b.humanID == id)) continue;
-                        if (knownBy.Contains(id)) names.Add(SafeName(h));
+                        if (!knownBy.Contains(id)) continue;
+
+                        NewAddress home = null; try { home = h.home; } catch { }
+                        if (home == null) continue;
+
+                        float dist = float.MaxValue; bool hasPos = false;
+                        try { var an = home.anchorNode; if (an != null) { dist = Dist(scenePos, an.position); hasPos = true; } }
+                        catch { }
+
+                        string addr = SafeLocName(home);
+                        int floor = 0; try { if (home.floor != null) floor = home.floor.floor; } catch { }
+                        int bld = -1; try { if (home.building != null) bld = home.building.buildingID; } catch { }
+                        string dtxt = hasPos ? $"{dist:0}m" : "?m";
+                        scored.Add((dist, $"{SafeName(h)} — {addr} (bldg {bld}/floor {floor}) — {dtxt}"));
                     }
             }
             catch { }
-            return names.Count == 0 ? "(nobody else knows)" : string.Join(", ", names);
+            scored.Sort((x, y) => x.d.CompareTo(y.d));
+            var outList = new List<string>();
+            for (int i = 0; i < scored.Count && i < max; i++) outList.Add(scored[i].line);
+            if (outList.Count == 0) outList.Add("(nobody else knows)");
+            return outList;
+        }
+
+        // The single knower (excluding participants) whose home is nearest the scene — for
+        // a "teleport to the closest gossip" testing hotkey.
+        internal Human NearestKnowerHuman(Vector3 scenePos)
+        {
+            Human best = null; float bestD = float.MaxValue;
+            try
+            {
+                var dir = CityData.Instance != null ? CityData.Instance.citizenDirectory : null;
+                if (dir != null)
+                    for (int i = 0; i < dir.Count; i++)
+                    {
+                        var h = dir[i];
+                        if (h == null) continue;
+                        int id = h.humanID;
+                        if ((a != null && a.humanID == id) || (b != null && b.humanID == id)) continue;
+                        if (!knownBy.Contains(id)) continue;
+                        NewAddress home = null; try { home = h.home; } catch { }
+                        if (home == null) continue;
+                        float d = float.MaxValue;
+                        try { var an = home.anchorNode; if (an != null) d = Dist(scenePos, an.position); } catch { }
+                        if (d < bestD) { bestD = d; best = h; }
+                    }
+            }
+            catch { }
+            return best;
+        }
+
+        private static float Dist(Vector3 p, Vector3 q)
+        {
+            float dx = p.x - q.x, dy = p.y - q.y, dz = p.z - q.z;
+            return (float)Math.Sqrt(dx * dx + dy * dy + dz * dz);
+        }
+
+        private static string SafeLocName(NewGameLocation loc)
+        {
+            try { return loc != null ? loc.name : "?"; } catch { return "?"; }
         }
     }
 

@@ -134,27 +134,50 @@ namespace SODMotives
                 // Inject one note per selected suspect. Killer's note is
                 // indistinguishable from the red herrings by content.
                 if (!CluesByVictim.TryGetValue(victim.humanID, out var recList)) { recList = new List<string>(); CluesByVictim[victim.humanID] = recList; }
+
+                // The game keys murder items by JobTag (Murder.activeMurderItems), so
+                // spawning several with the SAME tag collapses them onto ONE carrier
+                // (last writer wins -> killer clue overwritten, decoy text landing on a
+                // pre-existing vanilla multipage doc). Give each clue a DISTINCT, unused
+                // tag and verify each spawn is a fresh, distinct interactable.
+                var usedTags = CollectUsedTags(murder);
+                var usedIds = new HashSet<int>();
                 int idx = 0, placed = 0;
                 foreach (var s in suspects)
                 {
                     GetClue(s.mot.type, idx, out string treeId, out string treeName, out MurderPreset.LeadSpawnWhere where);
 
-                    // Try the preferred location, then fall back through others.
+                    if (!AllocTag(usedTags, out JobPreset.JobTag clueTag))
+                    {
+                        MotivesPlugin.Log.LogInfo("[SODMotives] clue: no free JobTag left; stopping clue injection for this case.");
+                        break;
+                    }
+
+                    // Try the preferred location, then fall back; reject any carrier we've
+                    // already used this case (identical-item collision) and try the next.
                     Interactable clue = null;
                     MurderPreset.LeadSpawnWhere usedWhere = where;
                     foreach (var w in PlacementOrder(where, cfg.templateWhere))
                     {
-                        clue = TrySpawn(murder, cfg, w);
-                        if (clue != null) { usedWhere = w; break; }
+                        var cand = TrySpawn(murder, cfg, w, clueTag);
+                        if (cand == null) continue;
+                        int cid = -1; try { cid = cand.id; } catch { }
+                        if (cid >= 0 && usedIds.Contains(cid))
+                        {
+                            MotivesPlugin.Log.LogInfo($"[SODMotives] clue: tag={clueTag} at {w} returned already-used item id={cid}; trying next placement.");
+                            continue;
+                        }
+                        clue = cand; usedWhere = w; break;
                     }
                     where = usedWhere;
 
                     if (clue == null)
                     {
-                        MotivesPlugin.Log.LogInfo($"[SODMotives] clue: SpawnItem null (all placements) for {MotivesPlugin.Name(s.who)}.");
+                        MotivesPlugin.Log.LogInfo($"[SODMotives] clue: SpawnItem null/duplicate (all placements) for {MotivesPlugin.Name(s.who)}.");
                         idx++;
                         continue;
                     }
+                    try { usedIds.Add(clue.id); } catch { }
 
                     bool textSet = false;
                     try
@@ -187,8 +210,9 @@ namespace SODMotives
                     }
                     catch (Exception e2) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: set-text error: {e2.Message}"); }
 
-                    // Where exactly did it land (room + address) so it's findable via F9.
-                    string locDesc = "?";
+                    // Where exactly did it land (room + address + precise spot) so overlaps
+                    // are visible and it's findable via F9.
+                    string locDesc = "?", posDesc = "";
                     try
                     {
                         var node = clue.node;
@@ -197,12 +221,21 @@ namespace SODMotives
                             string loc = node.gameLocation != null ? node.gameLocation.name : "?";
                             string room = ""; try { if (node.room != null) room = node.room.GetName(); } catch { }
                             locDesc = string.IsNullOrEmpty(room) ? loc : $"{room}, {loc}";
+                            try { var p = node.position; posDesc = $" @({p.x:0.0},{p.y:0.0},{p.z:0.0})"; } catch { }
                         }
                     }
                     catch { }
 
+                    // Verify the override actually landed on OUR fresh item (guards the
+                    // "decoy text on a vanilla multipage doc" collision that started this).
+                    int clueId = -1; string presetNm = "?", ddsNow = "?";
+                    try { clueId = clue.id; } catch { }
+                    try { presetNm = clue.preset != null ? clue.preset.name : "<null>"; } catch { }
+                    try { ddsNow = clue.dds; } catch { }
+                    bool ddsOk = ddsNow == treeId;
+
                     bool isKiller = s.who.humanID == killer.humanID;
-                    string rec = $"{(isKiller ? "[KILLER] " : "[decoy]  ")}from {MotivesPlugin.Name(s.who)} @ {where} [{locDesc}] ({s.mot.type}) dds='{treeName}' [ok={textSet}]";
+                    string rec = $"{(isKiller ? "[KILLER] " : "[decoy]  ")}from {MotivesPlugin.Name(s.who)} @ {where} [{locDesc}]{posDesc} ({s.mot.type}) dds='{treeName}' tag={clueTag} id={clueId} preset='{presetNm}' [text={textSet} ddsOk={ddsOk}]";
                     recList.Add(rec);
                     MotivesPlugin.Log.LogInfo($"[SODMotives] clue: INJECTED {rec}");
                     idx++; placed++;
@@ -313,7 +346,7 @@ namespace SODMotives
 
         private static int SafeInt(Func<int> f, int dflt) { try { return f(); } catch { return dflt; } }
 
-        private static Interactable TrySpawn(MurderController.Murder murder, SpawnCfg cfg, MurderPreset.LeadSpawnWhere where)
+        private static Interactable TrySpawn(MurderController.Murder murder, SpawnCfg cfg, MurderPreset.LeadSpawnWhere where, JobPreset.JobTag tag)
         {
             try
             {
@@ -322,9 +355,43 @@ namespace SODMotives
                     MurderPreset.LeadCitizen.victim,   // belongsTo
                     MurderPreset.LeadCitizen.victim,   // writer placeholder (overridden later)
                     MurderPreset.LeadCitizen.victim,   // receiver
-                    cfg.security, cfg.rule, cfg.priority, cfg.tag);
+                    cfg.security, cfg.rule, cfg.priority, tag);
             }
-            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: SpawnItem threw at {where}: {e.Message}"); return null; }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: SpawnItem threw at {where} tag={tag}: {e.Message}"); return null; }
+        }
+
+        // JobTags already claimed by this murder's real leads — so our clues never collide
+        // with a vanilla item's tag slot (Murder.activeMurderItems is tag-keyed).
+        private static HashSet<int> CollectUsedTags(MurderController.Murder murder)
+        {
+            var used = new HashSet<int>();
+            try
+            {
+                var preset = murder.preset;
+                if (preset != null && preset.leads != null)
+                {
+                    var leads = preset.leads;
+                    for (int i = 0; i < leads.Count; i++)
+                    {
+                        var lead = leads[i];
+                        if (lead == null) continue;
+                        try { used.Add((int)lead.itemTag); } catch { }
+                    }
+                }
+            }
+            catch { }
+            return used;
+        }
+
+        // Claim the next unused JobTag (A..Z = 0..25). Marks it used so each clue is distinct.
+        private static bool AllocTag(HashSet<int> used, out JobPreset.JobTag tag)
+        {
+            for (int i = 0; i < 26; i++)
+            {
+                if (used.Add(i)) { tag = (JobPreset.JobTag)i; return true; }
+            }
+            tag = default(JobPreset.JobTag);
+            return false;
         }
 
         // Preferred location first, then the vanilla template's location, then fallbacks.

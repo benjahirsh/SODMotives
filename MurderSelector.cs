@@ -106,6 +106,7 @@ namespace SODMotives
                 score = 120f,
                 detail = $"an affair between {SocialEvent.SafeName(affair.a)} and {SocialEvent.SafeName(affair.b)}",
             };
+            AffairByVictim[victim.humanID] = affair;         // so F9 / logs can show nearest knowers
             EventStore.MarkKnown(affair, murderer.humanID); // the killer (betrayed) knows — assume-known
             return true;
         }
@@ -114,6 +115,8 @@ namespace SODMotives
         internal static readonly HashSet<int> OverriddenVictimIds = new HashSet<int>();
         // Motive chosen per victim -> used by the clue injector to pick clue text.
         internal static readonly Dictionary<int, MotiveResult> MotiveByVictim = new Dictionary<int, MotiveResult>();
+        // The affair behind each overridden victim's case -> nearest-knower logging / F9.
+        internal static readonly Dictionary<int, SocialEvent> AffairByVictim = new Dictionary<int, SocialEvent>();
         // Recent motive types (most recent first) for cross-murder variety.
         private static readonly List<MotiveType> _recentTypes = new List<MotiveType>();
 

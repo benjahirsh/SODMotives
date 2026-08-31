@@ -23,7 +23,7 @@ namespace SODMotives
                 GameObject.DontDestroyOnLoad(go);
                 go.hideFlags = HideFlags.HideAndDontSave;
                 go.AddComponent<DebugHotkey>();
-                MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys: F9=case solution, F10=teleport to scene, F11=teleport to victim's work, F7=toggle GHOST MODE (NPCs ignore you).");
+                MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys: F9=case solution, F10=teleport to scene, F11=teleport to victim's work, F12=teleport to nearest affair-knower, F7=toggle GHOST MODE (NPCs ignore you).");
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] hotkey register failed: {e.Message}"); }
         }
@@ -155,6 +155,18 @@ namespace SODMotives
                         else Overlay.Add("INJECTED CLUES: none yet (spawns when the game places case items)");
                     }
                     catch { }
+
+                    // Affair case: who to interview, nearest the scene first (F12 jumps to the closest).
+                    try
+                    {
+                        if (MurderSelector.AffairByVictim.TryGetValue(victim.humanID, out var affair) && affair != null)
+                        {
+                            Vector3 scenePos = ScenePos(victim);
+                            Overlay.Add("NEAREST KNOWERS (interview these; F12 = jump to closest):");
+                            foreach (var ln in affair.NearestKnowers(scenePos, 6)) Overlay.Add("  " + ln);
+                        }
+                    }
+                    catch { }
                 }
             }
             catch (Exception e) { Overlay.Add($"error: {e.Message}"); log.LogWarning($"[SODMotives][F9] {e}"); }
@@ -162,6 +174,44 @@ namespace SODMotives
             // Mirror to log too.
             log.LogInfo("[SODMotives][F9] ---- case solution ----");
             foreach (var l in Overlay) log.LogInfo("[SODMotives][F9]   " + l);
+        }
+
+        // Scene position: the real crime scene once set, else the victim's home.
+        private static Vector3 ScenePos(Human victim)
+        {
+            try
+            {
+                var mc = MurderController.Instance;
+                var m = mc != null ? mc.GetCurrentMurder() : null;
+                if (m != null && m.location != null && m.location.anchorNode != null) return m.location.anchorNode.position;
+            }
+            catch { }
+            try { if (victim != null && victim.home != null && victim.home.anchorNode != null) return victim.home.anchorNode.position; }
+            catch { }
+            return default;
+        }
+
+        // F12: teleport to the home of the affair-knower nearest the scene, so you can
+        // interview a gossip without hunting for one.
+        internal static void TeleportToNearestKnower()
+        {
+            var log = MotivesPlugin.Log;
+            try
+            {
+                if (!TryGetCase(out _, out Human victim, out _) || victim == null)
+                { log.LogInfo("[SODMotives][F12] No victim."); return; }
+                if (!MurderSelector.AffairByVictim.TryGetValue(victim.humanID, out var affair) || affair == null)
+                { log.LogInfo("[SODMotives][F12] Not a mod affair case (no seeded gossips)."); return; }
+
+                Human k = affair.NearestKnowerHuman(ScenePos(victim));
+                if (k == null || k.home == null) { log.LogInfo("[SODMotives][F12] No knower with a home found."); return; }
+                var player = Player.Instance;
+                NewNode node = player.FindSafeTeleport(k.home, false, true);
+                if (node == null) { log.LogInfo("[SODMotives][F12] No safe spot at the knower's home."); return; }
+                player.Teleport(node, null, true, false, true);
+                log.LogInfo($"[SODMotives][F12] Teleported to nearest knower {MotivesPlugin.Name(k)} @ {k.home.name}.");
+            }
+            catch (Exception e) { log.LogWarning($"[SODMotives][F12] nearest-knower teleport error: {e}"); }
         }
 
         internal static void TeleportToScene()
@@ -201,6 +251,7 @@ namespace SODMotives
                 }
                 if (Input.GetKeyDown(KeyCode.F10)) DebugTools.TeleportToScene();
                 if (Input.GetKeyDown(KeyCode.F11)) DebugTools.TeleportToWork();
+                if (Input.GetKeyDown(KeyCode.F12)) DebugTools.TeleportToNearestKnower();
                 if (Input.GetKeyDown(KeyCode.F7))
                 {
                     DebugTools.Ghost = !DebugTools.Ghost;

@@ -347,6 +347,7 @@ namespace SODMotives
                     MotivesPlugin.Log.LogInfo($"[SODMotives]   vanilla would have been: {MotivesPlugin.Name(newMurderer)} -> {MotivesPlugin.Name(newVictim)}");
                     MotivesPlugin.Log.LogInfo($"[SODMotives]   {MotivesPlugin.Name(m)} kills {MotivesPlugin.Name(v)}");
                     MotivesPlugin.Log.LogInfo($"[SODMotives]   over the affair between {MotivesPlugin.Name(affair.a)} and {MotivesPlugin.Name(affair.b)}");
+                    MotivesPlugin.Log.LogInfo($"[SODMotives]   {affair.knownBy.Count} NPC(s) know it; interview e.g.: {affair.KnowerSample(4)}");
                     MotivesPlugin.Log.LogInfo("[SODMotives] *******************************************");
                     newMurderer = m; newVictim = v; victimSite = null;
                     __instance.currentMurderer = m; __instance.currentVictim = v;

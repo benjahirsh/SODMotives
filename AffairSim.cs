@@ -9,11 +9,6 @@ namespace SODMotives
     // from the very start. New-affair generation + gossip come in later steps.
     internal static class AffairSim
     {
-        // How many of each participant's acquaintances start out "in the know".
-        // (Placeholder distribution until real sighting-based witnessing lands; kept
-        // generous for now so interrogation testing is fruitful.)
-        internal static int WitnessesPerParticipant = 10;
-
         internal static void SeedForNewGame()
         {
             try
@@ -46,39 +41,14 @@ namespace SODMotives
                         placeName = PlaceHint(c, lover),
                         time = 0f,
                     };
-                    e.knownBy.Add(c.humanID);
-                    e.knownBy.Add(lover.humanID);
-                    AddWitnesses(e, c, WitnessesPerParticipant);
-                    AddWitnesses(e, lover, WitnessesPerParticipant);
+                    Gossip.Distribute(e);   // participants + their neighbours/coworkers/friends
                     EventStore.Add(e);
                     affairs++;
                 }
 
-                MotivesPlugin.Log.LogInfo($"[SODMotives][events] seeded {affairs} affairs; {EventStore.Count} events; knowledge distributed.");
+                MotivesPlugin.Log.LogInfo($"[SODMotives][events] seeded {affairs} affairs; {EventStore.Count} events; knowledge distributed to neighbours/coworkers.");
             }
             catch (Exception ex) { MotivesPlugin.Log.LogWarning($"[SODMotives][events] seed error: {ex}"); }
-        }
-
-        private static void AddWitnesses(SocialEvent e, Human h, int k)
-        {
-            try
-            {
-                var list = h.acquaintances;
-                if (list == null) return;
-                int added = 0;
-                for (int i = 0; i < list.Count && added < k; i++)
-                {
-                    var acq = list[i];
-                    if (acq == null) continue;
-                    Human other = acq.GetOther(h);
-                    if (other == null) continue;
-                    // don't reveal to the participants' own betrayed partners here — keeps
-                    // "assume known" only for murder selection, not for free interrogation.
-                    e.knownBy.Add(other.humanID);
-                    added++;
-                }
-            }
-            catch { }
         }
 
         private static string PlaceHint(Human a, Human b)

@@ -12,7 +12,8 @@ namespace SODMotives
     {
         internal static readonly List<string> Overlay = new List<string>();
         internal static bool Show = false;
-        internal static bool Ghost = false;   // NPCs ignore the player (testing aid)
+        internal static bool Ghost = false;         // NPCs ignore the player (testing aid)
+        internal static bool AlwaysAnswer = false;  // NPCs always accept "do you know this person?" (no bribe)
 
         internal static void Register()
         {
@@ -23,7 +24,7 @@ namespace SODMotives
                 GameObject.DontDestroyOnLoad(go);
                 go.hideFlags = HideFlags.HideAndDontSave;
                 go.AddComponent<DebugHotkey>();
-                MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys: F9=case solution, F10=teleport to scene, F11=teleport to victim's work, F12=teleport to nearest affair-knower, F7=toggle GHOST MODE (NPCs ignore you).");
+                MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys: F9=case solution, F10=teleport to scene, F11=teleport to victim's work, F12=teleport to nearest affair-knower, F8=toggle ALWAYS-ANSWER (no bribe), F7=toggle GHOST MODE (NPCs ignore you).");
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] hotkey register failed: {e.Message}"); }
         }
@@ -252,6 +253,11 @@ namespace SODMotives
                 if (Input.GetKeyDown(KeyCode.F10)) DebugTools.TeleportToScene();
                 if (Input.GetKeyDown(KeyCode.F11)) DebugTools.TeleportToWork();
                 if (Input.GetKeyDown(KeyCode.F12)) DebugTools.TeleportToNearestKnower();
+                if (Input.GetKeyDown(KeyCode.F8))
+                {
+                    DebugTools.AlwaysAnswer = !DebugTools.AlwaysAnswer;
+                    MotivesPlugin.Log.LogInfo($"[SODMotives] ALWAYS-ANSWER (no bribe) {(DebugTools.AlwaysAnswer ? "ON" : "OFF")}");
+                }
                 if (Input.GetKeyDown(KeyCode.F7))
                 {
                     DebugTools.Ghost = !DebugTools.Ghost;
@@ -273,6 +279,18 @@ namespace SODMotives
                     if (_style == null) _style = new GUIStyle { fontSize = 14, wordWrap = false };
                     _style.normal.textColor = Color.green;
                     GUI.Label(new Rect(8, Screen.height - 26, 500, 20), "GHOST MODE ON (F7) - NPCs ignore you", _style);
+                }
+                catch { }
+            }
+
+            // Always-answer indicator.
+            if (DebugTools.AlwaysAnswer)
+            {
+                try
+                {
+                    if (_style == null) _style = new GUIStyle { fontSize = 14, wordWrap = false };
+                    _style.normal.textColor = Color.cyan;
+                    GUI.Label(new Rect(8, Screen.height - 46, 520, 20), "ALWAYS-ANSWER ON (F8) - NPCs never refuse 'do you know this person?'", _style);
                 }
                 catch { }
             }

@@ -26,7 +26,6 @@ namespace SODMotives
         private static bool _armed;
         private static Citizen _npc;
         private static Interactable _speakingTo;
-        private static int _answerCounter;
 
         // Postfix target for DoYouKnowThisPerson(+Bribe1/2/3): ARM ONLY, never speak.
         internal static void ArmForPick(Citizen npc, Interactable speakingTo, bool success)
@@ -105,7 +104,12 @@ namespace SODMotives
         {
             try
             {
-                string blockId = "MOD_Motives_Ans_" + (_answerCounter++);
+                // GLOBALLY-UNIQUE id per line. A resettable counter ("_0","_1",...) collides
+                // with entries left in the process-resident Strings/allDDSBlocks dictionaries
+                // from earlier sessions; Strings.WriteToDictionary has no overwrite and won't
+                // replace them, so Speak (which resolves Strings.Get at bubble time) renders the
+                // STALE text while our log shows the fresh local string. A GUID never collides.
+                string blockId = "MOD_Motives_Ans_" + System.Guid.NewGuid().ToString("N");
                 var tb = Toolbox.Instance;
                 var block = new DDSSaveClasses.DDSBlockSave();
                 block.name = text; block.id = blockId;
@@ -142,10 +146,32 @@ namespace SODMotives
         }
     }
 
+    // TESTING CHEAT (DebugTools.AlwaysAnswer, F8): force the "Do you know this person?"
+    // success roll so NPCs always accept — no bribe needed. This runs upstream of the
+    // picker-vs-bribe branch, using the engine's own ForceSuccess override.
+    [HarmonyPatch(typeof(DialogController), nameof(DialogController.ExecuteDialog))]
+    internal static class Patch_ForceKnowName
+    {
+        static void Prefix(EvidenceWitness.DialogOption dialog, ref DialogController.ForceSuccess forceSuccess)
+        {
+            if (!DebugTools.AlwaysAnswer) return;
+            try
+            {
+                var p = dialog != null ? dialog.preset : null;
+                if (p != null && p.specialCase == DialogPreset.SpecialCase.knowName)
+                    forceSuccess = DialogController.ForceSuccess.success;
+            }
+            catch { }
+        }
+    }
+
     // Arm on the "Do you know this person?" decision (accept only). No speech here.
+    // Prefix = belt-and-suspenders for the F8 cheat (in case the picker-open decision
+    // reads `success` in the handler rather than honouring ExecuteDialog's ForceSuccess).
     [HarmonyPatch(typeof(DialogController), nameof(DialogController.DoYouKnowThisPerson))]
     internal static class Patch_DoYouKnow
     {
+        static void Prefix(ref bool success) { if (DebugTools.AlwaysAnswer) success = true; }
         static void Postfix(Citizen saysTo, Interactable saysToInteractable, bool success)
             => Interrogation.ArmForPick(saysTo, saysToInteractable, success);
     }
@@ -153,6 +179,7 @@ namespace SODMotives
     [HarmonyPatch(typeof(DialogController), nameof(DialogController.DoYouKnowThisPersonBribe1))]
     internal static class Patch_DoYouKnowB1
     {
+        static void Prefix(ref bool success) { if (DebugTools.AlwaysAnswer) success = true; }
         static void Postfix(Citizen saysTo, Interactable saysToInteractable, bool success)
             => Interrogation.ArmForPick(saysTo, saysToInteractable, success);
     }
@@ -160,6 +187,7 @@ namespace SODMotives
     [HarmonyPatch(typeof(DialogController), nameof(DialogController.DoYouKnowThisPersonBribe2))]
     internal static class Patch_DoYouKnowB2
     {
+        static void Prefix(ref bool success) { if (DebugTools.AlwaysAnswer) success = true; }
         static void Postfix(Citizen saysTo, Interactable saysToInteractable, bool success)
             => Interrogation.ArmForPick(saysTo, saysToInteractable, success);
     }
@@ -167,6 +195,7 @@ namespace SODMotives
     [HarmonyPatch(typeof(DialogController), nameof(DialogController.DoYouKnowThisPersonBribe3))]
     internal static class Patch_DoYouKnowB3
     {
+        static void Prefix(ref bool success) { if (DebugTools.AlwaysAnswer) success = true; }
         static void Postfix(Citizen saysTo, Interactable saysToInteractable, bool success)
             => Interrogation.ArmForPick(saysTo, saysToInteractable, success);
     }

@@ -142,8 +142,12 @@ namespace SODMotives
                 tb.allDDSMessages[msgId] = msg;
 
                 // overload #2: Speak(ddsMessage, shout, interupt, speakAbout, sideJob, interactionInstance).
-                // interupt=false appends after the vanilla line; inter binds it to the interrogation.
-                npc.speechController.Speak(msgId, false, false, about, null, inter);
+                // ALL trailing args MUST be null. A non-null interactionInstance makes
+                // SpeechBubbleController.Setup resolve the bubble text from THAT interaction's branch
+                // message (which never contains our runtime message) -> EMPTY/blank bubble. null makes
+                // Setup fall back to the queue element's own msgId -> resolves via allDDSMessages and
+                // renders. speakAbout null too (our line is literal, no DDS tokens). Mirrors the PoC.
+                npc.speechController.Speak(msgId, false, false, null, null, null);
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] SpeakLine error: {e.Message}"); }
         }

@@ -77,42 +77,29 @@ namespace SODMotives
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] OnPicked error: {e.Message}"); }
         }
 
-        // What this NPC can add about the picked person (never their own affair). Two cases:
-        //   (1) DIRECT — the subject is a participant (cheater or lover): "they'd been carrying
-        //       on with X."  (2) VIA PARTNER — the subject is the betrayed spouse: "their partner
-        //       had been carrying on with X." Case (2) is what makes a betrayed-partner VICTIM's
-        //       murder solvable by asking about the victim.
+        // What this NPC can add about the picked person: an affair the SUBJECT is a
+        // participant in (never the NPC's own). Generic — works for any citizen, not just
+        // murder-involved ones. A non-participant (e.g. a betrayed spouse) correctly yields
+        // nothing: there is no affair-gossip about someone who isn't in an affair. Such a
+        // victim's murder is still solvable by following the graph to their cheating partner.
         private static string ComposeAbout(Human npc, Human subject)
         {
-            Human subjPartner = SafePartner(subject);
-            SocialEvent direct = null, viaPartner = null;
+            SocialEvent affair = null;
             foreach (var e in EventStore.KnownBy(npc.humanID))
             {
                 if (e.type != SocialEventType.Affair) continue;
+                if (!Involves(e, subject)) continue;
                 if (Involves(e, npc)) continue; // won't tattle on their own affair
-                if (direct == null && Involves(e, subject)) direct = e;
-                else if (viaPartner == null && subjPartner != null && Involves(e, subjPartner)) viaPartner = e;
-                if (direct != null) break; // a direct affair is the best answer; stop
+                affair = e; break;
             }
+            if (affair == null) return null;
 
-            if (direct != null)
-            {
-                Human other = Motive.Same(direct.a, subject) ? direct.b : direct.a;
-                var sb = new System.Text.StringBuilder();
-                sb.Append($"Actually — since you ask about {Name(subject)}: between us, word is they'd been carrying on with {Name(other)} behind their partner's back. ");
-                if (subjPartner != null) sb.Append($"Can't imagine {Name(subjPartner)} took that well.");
-                return sb.ToString().TrimEnd();
-            }
-
-            if (viaPartner != null)
-            {
-                // subject is the betrayed spouse; the cheating participant is their partner.
-                Human cheat = subjPartner;
-                Human other = Motive.Same(viaPartner.a, cheat) ? viaPartner.b : viaPartner.a;
-                return $"Actually — since you ask about {Name(subject)}: between us, word is their partner {Name(cheat)} had been carrying on with {Name(other)} on the side. Can't imagine that stayed a secret for long.";
-            }
-
-            return null;
+            Human other = Motive.Same(affair.a, subject) ? affair.b : affair.a;
+            Human sp = SafePartner(subject);
+            var sb = new System.Text.StringBuilder();
+            sb.Append($"Actually — since you ask about {Name(subject)}: between us, word is they'd been carrying on with {Name(other)} behind their partner's back. ");
+            if (sp != null) sb.Append($"Can't imagine {Name(sp)} took that well.");
+            return sb.ToString().TrimEnd();
         }
 
         // ---- helpers ----

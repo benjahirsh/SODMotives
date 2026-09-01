@@ -60,7 +60,13 @@ namespace SODMotives
                 if (EventStore.Count == 0) AffairSim.SeedForNewGame();
 
                 string text = ComposeAbout(npc, subject);
-                if (text == null) return; // we know nothing extra -> leave the vanilla answer alone
+                if (text == null)
+                {
+                    // Visible in the log so a pick that yields nothing is distinguishable from a
+                    // pick that never fired (this NPC simply knows no affair touching the subject).
+                    MotivesPlugin.Log.LogInfo($"[SODMotives][interro] {Name(npc)} asked about {Name(subject)} -> (nothing to add)");
+                    return; // leave the vanilla answer alone
+                }
 
                 Human.InteractionDialogInstance inter = null;
                 try { var ie = npc.interactionEvents; if (ie != null && ie.Count > 0) inter = ie[0]; } catch { }
@@ -71,25 +77,42 @@ namespace SODMotives
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] OnPicked error: {e.Message}"); }
         }
 
-        // What this NPC can add about the picked person (never their own affair).
+        // What this NPC can add about the picked person (never their own affair). Two cases:
+        //   (1) DIRECT — the subject is a participant (cheater or lover): "they'd been carrying
+        //       on with X."  (2) VIA PARTNER — the subject is the betrayed spouse: "their partner
+        //       had been carrying on with X." Case (2) is what makes a betrayed-partner VICTIM's
+        //       murder solvable by asking about the victim.
         private static string ComposeAbout(Human npc, Human subject)
         {
-            SocialEvent affair = null;
+            Human subjPartner = SafePartner(subject);
+            SocialEvent direct = null, viaPartner = null;
             foreach (var e in EventStore.KnownBy(npc.humanID))
             {
                 if (e.type != SocialEventType.Affair) continue;
-                if (!Involves(e, subject)) continue;
                 if (Involves(e, npc)) continue; // won't tattle on their own affair
-                affair = e; break;
+                if (direct == null && Involves(e, subject)) direct = e;
+                else if (viaPartner == null && subjPartner != null && Involves(e, subjPartner)) viaPartner = e;
+                if (direct != null) break; // a direct affair is the best answer; stop
             }
-            if (affair == null) return null;
 
-            Human other = Motive.Same(affair.a, subject) ? affair.b : affair.a;
-            Human sp = SafePartner(subject);
-            var sb = new System.Text.StringBuilder();
-            sb.Append($"Actually — since you ask about {Name(subject)}: between us, word is they'd been carrying on with {Name(other)} behind their partner's back. ");
-            if (sp != null) sb.Append($"Can't imagine {Name(sp)} took that well.");
-            return sb.ToString().TrimEnd();
+            if (direct != null)
+            {
+                Human other = Motive.Same(direct.a, subject) ? direct.b : direct.a;
+                var sb = new System.Text.StringBuilder();
+                sb.Append($"Actually — since you ask about {Name(subject)}: between us, word is they'd been carrying on with {Name(other)} behind their partner's back. ");
+                if (subjPartner != null) sb.Append($"Can't imagine {Name(subjPartner)} took that well.");
+                return sb.ToString().TrimEnd();
+            }
+
+            if (viaPartner != null)
+            {
+                // subject is the betrayed spouse; the cheating participant is their partner.
+                Human cheat = subjPartner;
+                Human other = Motive.Same(viaPartner.a, cheat) ? viaPartner.b : viaPartner.a;
+                return $"Actually — since you ask about {Name(subject)}: between us, word is their partner {Name(cheat)} had been carrying on with {Name(other)} on the side. Can't imagine that stayed a secret for long.";
+            }
+
+            return null;
         }
 
         // ---- helpers ----

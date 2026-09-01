@@ -200,9 +200,13 @@ GUID ids _(commit 84becd1)_ — **needs re-test.**
 **PENDING — re-validate the interro fix, then C1 (may need no code):**
 Fully restart, fresh sandbox, fast-forward to an affair murder, then check `[SODMotives]`
 + what actually renders in the speech bubble. Turn on **F8** to skip bribes while testing.
-- **Interro (RE-TEST the fix):** the in-game speech **bubble must now match the log** and
-  name the **picked** person (ask about the victim to cross-check vs F9). Refuse-without-bribe
-  → NO gossip (unless F8 on). Gossip appended **after** the vanilla answer.
+- **Interro (RE-TEST the GUID render fix — still unverified):** gossip rule is FINALIZED as
+  "reveal affairs the SUBJECT participates in" (generic; any citizen; a non-participant like a
+  betrayed spouse correctly returns nothing). So ask a knower about **each of the 3 love-triangle
+  members** (see F9): the **2 affair participants** reveal gossip; the **betrayed partner** logs
+  `-> (nothing to add)` (correct). For a participant, confirm the **in-game speech bubble now
+  matches the `[interro]` log line** (this is what proves the GUID stale-text fix). Gossip appends
+  **after** the vanilla answer; **F8** skips bribes.
 - **Clues:** each `clue: INJECTED` shows distinct `tag=`/`id=`/`@(x,y,z)`/`ddsOk=True`.
   Objects confirmed distinct in-game ✅. **Still open (log reveals):** does a fresh unused
   `JobTag` make a brand-new standalone item vs route into an owned doc? Check `preset=`/`ddsOk`.

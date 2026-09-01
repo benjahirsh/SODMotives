@@ -192,10 +192,11 @@ know this person?" picker (arm-then-fire; GUID-unique speech ids); gossip seeded
 neighbours/coworkers/friends via a type-keyed audience; location-aware knower logging +
 F9/F12 aids; **F8 = ALWAYS-ANSWER cheat** (NPCs never refuse the picker, no bribe).
 
-**In-game so far:** clue OBJECTS now spawn distinct (overlap fixed ✅). Interro speech was
-rendering STALE text (log correct, bubble showed old names) — root-caused to a reused
-Strings/DDS block id colliding with a process-resident prior-session entry; fixed with
-GUID ids _(commit 84becd1)_ — **needs re-test.**
+**In-game so far:** clue OBJECTS now spawn distinct (overlap fixed ✅). Interro speech saga:
+(1) rendered STALE text → GUID ids _(84becd1)_ removed the collision but exposed (2) a BLANK
+bubble, because the direct `Speak(dictionary,entryRef)` overload resolves via `Strings.Get`,
+which doesn't surface a same-session runtime write. FIX: restored the proven DDS-**message**
+recipe + `Speak(msgId)` overload #2 _(d9c9533)_ — **needs re-test (should now show correct text).**
 
 **PENDING — re-validate the interro fix, then C1 (may need no code):**
 Fully restart, fresh sandbox, fast-forward to an affair murder, then check `[SODMotives]`

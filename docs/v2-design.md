@@ -194,9 +194,11 @@ F9/F12 aids; **F8 = ALWAYS-ANSWER cheat** (NPCs never refuse the picker, no brib
 
 **In-game so far:** clue OBJECTS now spawn distinct (overlap fixed ✅). Interro speech saga:
 (1) rendered STALE text → GUID ids _(84becd1)_ removed the collision but exposed (2) a BLANK
-bubble, because the direct `Speak(dictionary,entryRef)` overload resolves via `Strings.Get`,
-which doesn't surface a same-session runtime write. FIX: restored the proven DDS-**message**
-recipe + `Speak(msgId)` overload #2 _(d9c9533)_ — **needs re-test (should now show correct text).**
+bubble via the direct overload → restored the DDS-**message** recipe _(d9c9533)_, still blank;
+(3) FINAL root cause: passing a non-null `interactionInstance` makes `SpeechBubbleController.Setup`
+source text from that interaction's branch (not our msgId) → empty. FIX: `Speak(msgId, false,
+false, null, null, null)` — all trailing args null _(975f951)_. Two independent decompile passes,
+high confidence. **Needs re-test — should finally render the correct gossip text.**
 
 **PENDING — re-validate the interro fix, then C1 (may need no code):**
 Fully restart, fresh sandbox, fast-forward to an affair murder, then check `[SODMotives]`

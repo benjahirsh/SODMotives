@@ -1,7 +1,9 @@
 # SOD Motives — V2 (2.0.0) Design Spec
 
-Status: **design locked** (this document), implementation not started.
-Target branch: `v2`. `main` / tag `v1.0.0` remain the stable V1 build.
+Status: **design locked** (this document); **implementation in progress on `v2`.**
+`main` / tag `v1.0.0` remain the stable V1 build.
+**→ Current status, the pending in-game test, and the atomic next-chunk plan are at the
+bottom: [Status & resume kit](#status--resume-kit). Read that first when resuming.**
 
 ## One-sentence vision
 
@@ -175,3 +177,42 @@ Answers are generated from the NPC's `knownBy` events. Testimony is reliable.
 - **3.0.0:** petty crimes (thefts, etc.) on the job board.
 - **Separate mod:** vigilante/prevention (act before the murder), inheritance/family
   feuds, framing & false accusations, accidental (Knives-Out) murders.
+
+## Status & resume kit
+
+_Kept current each session so any fresh context can pick up cold. To resume: read this
+section + `git log --oneline -8` + the `sod-motives-mod` memory. Build/deploy:
+`dotnet build -c Release` (auto-copies to plugins; **game must be fully restarted** to
+load the new DLL). Log: `BepInEx/LogOutput.log`, filter `[SODMotives]`._
+
+**Landed so far (on `v2`):** affair events seeded from `paramour` links; director picks
+an affair-motivated killer at `ExecuteNewMurder` (vanilla timing untouched); motive-note
+clue injection; interrogation piggybacks the native "Do you know this person?" picker;
+gossip seeded to neighbours/coworkers/friends via a type-keyed audience; location-aware
+knower logging + F9/F12 aids.
+
+**PENDING — in-game validation of the latest fixes (do this next; may need no code):**
+Fully restart, fresh sandbox, fast-forward to an affair murder, then check `[SODMotives]`:
+- **Clues:** each `clue: INJECTED` line should show a **distinct `tag=`/`id=`**, its own
+  `@(x,y,z)`, `ddsOk=True`, and `preset='<note preset>'`. In-game: killer note AND decoy
+  are **separate findable items**; the decoy's hover-name matches its own pages (no bleed
+  onto a vanilla multipage doc). **OPEN QUESTION (only in-game confirms):** does spawning
+  with a fresh unused `JobTag` create a brand-new standalone item, or route into an
+  existing owned document? The new id/preset/pos/ddsOk logging is there to reveal it.
+- **Interro:** NPC **refuses without a bribe → NO gossip line** (log shows at most
+  `armed — X accepted` only on accept). Accept + pick → gossip about the **picked** person,
+  appended **after** the vanilla answer.
+- **Location:** affair log lists nearest knowers `Name — Address (bldg/floor) — Dm`; **F9**
+  shows the same for the live case; **F10** = scene, **F12** = nearest knower's home.
+
+**Atomic next chunks** (each = one clear-able session ending in a commit):
+- **C1 ✅** clue-overlap + interro-timing + location logging  _(commit 07b9fea)_.
+- **C2 (NEXT)** validate C1 in-game; fix only what the log/playthrough shows (esp. the
+  JobTag open question). Commit any tweak; otherwise mark C1 confirmed.
+- **C3** gossip-density tuning — adjust `Gossip.Audience` if finding a knower feels off.
+- **C4** pair interrogation "what's going on between X and Y?" (two-person pick / second
+  armed context in `Interrogation.cs`).
+- **C5** Workplace/promotion event type (2.1) via the `Gossip` type-keyed seam.
+- **C6** Feud event type (2.2).
+- **C7** release cleanup for 2.0.0 — `ObviousTestNames=false`, `VanillaCaseEvery=3–4`,
+  gate/remove debug hotkeys (F7 ghost, F9–F12), final variety playtest.

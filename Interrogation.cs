@@ -148,8 +148,52 @@ namespace SODMotives
                 // Setup fall back to the queue element's own msgId -> resolves via allDDSMessages and
                 // renders. speakAbout null too (our line is literal, no DDS tokens). Mirrors the PoC.
                 npc.speechController.Speak(msgId, false, false, null, null, null);
+
+                // ---- DIAGNOSTICS (temporary): pin down WHERE the text is lost ----
+                try
+                {
+                    string rb = null; try { rb = Strings.Get("dds.blocks", blockId); } catch { }
+                    bool hasMsg = false, hasBlk = false;
+                    try { hasMsg = tb.allDDSMessages.ContainsKey(msgId); } catch { }
+                    try { hasBlk = tb.allDDSBlocks.ContainsKey(blockId); } catch { }
+                    var sc = npc.speechController;
+                    int qc = -1; bool active = false, bub = false;
+                    try { qc = sc.speechQueue != null ? sc.speechQueue.Count : -1; } catch { }
+                    try { active = sc.speechActive; } catch { }
+                    try { bub = sc.activeSpeechBubble != null; } catch { }
+                    MotivesPlugin.Log.LogInfo($"[SODMotives][spdiag] afterSpeak Strings.Get(dds.blocks,{blockId})='{rb}' (len={(rb == null ? -1 : rb.Length)}) hasMsg={hasMsg} hasBlk={hasBlk} | queue={qc} active={active} bubble={bub}");
+                    _watchSc = sc; _watchFrames = 10; _watchText = text;
+                }
+                catch (Exception d) { MotivesPlugin.Log.LogWarning($"[SODMotives][spdiag] err: {d.Message}"); }
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] SpeakLine error: {e.Message}"); }
+        }
+
+        // Deferred read of the speech bubble a few frames after Speak, so we can see whether
+        // the game resolved our text into the visible bubble or left it empty. Driven by
+        // DebugHotkey.Update -> TickWatch(). (Diagnostics; remove once speech is confirmed.)
+        private static SpeechController _watchSc;
+        private static int _watchFrames;
+        private static string _watchText;
+
+        internal static void TickWatch()
+        {
+            if (_watchSc == null) return;
+            if (--_watchFrames > 0) return;
+            var sc = _watchSc; _watchSc = null;
+            try
+            {
+                var b = sc.activeSpeechBubble;
+                string actual = null; int wlen = -1; bool fin = false;
+                if (b != null)
+                {
+                    try { actual = b.actualString; } catch { }
+                    try { var w = b.words; wlen = w != null ? w.Length : -1; } catch { }
+                    try { fin = b.setFinalText; } catch { }
+                }
+                MotivesPlugin.Log.LogInfo($"[SODMotives][spdiag] +frames bubble={(b != null)} actualString='{actual}' (len={(actual == null ? -1 : actual.Length)}) words={wlen} final={fin} | expected='{_watchText}'");
+            }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][spdiag] tick err: {e.Message}"); }
         }
     }
 

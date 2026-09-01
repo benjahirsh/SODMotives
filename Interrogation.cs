@@ -114,32 +114,36 @@ namespace SODMotives
         {
             try
             {
-                // GLOBALLY-UNIQUE id per line. A resettable counter ("_0","_1",...) collides
-                // with entries left in the process-resident Strings/allDDSBlocks dictionaries
-                // from earlier sessions; Strings.WriteToDictionary has no overwrite and won't
-                // replace them, so Speak (which resolves Strings.Get at bubble time) renders the
-                // STALE text while our log shows the fresh local string. A GUID never collides.
-                string blockId = "MOD_Motives_Ans_" + System.Guid.NewGuid().ToString("N");
+                // RELIABLE PATH — matches the first proven interrogation PoC: bake the line into
+                // a runtime DDS BLOCK **and MESSAGE**, then Speak the MESSAGE id (overload #2).
+                // The direct (dictionary, entryRef) overload resolves via Strings.Get, which does
+                // NOT surface our runtime WriteToDictionary this session -> BLANK bubble (it only
+                // ever rendered stale values loaded from disk). The message path resolves the
+                // in-memory block instead. GUID ids so nothing collides across sessions.
                 var tb = Toolbox.Instance;
+                string msgId = "MOD_Motives_Msg_" + System.Guid.NewGuid().ToString("N");
+                string blockId = msgId + "_blk";
+
                 var block = new DDSSaveClasses.DDSBlockSave();
                 block.name = text; block.id = blockId;
                 tb.allDDSBlocks[blockId] = block;
                 Strings.WriteToDictionary("dds.blocks", blockId, "SODMotives", text);
 
-                // interupt=false so we ADD after the vanilla line; speakingTo + inter bind the
-                // bubble to the interrogation subtitle so it actually renders.
-                npc.speechController.Speak(
-                    "dds.blocks", blockId,
-                    false,  // useParsing
-                    false,  // shout
-                    false,  // interupt (append after vanilla)
-                    0f,     // delay
-                    false, default(Color),
-                    about,  // speakingAbout
-                    false, false, null,
-                    null,   // dialogPreset
-                    null,   // dialog
-                    speakingTo, inter);
+                var cond = new DDSSaveClasses.DDSBlockCondition();
+                cond.blockID = blockId;
+                cond.instanceID = msgId + "_inst";
+                cond.alwaysDisplay = true;
+                cond.group = 0;
+
+                var msg = new DDSSaveClasses.DDSMessageSave();
+                msg.name = msgId; msg.id = msgId;
+                msg.blocks = new Il2CppSystem.Collections.Generic.List<DDSSaveClasses.DDSBlockCondition>();
+                msg.blocks.Add(cond);
+                tb.allDDSMessages[msgId] = msg;
+
+                // overload #2: Speak(ddsMessage, shout, interupt, speakAbout, sideJob, interactionInstance).
+                // interupt=false appends after the vanilla line; inter binds it to the interrogation.
+                npc.speechController.Speak(msgId, false, false, about, null, inter);
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] SpeakLine error: {e.Message}"); }
         }

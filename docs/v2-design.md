@@ -187,28 +187,33 @@ load the new DLL). Log: `BepInEx/LogOutput.log`, filter `[SODMotives]`._
 
 **Landed so far (on `v2`):** affair events seeded from `paramour` links; director picks
 an affair-motivated killer at `ExecuteNewMurder` (vanilla timing untouched); motive-note
-clue injection; interrogation piggybacks the native "Do you know this person?" picker;
-gossip seeded to neighbours/coworkers/friends via a type-keyed audience; location-aware
-knower logging + F9/F12 aids.
+clue injection (distinct JobTag per clue); interrogation piggybacks the native "Do you
+know this person?" picker (arm-then-fire; GUID-unique speech ids); gossip seeded to
+neighbours/coworkers/friends via a type-keyed audience; location-aware knower logging +
+F9/F12 aids; **F8 = ALWAYS-ANSWER cheat** (NPCs never refuse the picker, no bribe).
 
-**PENDING — in-game validation of the latest fixes (do this next; may need no code):**
-Fully restart, fresh sandbox, fast-forward to an affair murder, then check `[SODMotives]`:
-- **Clues:** each `clue: INJECTED` line should show a **distinct `tag=`/`id=`**, its own
-  `@(x,y,z)`, `ddsOk=True`, and `preset='<note preset>'`. In-game: killer note AND decoy
-  are **separate findable items**; the decoy's hover-name matches its own pages (no bleed
-  onto a vanilla multipage doc). **OPEN QUESTION (only in-game confirms):** does spawning
-  with a fresh unused `JobTag` create a brand-new standalone item, or route into an
-  existing owned document? The new id/preset/pos/ddsOk logging is there to reveal it.
-- **Interro:** NPC **refuses without a bribe → NO gossip line** (log shows at most
-  `armed — X accepted` only on accept). Accept + pick → gossip about the **picked** person,
-  appended **after** the vanilla answer.
+**In-game so far:** clue OBJECTS now spawn distinct (overlap fixed ✅). Interro speech was
+rendering STALE text (log correct, bubble showed old names) — root-caused to a reused
+Strings/DDS block id colliding with a process-resident prior-session entry; fixed with
+GUID ids _(commit 84becd1)_ — **needs re-test.**
+
+**PENDING — re-validate the interro fix, then C1 (may need no code):**
+Fully restart, fresh sandbox, fast-forward to an affair murder, then check `[SODMotives]`
++ what actually renders in the speech bubble. Turn on **F8** to skip bribes while testing.
+- **Interro (RE-TEST the fix):** the in-game speech **bubble must now match the log** and
+  name the **picked** person (ask about the victim to cross-check vs F9). Refuse-without-bribe
+  → NO gossip (unless F8 on). Gossip appended **after** the vanilla answer.
+- **Clues:** each `clue: INJECTED` shows distinct `tag=`/`id=`/`@(x,y,z)`/`ddsOk=True`.
+  Objects confirmed distinct in-game ✅. **Still open (log reveals):** does a fresh unused
+  `JobTag` make a brand-new standalone item vs route into an owned doc? Check `preset=`/`ddsOk`.
 - **Location:** affair log lists nearest knowers `Name — Address (bldg/floor) — Dm`; **F9**
-  shows the same for the live case; **F10** = scene, **F12** = nearest knower's home.
+  shows the same; **F10** = scene, **F12** = nearest knower's home.
 
 **Atomic next chunks** (each = one clear-able session ending in a commit):
-- **C1 ✅** clue-overlap + interro-timing + location logging  _(commit 07b9fea)_.
-- **C2 (NEXT)** validate C1 in-game; fix only what the log/playthrough shows (esp. the
-  JobTag open question). Commit any tweak; otherwise mark C1 confirmed.
+- **C1 ✅ (code)** clue-overlap + interro-timing + location logging  _(07b9fea)_.
+- **C1b ✅ (code)** interro stale-speech fix + F8 no-bribe cheat  _(84becd1)_.
+- **C2 (NEXT)** re-test interro speech renders fresh/correct text in-game; confirm the
+  JobTag open question via the log. Commit any tweak; otherwise mark C1/C1b confirmed.
 - **C3** gossip-density tuning — adjust `Gossip.Audience` if finding a knower feels off.
 - **C4** pair interrogation "what's going on between X and Y?" (two-person pick / second
   armed context in `Interrogation.cs`).

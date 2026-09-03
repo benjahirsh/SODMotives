@@ -214,11 +214,9 @@ F10 teleport to scene · F11 to victim work · F12 to nearest affair-knower's ho
 - **C1 ✅** clue-overlap + interro-timing + location logging  _(07b9fea)_.
 - **C1b ✅** interro stale-speech + F8 cheat  _(84becd1)_ → then blank-bubble saga → **RESOLVED via
   bubble hijack** _(dd2fd54)_; diagnostics stripped. Interrogation loop CONFIRMED in-game ✅.
-- **C2 (NEXT — the "fix to V1" the user wants before clearing):** affair-clue makes no sense when the
-  killer is the BETRAYED partner — the injected motive note is a love-letter authored by the killer,
-  but a betrayed jealous killer isn't in the affair. Fix (affair murders): the motive clue should be
-  evidence of the AFFAIR between the two participants (authored by a participant), not a love letter
-  from the betrayed killer. Affair available via `MurderSelector.AffairByVictim`. In `ClueInjector`.
+- **C2 ✅** affair motive-note authored by an affair PARTICIPANT, not the betrayed killer
+  _(11af7a0)_ — fixes the "love letter from the jealous betrayed spouse" nonsense. **Needs in-game
+  spot-check** (log shows `suspect X writtenBy Y` when they differ), but low risk.
 - **C3** gossip-density tuning — adjust `Gossip.Audience` if finding a knower feels off.
 - **C4** pair interrogation "what's going on between X and Y?" (two-person pick / second
   armed context in `Interrogation.cs`).

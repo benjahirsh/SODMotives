@@ -157,31 +157,33 @@ namespace SODMotives
                 try
                 {
                     string rb = null; try { rb = Strings.Get("dds.blocks", blockId); } catch { }
-                    bool hasMsg = false, hasBlk = false;
-                    try { hasMsg = tb.allDDSMessages.ContainsKey(msgId); } catch { }
-                    try { hasBlk = tb.allDDSBlocks.ContainsKey(blockId); } catch { }
-                    var sc = npc.speechController;
-                    int qc = -1; bool active = false, bub = false;
-                    try { qc = sc.speechQueue != null ? sc.speechQueue.Count : -1; } catch { }
-                    try { active = sc.speechActive; } catch { }
-                    try { bub = sc.activeSpeechBubble != null; } catch { }
-                    MotivesPlugin.Log.LogInfo($"[SODMotives][spdiag] afterSpeak Strings.Get(dds.blocks,{blockId})='{rb}' (len={(rb == null ? -1 : rb.Length)}) hasMsg={hasMsg} hasBlk={hasBlk} | queue={qc} active={active} bubble={bub}");
-                    _watchSc = sc; _watchFrames = 10; _watchText = text;
+                    string rbENG = null; try { rbENG = Strings.GetENG("dds.blocks", blockId); } catch { }
+                    string dTab = ReadBack(Strings.stringTable, "dds.blocks", blockId);
+                    string dENG = ReadBack(Strings.stringTableENG, "dds.blocks", blockId);
+                    MotivesPlugin.Log.LogInfo($"[SODMotives][spdiag] Get='{rb}'(len={(rb == null ? -1 : rb.Length)}) GetENG='{rbENG}' | directTable='{dTab}' directENG='{dENG}'");
+                    _watchSc = npc.speechController; _watchFrames = 10; _watchText = text;
                 }
                 catch (Exception d) { MotivesPlugin.Log.LogWarning($"[SODMotives][spdiag] err: {d.Message}"); }
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] SpeakLine error: {e.Message}"); }
         }
 
-        // Write a display string straight into Strings.stringTable[dict][key].displayStr — the
-        // exact place Strings.Get reads. WriteToDictionary did not surface runtime writes readably
-        // this session (confirmed via spdiag), so we populate the read store directly.
+        // Write the display string into BOTH Strings.stringTable AND Strings.stringTableENG —
+        // Strings.Get likely resolves against the ENG base table (which our earlier stringTable-only
+        // write missed, hence Get still returned ''). Populate both so whichever Get reads has it.
         private static void WriteStringDirect(string dict, string key, string text)
+        {
+            WriteInto(Strings.stringTable, dict, key, text, "stringTable");
+            WriteInto(Strings.stringTableENG, dict, key, text, "stringTableENG");
+        }
+
+        private static void WriteInto(
+            Il2CppSystem.Collections.Generic.Dictionary<string, Il2CppSystem.Collections.Generic.Dictionary<string, Strings.DisplayString>> table,
+            string dict, string key, string text, string label)
         {
             try
             {
-                var table = Strings.stringTable;
-                if (table == null) return;
+                if (table == null) { MotivesPlugin.Log.LogInfo($"[SODMotives][spdiag] {label} is null"); return; }
                 Il2CppSystem.Collections.Generic.Dictionary<string, Strings.DisplayString> inner;
                 if (!table.TryGetValue(dict, out inner) || inner == null)
                 {
@@ -193,7 +195,24 @@ namespace SODMotives
                 ds.alternateStr = text;
                 inner[key] = ds;
             }
-            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] WriteStringDirect: {e.Message}"); }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][spdiag] WriteInto({label}): {e.Message}"); }
+        }
+
+        // Direct read-back of stringTable[dict][key].displayStr, bypassing Strings.Get.
+        private static string ReadBack(
+            Il2CppSystem.Collections.Generic.Dictionary<string, Il2CppSystem.Collections.Generic.Dictionary<string, Strings.DisplayString>> table,
+            string dict, string key)
+        {
+            try
+            {
+                if (table == null) return "<null-table>";
+                Il2CppSystem.Collections.Generic.Dictionary<string, Strings.DisplayString> inner;
+                if (!table.TryGetValue(dict, out inner) || inner == null) return "<no-dict>";
+                Strings.DisplayString d;
+                if (!inner.TryGetValue(key, out d) || d == null) return "<no-key>";
+                return d.displayStr;
+            }
+            catch (Exception e) { return "<err:" + e.Message + ">"; }
         }
 
         // Deferred read of the speech bubble a few frames after Speak, so we can see whether

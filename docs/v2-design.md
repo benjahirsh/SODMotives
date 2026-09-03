@@ -214,9 +214,17 @@ F10 teleport to scene · F11 to victim work · F12 to nearest affair-knower's ho
 - **C1 ✅** clue-overlap + interro-timing + location logging  _(07b9fea)_.
 - **C1b ✅** interro stale-speech + F8 cheat  _(84becd1)_ → then blank-bubble saga → **RESOLVED via
   bubble hijack** _(dd2fd54)_; diagnostics stripped. Interrogation loop CONFIRMED in-game ✅.
-- **C2 ✅** affair motive-note authored by an affair PARTICIPANT, not the betrayed killer
-  _(11af7a0)_ — fixes the "love letter from the jealous betrayed spouse" nonsense. **Needs in-game
-  spot-check** (log shows `suspect X writtenBy Y` when they differ), but low risk.
+- **C2 ✅ CLUE SYSTEM REWRITTEN** — model is now "real affair letters of the victim's apartment
+  residents": for each resident with a `paramour`, one love letter between the two ACTUAL
+  participants (`SetWriter`+`SetReciever`, never self-addressed), ≤2, no fake decoys. Placement uses
+  `victim.home.PlaceObject(notePreset, owner, sender, reciever, out furn, forcedOwnership,
+  placeClosestTo:home.anchorNode, ddsOverride:treeId, ...)` — the primitive `SpawnItem` wraps —
+  which returns the REAL note (not a StorageBox) IN the home (`SpawnItem` gave containers + routed
+  work/retail presets to workplaces; dropped all JobTag/activeMurderItems/SpawnItem machinery).
+  Note preset filtered for a clean home document note (no retail/game-location/work/sub-spawn/folder).
+  Gated to affair murders only (`MurderSelector.AffairByVictim`) so vanilla cases get nothing.
+  Commits 11af7a0→010ad3b. **Confirmed in-game:** affair murder → one clean love letter at the
+  victim's home (`atHome=True`); non-affair murders inject nothing.
 - **C3** gossip-density tuning — adjust `Gossip.Audience` if finding a knower feels off.
 - **C4** pair interrogation "what's going on between X and Y?" (two-person pick / second
   armed context in `Interrogation.cs`).

@@ -3,118 +3,125 @@ using System.Collections.Generic;
 
 namespace SODMotives
 {
-    // Injects ONE discoverable, deliberately-ambiguous physical note per motivated
-    // case, wired (writer/owner) to the killer & victim so it appears in the
-    // evidence UI. Email/phone-log injection has no clean API in SoD, so we use
-    // readable notes/letters (the same item type the player already finds).
+    // Injects readable love-letter clues that represent the REAL affairs of the victim's
+    // apartment residents. Each letter is placed IN the victim's home via the game's own
+    // placement primitive (NewGameLocation.PlaceObject), written by one participant and
+    // addressed to the other, with a motive-appropriate DDS document tree overridden on.
     internal static class ClueInjector
     {
         internal static bool Enable = true;
-        internal static int MaxClues = 3;   // notes injected per case (killer + red herrings)
+        internal static int MaxClues = 3;   // safety cap (a couple = at most ~2 affairs)
         internal static bool ObviousNames = true;  // TESTING: rename injected notes so they're easy to spot
-        internal static float FingerprintChance = 0.7f; // chance a note carries the author's prints (else handwriting-only)
+        internal static float FingerprintChance = 0.7f; // chance a note carries the author's prints
 
         private static readonly Random _rng = new Random();
 
         private static InteractablePreset _notePreset;
         private static bool _scanned;
 
-        // For F9 overlay + de-dup.
+        // For F9 overlay.
         internal static readonly Dictionary<int, List<string>> CluesByVictim = new Dictionary<int, List<string>>();
         private static readonly HashSet<int> _injected = new HashSet<int>();
 
+        // Affair-appropriate DDS document trees (verified treeType==document, participants loose,
+        // message saidBy:0->saidTo:1 so writer=from, reciever=to). vmail trees render blank.
+        private static readonly (string id, string name)[] InfidelityTrees = {
+            ("9b6d2119-f1a0-4b47-880d-1ee6fb417716", "Cheaters_Letter"),
+            ("e6cfbb79-cc0b-4848-b699-280cbe261c3e", "Cheaters_Love_Poem"),
+            ("7b3abe1a-30dd-41b1-b0ec-8fe6e739d2a2", "Flower_Note_Affair"),
+        };
+
+        // ---- preset selection: a clean, home-placeable, single-page readable note ----
+        // The physical placement is decided by the PRESET, not by any where-hint: retail/
+        // game-location/work presets route to shops & workplaces; sub-spawn/folder presets get
+        // tucked inside a container ("filing box"). So we exclude those and prefer a standalone
+        // note whose readingSource renders a DDS document (evidenceNote / mainEvidenceText).
         private static void EnsureNotePreset()
         {
             if (_scanned) return;
-            _scanned = true;
             try
             {
                 var tb = Toolbox.Instance;
-                if (tb == null) return;
+                var list = tb != null ? tb.placePerOwnerInteractables : null;
+                if (list == null) return;   // not ready yet — retry next call (don't mark scanned)
+                _scanned = true;
 
-                var candidates = new List<InteractablePreset>();
-                AddReadable(tb.placePerOwnerInteractables, candidates);
-                AddReadable(tb.placeAtGameLocationInteractables, candidates);
-
-                MotivesPlugin.Log.LogInfo($"[SODMotives] clue: {candidates.Count} readable placeable presets found:");
                 InteractablePreset best = null; int bestScore = -1;
-                foreach (var p in candidates)
+                for (int i = 0; i < list.Count; i++)
                 {
-                    string nm = SafeName(p);
-                    string src = "?";
-                    try { src = p.readingSource.ToString(); } catch { }
-                    string low = nm.ToLowerInvariant();
-                    int s = 0;
-                    if (src == "evidenceNote") s += 4; else if (src == "mainEvidenceText") s += 3; else if (src == "multipageEvidence") s += 2;
-                    if (low.Contains("note")) s += 4; else if (low.Contains("letter")) s += 3; else if (low.Contains("memo") || low.Contains("paper") || low.Contains("postit")) s += 2;
-                    MotivesPlugin.Log.LogInfo($"[SODMotives] clue:    '{nm}' (readingSource={src}) score={s}");
+                    var p = list[i];
+                    if (p == null || HardExclude(p)) continue;
+                    int s = Score(p);
                     if (s > bestScore) { bestScore = s; best = p; }
                 }
                 _notePreset = best;
-                MotivesPlugin.Log.LogInfo(_notePreset != null
-                    ? $"[SODMotives] clue: chosen note preset = '{SafeName(_notePreset)}'"
-                    : "[SODMotives] clue: NO readable note preset found (injection disabled).");
+                MotivesPlugin.Log.LogInfo(best != null
+                    ? $"[SODMotives] clue: chosen note preset = '{SafeName(best)}' (src={SafeSrc(best)} score={bestScore})"
+                    : "[SODMotives] clue: NO clean home-note preset found.");
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: preset scan error: {e}"); }
         }
 
-        private static void AddReadable(Il2CppSystem.Collections.Generic.List<InteractablePreset> list, List<InteractablePreset> outList)
+        // Must-not: not readable, retail leaflet, game-location distributed, work-placed,
+        // building-restricted, or a reading source that won't render a document tree.
+        private static bool HardExclude(InteractablePreset p)
         {
-            if (list == null) return;
             try
             {
-                for (int i = 0; i < list.Count; i++)
-                {
-                    var p = list[i];
-                    if (p == null) continue;
-                    bool reading = false;
-                    try { reading = p.readingEnabled; } catch { }
-                    if (reading) outList.Add(p);
-                }
+                if (!p.readingEnabled) return true;
+                if (p.retailItem != null) return true;
+                if (p.alwaysPlaceAtGameLocation) return true;
+                if (p.frequencyPerGamelocationMin > 0) return true;
+                if (p.placeAtWork) return true;
+                if (p.limitToCertainBuildings) return true;
+                var src = p.readingSource;
+                if (src != InteractablePreset.ReadingModeSource.evidenceNote &&
+                    src != InteractablePreset.ReadingModeSource.mainEvidenceText) return true;
             }
-            catch { }
+            catch { return true; }
+            return false;
+        }
+
+        // Prefer standalone (no sub-spawn / no folder), evidenceNote, home-placed, note/letter-named.
+        private static int Score(InteractablePreset p)
+        {
+            int s = 0;
+            try { if (p.readingSource == InteractablePreset.ReadingModeSource.evidenceNote) s += 10; else s += 5; } catch { }
+            try { if (!p.useSubSpawning) s += 4; } catch { }
+            try { if (p.folderPlacementChance <= 0f) s += 4; } catch { }
+            try { if (p.placeAtHome) s += 2; } catch { }
+            try { if (p.putDownAtHome) s += 1; } catch { }
+            string low = SafeName(p).ToLowerInvariant();
+            if (low.Contains("note")) s += 4; else if (low.Contains("letter")) s += 3;
+            else if (low.Contains("memo") || low.Contains("paper") || low.Contains("postit")) s += 2;
+            return s;
         }
 
         internal static void InjectForCase(MurderController.Murder murder)
         {
             if (!Enable || murder == null) return;
-            Human victim = murder.victim, killer = murder.murderer;
-            if (victim == null || killer == null) return;
+            Human victim = murder.victim;
+            if (victim == null) return;
             if (_injected.Contains(victim.humanID)) return;   // once per case
             _injected.Add(victim.humanID);
 
             try
             {
-                // Prefer a REAL vanilla lead's spawn config (proven-valid item + itemTag +
-                // security + ownership rule for this murder); fall back to a scanned preset.
-                SpawnCfg cfg = GetLeadTemplate(murder);
-                if (!cfg.valid)
-                {
-                    EnsureNotePreset();
-                    if (_notePreset == null) { MotivesPlugin.Log.LogInfo("[SODMotives] clue: no usable note preset; skipping."); return; }
-                    cfg = new SpawnCfg { preset = _notePreset, security = 0, rule = InteractablePreset.OwnedPlacementRule.both, priority = 5, tag = default(JobPreset.JobTag), templateWhere = MurderPreset.LeadSpawnWhere.victimHome, valid = true };
-                }
+                EnsureNotePreset();
+                if (_notePreset == null) { MotivesPlugin.Log.LogInfo("[SODMotives] clue: no usable note preset; skipping."); return; }
 
-                try
-                {
-                    string vHome = victim.home != null ? victim.home.name : "<null>";
-                    string kHome = killer.home != null ? killer.home.name : "<null>";
-                    MotivesPlugin.Log.LogInfo($"[SODMotives] clue: inject start state={murder.state} victimHome={vHome} killerHome={kHome} cfgItem='{SafeName(cfg.preset)}' tag={cfg.tag} where={cfg.templateWhere}");
-                }
-                catch { }
+                NewAddress home = null; try { home = victim.home; } catch { }
+                if (home == null) { MotivesPlugin.Log.LogInfo("[SODMotives] clue: victim has no home; skipping."); return; }
 
-                // MODEL: inject a love letter for each REAL affair among the RESIDENTS of the
-                // victim's apartment (at most ~2 — a couple). Each letter is between the two ACTUAL
-                // participants (writer -> reciever), so it's never self-addressed and never a fake
-                // decoy between non-lovers. Other motives (workplace firing/promotion, etc.) will get
-                // their own clue types once those event systems land.
+                MotivesPlugin.Log.LogInfo($"[SODMotives] clue: inject start state={murder.state} victimHome={home.name} notePreset='{SafeName(_notePreset)}'");
+
+                // Affairs of the home's residents (dedup by pair). At most a couple's-worth.
                 var affairs = new List<(Human sender, Human recipient)>();
                 var seenPairs = new HashSet<long>();
                 try
                 {
-                    var inhab = victim.home != null ? victim.home.inhabitants : null;
+                    var inhab = home.inhabitants;
                     if (inhab != null)
-                    {
                         for (int i = 0; i < inhab.Count; i++)
                         {
                             Human h = inhab[i];
@@ -124,117 +131,66 @@ namespace SODMotives
                             if (!seenPairs.Add(PairKey(h.humanID, lover.humanID))) continue;
                             affairs.Add((h, lover));
                         }
-                    }
                 }
                 catch { }
 
                 if (affairs.Count == 0)
                 {
-                    MotivesPlugin.Log.LogInfo($"[SODMotives] clue: no affairs among residents of {(victim.home != null ? victim.home.name : "<null>")}; no motive notes injected.");
+                    MotivesPlugin.Log.LogInfo($"[SODMotives] clue: no affairs among residents of {home.name}; no motive notes injected.");
                     return;
                 }
 
                 if (!CluesByVictim.TryGetValue(victim.humanID, out var recList)) { recList = new List<string>(); CluesByVictim[victim.humanID] = recList; }
 
-                // The game keys murder items by JobTag (Murder.activeMurderItems), so
-                // spawning several with the SAME tag collapses them onto ONE carrier
-                // (last writer wins -> killer clue overwritten, decoy text landing on a
-                // pre-existing vanilla multipage doc). Give each clue a DISTINCT, unused
-                // tag and verify each spawn is a fresh, distinct interactable.
-                var usedTags = CollectUsedTags(murder);
-                var usedIds = new HashSet<int>();
                 int idx = 0, placed = 0;
                 foreach (var af in affairs)
                 {
                     if (placed >= MaxClues) break;
                     var pick = InfidelityTrees[idx % InfidelityTrees.Length];
                     string treeId = pick.id, treeName = pick.name;
-                    var where = MurderPreset.LeadSpawnWhere.victimHome;
+                    idx++;
 
-                    if (!AllocTag(usedTags, out JobPreset.JobTag clueTag))
+                    Interactable note = PlaceHomeNote(home, victim, af.sender, af.recipient, treeId);
+                    if (note == null)
                     {
-                        MotivesPlugin.Log.LogInfo("[SODMotives] clue: no free JobTag left; stopping clue injection for this case.");
-                        break;
-                    }
-
-                    // Try the preferred location, then fall back; reject any carrier we've
-                    // already used this case (identical-item collision) and try the next.
-                    Interactable clue = null;
-                    MurderPreset.LeadSpawnWhere usedWhere = where;
-                    foreach (var w in PlacementOrder(where, cfg.templateWhere))
-                    {
-                        var cand = TrySpawn(murder, cfg, w, clueTag);
-                        if (cand == null) continue;
-                        int cid = -1; try { cid = cand.id; } catch { }
-                        if (cid >= 0 && usedIds.Contains(cid))
-                        {
-                            MotivesPlugin.Log.LogInfo($"[SODMotives] clue: tag={clueTag} at {w} returned already-used item id={cid}; trying next placement.");
-                            continue;
-                        }
-                        clue = cand; usedWhere = w; break;
-                    }
-                    where = usedWhere;
-
-                    if (clue == null)
-                    {
-                        MotivesPlugin.Log.LogInfo($"[SODMotives] clue: SpawnItem null/duplicate for affair {MotivesPlugin.Name(af.sender)}->{MotivesPlugin.Name(af.recipient)}.");
-                        idx++;
+                        MotivesPlugin.Log.LogInfo($"[SODMotives] clue: PlaceObject failed for affair {MotivesPlugin.Name(af.sender)}->{MotivesPlugin.Name(af.recipient)}.");
                         continue;
                     }
-                    try { usedIds.Add(clue.id); } catch { }
-
-                    // SpawnItem's RETURN can be the CONTAINER it dropped the note into (a StorageBox),
-                    // not the note itself — overriding that leaves a box with our hover/name but no
-                    // readable letter (the "filing box" bug). The real readable note is the item the
-                    // game tracks for this tag in Murder.activeMurderItems. Prefer it as the target.
-                    Interactable active = null;
-                    try { if (murder.activeMurderItems != null) murder.activeMurderItems.TryGetValue(clueTag, out active); } catch { }
-                    string retPreset = SafeItemPreset(clue);
-                    string actPreset = SafeItemPreset(active);
-                    Interactable target = (active != null) ? active : clue;
 
                     bool textSet = false;
                     try
                     {
-                        // A real love letter FROM one participant TO the other — SetReciever (note the
-                        // game's spelling) sets the addressee (participantB), so it's never self-addressed.
-                        // The reading page renders LIVE from the tree each open, so the DDS override is enough.
-                        target.SetWriter(af.sender);
-                        try { target.SetReciever(af.recipient); } catch { }
-                        target.SetDDSOverride(treeId);      // sets Interactable.dds -> page + tooltip
-                        var ev = target.evidence;
-                        if (ev != null)
-                        {
-                            ev.SetOverrideDDS(treeId);    // case-file summary text
-                            ev.SetWriter(af.sender);
-                        }
-                        // Sometimes stamp the sender's fingerprints (traceable by prints as well as
-                        // handwriting); sometimes not, so it isn't formulaic.
+                        // From sender to recipient (writer->participantA, reciever->participantB).
+                        note.SetWriter(af.sender);
+                        try { note.SetReciever(af.recipient); } catch { }
+                        note.SetDDSOverride(treeId);
+                        var ev = note.evidence;
+                        if (ev != null) { ev.SetOverrideDDS(treeId); ev.SetWriter(af.sender); }
                         if (_rng.NextDouble() < FingerprintChance)
                         {
-                            try { target.AddNewDynamicFingerprint(af.sender, Interactable.PrintLife.manualRemoval); }
+                            try { note.AddNewDynamicFingerprint(af.sender, Interactable.PrintLife.manualRemoval); }
                             catch (Exception e4) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: print add: {e4.Message}"); }
                         }
-                        // TESTING: make the note obvious in the evidence UI.
                         if (ObviousNames && ev != null)
                         {
                             try { ev.AddOrSetCustomName(Evidence.DataKey.name, $"MODCLUE affair {MotivesPlugin.Name(af.sender)}->{MotivesPlugin.Name(af.recipient)}"); } catch { }
-                            try { target.UpdateName(true, Evidence.DataKey.name); } catch { target.UpdateName(); }
+                            try { note.UpdateName(true, Evidence.DataKey.name); } catch { note.UpdateName(); }
                         }
-                        else target.UpdateName();
+                        else note.UpdateName();
                         textSet = true;
                     }
                     catch (Exception e2) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: set-text error: {e2.Message}"); }
 
-                    // Where exactly did it land (room + address + precise spot) so overlaps
-                    // are visible and it's findable via F9.
-                    string locDesc = "?", posDesc = "";
+                    // Location + verification (did it actually land in the victim's home?).
+                    string locDesc = "?", posDesc = ""; bool atHome = false;
                     try
                     {
-                        var node = target.node;
+                        var node = note.node;
                         if (node != null)
                         {
-                            string loc = node.gameLocation != null ? node.gameLocation.name : "?";
+                            var gl = node.gameLocation;
+                            string loc = gl != null ? gl.name : "?";
+                            atHome = gl != null && gl.name == home.name;
                             string room = ""; try { if (node.room != null) room = node.room.GetName(); } catch { }
                             locDesc = string.IsNullOrEmpty(room) ? loc : $"{room}, {loc}";
                             try { var p = node.position; posDesc = $" @({p.x:0.0},{p.y:0.0},{p.z:0.0})"; } catch { }
@@ -242,124 +198,60 @@ namespace SODMotives
                     }
                     catch { }
 
-                    // Verify the override landed on OUR readable note (not the container SpawnItem
-                    // returned). spawnReturn vs active tells us which the game gave us.
-                    int clueId = -1; string ddsNow = "?";
-                    try { clueId = target.id; } catch { }
-                    try { ddsNow = target.dds; } catch { }
+                    int clueId = -1; string ddsNow = "?", presetNm = "?";
+                    try { clueId = note.id; } catch { }
+                    try { ddsNow = note.dds; } catch { }
+                    try { presetNm = note.preset != null ? note.preset.name : "<null>"; } catch { }
                     bool ddsOk = ddsNow == treeId;
 
                     bool victimInvolved = Motive.Same(af.sender, victim) || Motive.Same(af.recipient, victim);
-                    string rec = $"affair {(victimInvolved ? "(victim) " : "")}from {MotivesPlugin.Name(af.sender)} to {MotivesPlugin.Name(af.recipient)} @ {where} [{locDesc}]{posDesc} dds='{treeName}' tag={clueTag} id={clueId} target='{SafeItemPreset(target)}' (spawnReturn='{retPreset}' active='{actPreset}') [text={textSet} ddsOk={ddsOk}]";
+                    string rec = $"affair {(victimInvolved ? "(victim) " : "")}from {MotivesPlugin.Name(af.sender)} to {MotivesPlugin.Name(af.recipient)} [{locDesc}]{posDesc} atHome={atHome} dds='{treeName}' id={clueId} preset='{presetNm}' [text={textSet} ddsOk={ddsOk}]";
                     recList.Add(rec);
                     MotivesPlugin.Log.LogInfo($"[SODMotives] clue: INJECTED {rec}");
-                    idx++; placed++;
+                    placed++;
                 }
                 MotivesPlugin.Log.LogInfo($"[SODMotives] clue: placed {placed} affair note(s) for victim {MotivesPlugin.Name(victim)} ({affairs.Count} resident affair(s) found).");
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: inject error: {e}"); }
         }
 
-        // Map each motive to EXISTING game DDS trees whose letter text fits (id, name).
-        // Applied via SetDDSOverride so the note reads as real, motive-appropriate mail.
-        // ALL verified treeType==document with loose participants (render reliably on
-        // a physical note). vmail-type trees (Personal_Warning, Work_Stealing, ...) show
-        // blank pages, so they are deliberately NOT used here.
-        private static readonly (string id, string name)[] InfidelityTrees = {
-            ("9b6d2119-f1a0-4b47-880d-1ee6fb417716", "Cheaters_Letter"),
-            ("e6cfbb79-cc0b-4848-b699-280cbe261c3e", "Cheaters_Love_Poem"),
-            ("7b3abe1a-30dd-41b1-b0ec-8fe6e739d2a2", "Flower_Note_Affair"),
-        };
-        private static readonly (string id, string name)[] ProfessionalTrees = {
-            ("0eaf0e5e-87a7-4c32-b6aa-333e1a3f8157", "Job_Humiliation"),
-            ("0b32451b-a6d3-40a3-ba1d-5b645e251bdd", "Dodgy_NoteRat"),
-            ("0a2dc736-69bd-46f3-b17c-75714e47c680", "Murder_Half_writen_letter"),
-        };
-        private static readonly (string id, string name)[] MoneyTrees = {
-            ("de8d1d15-25a6-4f24-ae06-172f631fa589", "DebtCollectionLetter"),
-            ("ea869950-7590-4ca2-b472-9811dd583e57", "BillFinalNotice"),
-            ("0b32451b-a6d3-40a3-ba1d-5b645e251bdd", "Dodgy_NoteRat"),
-        };
-        private static readonly (string id, string name)[] FeudTrees = {
-            ("0b32451b-a6d3-40a3-ba1d-5b645e251bdd", "Dodgy_NoteRat"),
-            ("0a2dc736-69bd-46f3-b17c-75714e47c680", "Murder_Half_writen_letter"),
-            ("250ed862-9f19-4ed4-83fb-3f1f61209887", "Ev_StickyNote"),
-        };
-
-        private static void GetClue(MotiveType type, int idx, out string treeId, out string treeName, out MurderPreset.LeadSpawnWhere where)
+        // Place a readable note INSIDE the victim's home via NewGameLocation.PlaceObject — the
+        // primitive MurderController.SpawnItem wraps. Unlike SpawnItem it returns the actual note
+        // (not the container) and is constrained to this location. Retry ownership rules until one
+        // yields a placement.
+        private static Interactable PlaceHomeNote(NewAddress home, Human victim, Human sender, Human recipient, string treeId)
         {
-            (string id, string name)[] pool;
-            switch (type)
+            // belongsTo = a resident of this home so ownership resolves here.
+            Human owner = victim;
+            try { if (recipient != null && home.inhabitants != null && home.inhabitants.Contains(recipient)) owner = recipient; } catch { }
+
+            var rules = new[]
             {
-                case MotiveType.Infidelity: pool = InfidelityTrees; where = MurderPreset.LeadSpawnWhere.victimHome; break;
-                case MotiveType.Professional: pool = ProfessionalTrees; where = MurderPreset.LeadSpawnWhere.victimWork; break;
-                case MotiveType.Money: pool = MoneyTrees; where = MurderPreset.LeadSpawnWhere.victimHome; break;
-                default: pool = FeudTrees; where = MurderPreset.LeadSpawnWhere.victimHome; break;
-            }
-            var pick = pool[idx % pool.Length];
-            treeId = pick.id; treeName = pick.name;
-        }
-
-        private struct SpawnCfg
-        {
-            public InteractablePreset preset;
-            public int security;
-            public InteractablePreset.OwnedPlacementRule rule;
-            public int priority;
-            public JobPreset.JobTag tag;
-            public MurderPreset.LeadSpawnWhere templateWhere;
-            public bool valid;
-        }
-
-        // Find a readable-note lead in THIS murder's preset and reuse its proven-valid
-        // spawn parameters (item preset, itemTag, security, ownership rule). Also logs
-        // every vanilla lead so we can see valid combinations.
-        private static SpawnCfg GetLeadTemplate(MurderController.Murder murder)
-        {
-            var result = new SpawnCfg { valid = false };
-            try
+                InteractablePreset.OwnedPlacementRule.both,
+                InteractablePreset.OwnedPlacementRule.prioritiseNonOwned,
+                InteractablePreset.OwnedPlacementRule.nonOwnedOnly,
+            };
+            foreach (var rule in rules)
             {
-                var preset = murder.preset;
-                if (preset == null || preset.leads == null) return result;
-                var leads = preset.leads;
-                int bestScore = -1;
-                for (int i = 0; i < leads.Count; i++)
+                try
                 {
-                    var lead = leads[i];
-                    if (lead == null) continue;
-                    InteractablePreset sp = null; try { sp = lead.spawnItem; } catch { }
-                    bool reading = false; string src = "?";
-                    if (sp != null) { try { reading = sp.readingEnabled; src = sp.readingSource.ToString(); } catch { } }
-                    string nm = sp != null ? SafeName(sp) : "<null>";
-                    string wh = "?", tg = "?";
-                    try { wh = lead.where.ToString(); } catch { }
-                    try { tg = lead.itemTag.ToString(); } catch { }
-                    MotivesPlugin.Log.LogInfo($"[SODMotives] clue: vanilla lead item='{nm}' reading={reading} src={src} where={wh} tag={tg}");
-                    if (sp == null || !reading) continue;
-                    int s = 0; string low = nm.ToLowerInvariant();
-                    if (src == "evidenceNote") s += 4; else if (src == "mainEvidenceText") s += 3; else if (src == "multipageEvidence") s += 1;
-                    if (low.Contains("note")) s += 3; else if (low.Contains("letter")) s += 2;
-                    if (s > bestScore)
-                    {
-                        bestScore = s;
-                        result = new SpawnCfg
-                        {
-                            preset = sp,
-                            security = SafeInt(() => lead.security, 0),
-                            rule = lead.ownershipRule,
-                            priority = SafeInt(() => lead.priority, 5),
-                            tag = lead.itemTag,
-                            templateWhere = lead.where,
-                            valid = true
-                        };
-                    }
+                    FurnitureLocation furn;
+                    Interactable note = home.PlaceObject(
+                        _notePreset, owner, sender, recipient, out furn,
+                        passVariable: false,           // selects PlaceObject overload 1
+                        forceSecuritySettings: true,
+                        forcedSecurity: 0,
+                        forcedOwnership: rule,
+                        forcedPriority: 5,
+                        placeClosestTo: home.anchorNode,
+                        ddsOverride: treeId,
+                        ignoreLimits: true);
+                    if (note != null) return note;
                 }
+                catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: PlaceObject({rule}) threw: {e.Message}"); }
             }
-            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: lead template error: {e.Message}"); }
-            return result;
+            return null;
         }
-
-        private static int SafeInt(Func<int> f, int dflt) { try { return f(); } catch { return dflt; } }
 
         private static long PairKey(int x, int y)
         {
@@ -367,76 +259,14 @@ namespace SODMotives
             return ((long)lo << 32) | (uint)hi;
         }
 
-        private static string SafeItemPreset(Interactable it)
-        {
-            try { return it == null ? "<null>" : (it.preset != null ? it.preset.name : "<no-preset>"); }
-            catch { return "?"; }
-        }
-
-        private static Interactable TrySpawn(MurderController.Murder murder, SpawnCfg cfg, MurderPreset.LeadSpawnWhere where, JobPreset.JobTag tag)
-        {
-            try
-            {
-                return MurderController.Instance.SpawnItem(
-                    murder, cfg.preset, where,
-                    MurderPreset.LeadCitizen.victim,   // belongsTo
-                    MurderPreset.LeadCitizen.victim,   // writer placeholder (overridden later)
-                    MurderPreset.LeadCitizen.victim,   // receiver
-                    cfg.security, cfg.rule, cfg.priority, tag);
-            }
-            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: SpawnItem threw at {where} tag={tag}: {e.Message}"); return null; }
-        }
-
-        // JobTags already claimed by this murder's real leads — so our clues never collide
-        // with a vanilla item's tag slot (Murder.activeMurderItems is tag-keyed).
-        private static HashSet<int> CollectUsedTags(MurderController.Murder murder)
-        {
-            var used = new HashSet<int>();
-            try
-            {
-                var preset = murder.preset;
-                if (preset != null && preset.leads != null)
-                {
-                    var leads = preset.leads;
-                    for (int i = 0; i < leads.Count; i++)
-                    {
-                        var lead = leads[i];
-                        if (lead == null) continue;
-                        try { used.Add((int)lead.itemTag); } catch { }
-                    }
-                }
-            }
-            catch { }
-            return used;
-        }
-
-        // Claim the next unused JobTag (A..Z = 0..25). Marks it used so each clue is distinct.
-        private static bool AllocTag(HashSet<int> used, out JobPreset.JobTag tag)
-        {
-            for (int i = 0; i < 26; i++)
-            {
-                if (used.Add(i)) { tag = (JobPreset.JobTag)i; return true; }
-            }
-            tag = default(JobPreset.JobTag);
-            return false;
-        }
-
-        // Preferred location first, then the vanilla template's location, then fallbacks.
-        private static List<MurderPreset.LeadSpawnWhere> PlacementOrder(MurderPreset.LeadSpawnWhere first, MurderPreset.LeadSpawnWhere template)
-        {
-            var order = new List<MurderPreset.LeadSpawnWhere>();
-            void Add(MurderPreset.LeadSpawnWhere w) { if (!order.Contains(w)) order.Add(w); }
-            Add(first);
-            Add(template);
-            Add(MurderPreset.LeadSpawnWhere.victimHome);
-            Add(MurderPreset.LeadSpawnWhere.killerHome);
-            Add(MurderPreset.LeadSpawnWhere.victimWork);
-            return order;
-        }
-
         private static string SafeName(InteractablePreset p)
         {
             try { return p != null ? p.name : "<null>"; } catch { return "?"; }
+        }
+
+        private static string SafeSrc(InteractablePreset p)
+        {
+            try { return p != null ? p.readingSource.ToString() : "?"; } catch { return "?"; }
         }
     }
 }

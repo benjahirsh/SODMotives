@@ -265,7 +265,6 @@ namespace SODMotives
                     MotivesPlugin.Log.LogInfo($"[SODMotives] GHOST MODE {(DebugTools.Ghost ? "ON" : "OFF")}");
                 }
                 if (DebugTools.Ghost) DebugTools.ApplyGhost();
-                Interrogation.TickWatch();   // diagnostics: deferred speech-bubble read
             }
             catch { }
         }

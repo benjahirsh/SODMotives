@@ -192,35 +192,33 @@ know this person?" picker (arm-then-fire; GUID-unique speech ids); gossip seeded
 neighbours/coworkers/friends via a type-keyed audience; location-aware knower logging +
 F9/F12 aids; **F8 = ALWAYS-ANSWER cheat** (NPCs never refuse the picker, no bribe).
 
-**In-game so far:** clue OBJECTS now spawn distinct (overlap fixed ✅). Interro speech saga:
-(1) rendered STALE text → GUID ids _(84becd1)_ removed the collision but exposed (2) a BLANK
-bubble via the direct overload → restored the DDS-**message** recipe _(d9c9533)_, still blank;
-(3) FINAL root cause: passing a non-null `interactionInstance` makes `SpeechBubbleController.Setup`
-source text from that interaction's branch (not our msgId) → empty. FIX: `Speak(msgId, false,
-false, null, null, null)` — all trailing args null _(975f951)_. Two independent decompile passes,
-high confidence. **Needs re-test — should finally render the correct gossip text.**
+**In-game so far:** clue OBJECTS spawn distinct (overlap fixed ✅). **Interrogation speech CONFIRMED
+WORKING ✅** — after a long saga (stale text, then blank), the root cause was that NO Speak/DDS/Strings
+path renders runtime text: `Strings.Get` rejects runtime-added entries even when they sit in
+`stringTable`/`stringTableENG` (proven by `[spdiag]` direct read-back). SOLUTION (dd2fd54): don't
+Speak — on pick, arm `{npc.humanID → gossip}`, and a postfix on `SpeechBubbleController.Setup` REPLACES
+that NPC's vanilla answer bubble's `actualString`+`words` with our line, riding the proven render.
+Log shows `hijacked bubble for <NPC> -> "..."`. Diagnostics stripped (this commit). This is a clean
+SAVE POINT — interrogation loop end-to-end works (F8 no-bribe, F9/F12 find knowers, ask → NPC says gossip).
 
-**PENDING — re-validate the interro fix, then C1 (may need no code):**
-Fully restart, fresh sandbox, fast-forward to an affair murder, then check `[SODMotives]`
-+ what actually renders in the speech bubble. Turn on **F8** to skip bribes while testing.
-- **Interro (RE-TEST the GUID render fix — still unverified):** gossip rule is FINALIZED as
-  "reveal affairs the SUBJECT participates in" (generic; any citizen; a non-participant like a
-  betrayed spouse correctly returns nothing). So ask a knower about **each of the 3 love-triangle
-  members** (see F9): the **2 affair participants** reveal gossip; the **betrayed partner** logs
-  `-> (nothing to add)` (correct). For a participant, confirm the **in-game speech bubble now
-  matches the `[interro]` log line** (this is what proves the GUID stale-text fix). Gossip appends
-  **after** the vanilla answer; **F8** skips bribes.
-- **Clues:** each `clue: INJECTED` shows distinct `tag=`/`id=`/`@(x,y,z)`/`ddsOk=True`.
-  Objects confirmed distinct in-game ✅. **Still open (log reveals):** does a fresh unused
-  `JobTag` make a brand-new standalone item vs route into an owned doc? Check `preset=`/`ddsOk`.
-- **Location:** affair log lists nearest knowers `Name — Address (bldg/floor) — Dm`; **F9**
-  shows the same; **F10** = scene, **F12** = nearest knower's home.
+**Gossip rule (FINALIZED):** "reveal affairs the SUBJECT participates in" — generic (any citizen,
+not murder-gated); a non-participant (e.g. a betrayed spouse) correctly returns nothing. Ask about
+each of the 3 love-triangle members: the 2 affair participants reveal gossip; the betrayed partner
+logs `(nothing to add)`. Betrayed-partner-victim murders stay solvable via the graph hop (ask about
+the victim's cheating partner).
+
+**Debug/testing keys:** F7 ghost · F8 always-answer (no bribe) · F9 case solution + nearest knowers ·
+F10 teleport to scene · F11 to victim work · F12 to nearest affair-knower's home.
 
 **Atomic next chunks** (each = one clear-able session ending in a commit):
-- **C1 ✅ (code)** clue-overlap + interro-timing + location logging  _(07b9fea)_.
-- **C1b ✅ (code)** interro stale-speech fix + F8 no-bribe cheat  _(84becd1)_.
-- **C2 (NEXT)** re-test interro speech renders fresh/correct text in-game; confirm the
-  JobTag open question via the log. Commit any tweak; otherwise mark C1/C1b confirmed.
+- **C1 ✅** clue-overlap + interro-timing + location logging  _(07b9fea)_.
+- **C1b ✅** interro stale-speech + F8 cheat  _(84becd1)_ → then blank-bubble saga → **RESOLVED via
+  bubble hijack** _(dd2fd54)_; diagnostics stripped. Interrogation loop CONFIRMED in-game ✅.
+- **C2 (NEXT — the "fix to V1" the user wants before clearing):** affair-clue makes no sense when the
+  killer is the BETRAYED partner — the injected motive note is a love-letter authored by the killer,
+  but a betrayed jealous killer isn't in the affair. Fix (affair murders): the motive clue should be
+  evidence of the AFFAIR between the two participants (authored by a participant), not a love letter
+  from the betrayed killer. Affair available via `MurderSelector.AffairByVictim`. In `ClueInjector`.
 - **C3** gossip-density tuning — adjust `Gossip.Audience` if finding a knower feels off.
 - **C4** pair interrogation "what's going on between X and Y?" (two-person pick / second
   armed context in `Interrogation.cs`).

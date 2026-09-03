@@ -128,6 +128,10 @@ namespace SODMotives
                 block.name = text; block.id = blockId;
                 tb.allDDSBlocks[blockId] = block;
                 Strings.WriteToDictionary("dds.blocks", blockId, "SODMotives", text);
+                // GROUND TRUTH (spdiag): Strings.Get("dds.blocks", key) returned '' after
+                // WriteToDictionary — the render reads stringTable[dict][key].displayStr, which
+                // WriteToDictionary wasn't populating readably this session. Write it DIRECTLY.
+                WriteStringDirect("dds.blocks", blockId, text);
 
                 var cond = new DDSSaveClasses.DDSBlockCondition();
                 cond.blockID = blockId;
@@ -167,6 +171,29 @@ namespace SODMotives
                 catch (Exception d) { MotivesPlugin.Log.LogWarning($"[SODMotives][spdiag] err: {d.Message}"); }
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] SpeakLine error: {e.Message}"); }
+        }
+
+        // Write a display string straight into Strings.stringTable[dict][key].displayStr — the
+        // exact place Strings.Get reads. WriteToDictionary did not surface runtime writes readably
+        // this session (confirmed via spdiag), so we populate the read store directly.
+        private static void WriteStringDirect(string dict, string key, string text)
+        {
+            try
+            {
+                var table = Strings.stringTable;
+                if (table == null) return;
+                Il2CppSystem.Collections.Generic.Dictionary<string, Strings.DisplayString> inner;
+                if (!table.TryGetValue(dict, out inner) || inner == null)
+                {
+                    inner = new Il2CppSystem.Collections.Generic.Dictionary<string, Strings.DisplayString>();
+                    table[dict] = inner;
+                }
+                var ds = new Strings.DisplayString();
+                ds.displayStr = text;
+                ds.alternateStr = text;
+                inner[key] = ds;
+            }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] WriteStringDirect: {e.Message}"); }
         }
 
         // Deferred read of the speech bubble a few frames after Speak, so we can see whether

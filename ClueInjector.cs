@@ -103,36 +103,37 @@ namespace SODMotives
                 }
                 catch { }
 
-                // Build the victim's motivated-suspect shortlist, killer always included.
-                var suspects = new List<(Human who, MotiveResult mot)>();
-                var seen = new HashSet<int>();
-                MotiveResult killerMot;
-                if (!MurderSelector.MotiveByVictim.TryGetValue(victim.humanID, out killerMot))
-                    killerMot = Motive.Score(killer, victim);
-                suspects.Add((killer, killerMot));
-                seen.Add(killer.humanID);
-
-                var city = CityData.Instance;
-                if (city != null && city.citizenDirectory != null)
+                // MODEL: inject a love letter for each REAL affair among the RESIDENTS of the
+                // victim's apartment (at most ~2 — a couple). Each letter is between the two ACTUAL
+                // participants (writer -> reciever), so it's never self-addressed and never a fake
+                // decoy between non-lovers. Other motives (workplace firing/promotion, etc.) will get
+                // their own clue types once those event systems land.
+                var affairs = new List<(Human sender, Human recipient)>();
+                var seenPairs = new HashSet<long>();
+                try
                 {
-                    var cits = city.citizenDirectory;
-                    var others = new List<(Human who, MotiveResult mot)>();
-                    for (int i = 0; i < cits.Count; i++)
+                    var inhab = victim.home != null ? victim.home.inhabitants : null;
+                    if (inhab != null)
                     {
-                        Human a = cits[i];
-                        if (a == null || seen.Contains(a.humanID) || Motive.Same(a, victim)) continue;
-                        var m = Motive.Score(a, victim);
-                        if (m.HasMotive) others.Add((a, m));
-                    }
-                    others.Sort((x, y) => y.mot.score.CompareTo(x.mot.score));
-                    for (int i = 0; i < others.Count && suspects.Count < MaxClues; i++)
-                    {
-                        if (seen.Add(others[i].who.humanID)) suspects.Add(others[i]);
+                        for (int i = 0; i < inhab.Count; i++)
+                        {
+                            Human h = inhab[i];
+                            if (h == null) continue;
+                            Human lover = null; try { lover = h.paramour; } catch { }
+                            if (lover == null) continue;
+                            if (!seenPairs.Add(PairKey(h.humanID, lover.humanID))) continue;
+                            affairs.Add((h, lover));
+                        }
                     }
                 }
+                catch { }
 
-                // Inject one note per selected suspect. Killer's note is
-                // indistinguishable from the red herrings by content.
+                if (affairs.Count == 0)
+                {
+                    MotivesPlugin.Log.LogInfo($"[SODMotives] clue: no affairs among residents of {(victim.home != null ? victim.home.name : "<null>")}; no motive notes injected.");
+                    return;
+                }
+
                 if (!CluesByVictim.TryGetValue(victim.humanID, out var recList)) { recList = new List<string>(); CluesByVictim[victim.humanID] = recList; }
 
                 // The game keys murder items by JobTag (Murder.activeMurderItems), so
@@ -143,9 +144,12 @@ namespace SODMotives
                 var usedTags = CollectUsedTags(murder);
                 var usedIds = new HashSet<int>();
                 int idx = 0, placed = 0;
-                foreach (var s in suspects)
+                foreach (var af in affairs)
                 {
-                    GetClue(s.mot.type, idx, out string treeId, out string treeName, out MurderPreset.LeadSpawnWhere where);
+                    if (placed >= MaxClues) break;
+                    var pick = InfidelityTrees[idx % InfidelityTrees.Length];
+                    string treeId = pick.id, treeName = pick.name;
+                    var where = MurderPreset.LeadSpawnWhere.victimHome;
 
                     if (!AllocTag(usedTags, out JobPreset.JobTag clueTag))
                     {
@@ -173,59 +177,38 @@ namespace SODMotives
 
                     if (clue == null)
                     {
-                        MotivesPlugin.Log.LogInfo($"[SODMotives] clue: SpawnItem null/duplicate (all placements) for {MotivesPlugin.Name(s.who)}.");
+                        MotivesPlugin.Log.LogInfo($"[SODMotives] clue: SpawnItem null/duplicate for affair {MotivesPlugin.Name(af.sender)}->{MotivesPlugin.Name(af.recipient)}.");
                         idx++;
                         continue;
                     }
                     try { usedIds.Add(clue.id); } catch { }
 
-                    // For an AFFAIR murder the motive note is a LOVE letter, so it must be authored
-                    // by an affair PARTICIPANT — a betrayed/jealous killer didn't write a love note.
-                    // If this suspect is the betrayed party of the case's affair (not a participant),
-                    // attribute the note to their cheating partner (a participant); the affair note
-                    // then reads as the real motive evidence the player finds. Unrelated suspects
-                    // (red herrings from other motives) keep their own attribution.
-                    Human author = s.who;
-                    try
-                    {
-                        if (s.mot.type == MotiveType.Infidelity &&
-                            MurderSelector.AffairByVictim.TryGetValue(victim.humanID, out var af) && af != null)
-                        {
-                            Human pa = af.a, pb = af.b;
-                            bool whoPart = Motive.Same(s.who, pa) || Motive.Same(s.who, pb);
-                            if (!whoPart)
-                            {
-                                Human sp = null; try { sp = s.who.partner; } catch { }
-                                if (Motive.Same(sp, pa) || Motive.Same(sp, pb)) author = sp;
-                            }
-                        }
-                    }
-                    catch { }
-
                     bool textSet = false;
                     try
                     {
-                        // The reading page is rendered LIVE from the tree each open (no cache),
-                        // so overriding to a document-type tree is all that's needed.
-                        clue.SetWriter(author);           // affair participant for affair cases
+                        // A real love letter FROM one participant TO the other — SetReciever (note the
+                        // game's spelling) sets the addressee (participantB), so it's never self-addressed.
+                        // The reading page renders LIVE from the tree each open, so the DDS override is enough.
+                        clue.SetWriter(af.sender);
+                        try { clue.SetReciever(af.recipient); } catch { }
                         clue.SetDDSOverride(treeId);      // sets Interactable.dds -> page + tooltip
                         var ev = clue.evidence;
                         if (ev != null)
                         {
                             ev.SetOverrideDDS(treeId);    // case-file summary text
-                            ev.SetWriter(author);
+                            ev.SetWriter(af.sender);
                         }
-                        // Sometimes stamp the author's fingerprints (traceable by prints as
-                        // well as handwriting); sometimes not, so it isn't formulaic.
+                        // Sometimes stamp the sender's fingerprints (traceable by prints as well as
+                        // handwriting); sometimes not, so it isn't formulaic.
                         if (_rng.NextDouble() < FingerprintChance)
                         {
-                            try { clue.AddNewDynamicFingerprint(author, Interactable.PrintLife.manualRemoval); }
+                            try { clue.AddNewDynamicFingerprint(af.sender, Interactable.PrintLife.manualRemoval); }
                             catch (Exception e4) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: print add: {e4.Message}"); }
                         }
                         // TESTING: make the note obvious in the evidence UI.
                         if (ObviousNames && ev != null)
                         {
-                            try { ev.AddOrSetCustomName(Evidence.DataKey.name, $"MODCLUE {MotivesPlugin.Name(s.who)} ({s.mot.type})"); } catch { }
+                            try { ev.AddOrSetCustomName(Evidence.DataKey.name, $"MODCLUE affair {MotivesPlugin.Name(af.sender)}->{MotivesPlugin.Name(af.recipient)}"); } catch { }
                             try { clue.UpdateName(true, Evidence.DataKey.name); } catch { clue.UpdateName(); }
                         }
                         else clue.UpdateName();
@@ -257,14 +240,13 @@ namespace SODMotives
                     try { ddsNow = clue.dds; } catch { }
                     bool ddsOk = ddsNow == treeId;
 
-                    bool isKiller = s.who.humanID == killer.humanID;
-                    string writtenBy = (author != null && author.humanID != s.who.humanID) ? $" writtenBy={MotivesPlugin.Name(author)}" : "";
-                    string rec = $"{(isKiller ? "[KILLER] " : "[decoy]  ")}suspect {MotivesPlugin.Name(s.who)}{writtenBy} @ {where} [{locDesc}]{posDesc} ({s.mot.type}) dds='{treeName}' tag={clueTag} id={clueId} preset='{presetNm}' [text={textSet} ddsOk={ddsOk}]";
+                    bool victimInvolved = Motive.Same(af.sender, victim) || Motive.Same(af.recipient, victim);
+                    string rec = $"affair {(victimInvolved ? "(victim) " : "")}from {MotivesPlugin.Name(af.sender)} to {MotivesPlugin.Name(af.recipient)} @ {where} [{locDesc}]{posDesc} dds='{treeName}' tag={clueTag} id={clueId} preset='{presetNm}' [text={textSet} ddsOk={ddsOk}]";
                     recList.Add(rec);
                     MotivesPlugin.Log.LogInfo($"[SODMotives] clue: INJECTED {rec}");
                     idx++; placed++;
                 }
-                MotivesPlugin.Log.LogInfo($"[SODMotives] clue: placed {placed} note(s) for victim {MotivesPlugin.Name(victim)} ({suspects.Count} suspects considered).");
+                MotivesPlugin.Log.LogInfo($"[SODMotives] clue: placed {placed} affair note(s) for victim {MotivesPlugin.Name(victim)} ({affairs.Count} resident affair(s) found).");
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: inject error: {e}"); }
         }
@@ -369,6 +351,12 @@ namespace SODMotives
         }
 
         private static int SafeInt(Func<int> f, int dflt) { try { return f(); } catch { return dflt; } }
+
+        private static long PairKey(int x, int y)
+        {
+            int lo = Math.Min(x, y), hi = Math.Max(x, y);
+            return ((long)lo << 32) | (uint)hi;
+        }
 
         private static Interactable TrySpawn(MurderController.Murder murder, SpawnCfg cfg, MurderPreset.LeadSpawnWhere where, JobPreset.JobTag tag)
         {

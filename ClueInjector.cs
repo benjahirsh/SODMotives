@@ -102,6 +102,10 @@ namespace SODMotives
             if (!Enable || murder == null) return;
             Human victim = murder.victim;
             if (victim == null) return;
+            // ONLY our affair murders (the director picked an affair-backed pair) get affair
+            // notes. Vanilla / non-affair cases get nothing — otherwise any murder whose victim
+            // happens to have a cheating flatmate would sprout an irrelevant love letter.
+            if (!MurderSelector.AffairByVictim.ContainsKey(victim.humanID)) return;
             if (_injected.Contains(victim.humanID)) return;   // once per case
             _injected.Add(victim.humanID);
 

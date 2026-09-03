@@ -183,16 +183,26 @@ namespace SODMotives
                     }
                     try { usedIds.Add(clue.id); } catch { }
 
+                    // SpawnItem's RETURN can be the CONTAINER it dropped the note into (a StorageBox),
+                    // not the note itself — overriding that leaves a box with our hover/name but no
+                    // readable letter (the "filing box" bug). The real readable note is the item the
+                    // game tracks for this tag in Murder.activeMurderItems. Prefer it as the target.
+                    Interactable active = null;
+                    try { if (murder.activeMurderItems != null) murder.activeMurderItems.TryGetValue(clueTag, out active); } catch { }
+                    string retPreset = SafeItemPreset(clue);
+                    string actPreset = SafeItemPreset(active);
+                    Interactable target = (active != null) ? active : clue;
+
                     bool textSet = false;
                     try
                     {
                         // A real love letter FROM one participant TO the other — SetReciever (note the
                         // game's spelling) sets the addressee (participantB), so it's never self-addressed.
                         // The reading page renders LIVE from the tree each open, so the DDS override is enough.
-                        clue.SetWriter(af.sender);
-                        try { clue.SetReciever(af.recipient); } catch { }
-                        clue.SetDDSOverride(treeId);      // sets Interactable.dds -> page + tooltip
-                        var ev = clue.evidence;
+                        target.SetWriter(af.sender);
+                        try { target.SetReciever(af.recipient); } catch { }
+                        target.SetDDSOverride(treeId);      // sets Interactable.dds -> page + tooltip
+                        var ev = target.evidence;
                         if (ev != null)
                         {
                             ev.SetOverrideDDS(treeId);    // case-file summary text
@@ -202,16 +212,16 @@ namespace SODMotives
                         // handwriting); sometimes not, so it isn't formulaic.
                         if (_rng.NextDouble() < FingerprintChance)
                         {
-                            try { clue.AddNewDynamicFingerprint(af.sender, Interactable.PrintLife.manualRemoval); }
+                            try { target.AddNewDynamicFingerprint(af.sender, Interactable.PrintLife.manualRemoval); }
                             catch (Exception e4) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: print add: {e4.Message}"); }
                         }
                         // TESTING: make the note obvious in the evidence UI.
                         if (ObviousNames && ev != null)
                         {
                             try { ev.AddOrSetCustomName(Evidence.DataKey.name, $"MODCLUE affair {MotivesPlugin.Name(af.sender)}->{MotivesPlugin.Name(af.recipient)}"); } catch { }
-                            try { clue.UpdateName(true, Evidence.DataKey.name); } catch { clue.UpdateName(); }
+                            try { target.UpdateName(true, Evidence.DataKey.name); } catch { target.UpdateName(); }
                         }
-                        else clue.UpdateName();
+                        else target.UpdateName();
                         textSet = true;
                     }
                     catch (Exception e2) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: set-text error: {e2.Message}"); }
@@ -221,7 +231,7 @@ namespace SODMotives
                     string locDesc = "?", posDesc = "";
                     try
                     {
-                        var node = clue.node;
+                        var node = target.node;
                         if (node != null)
                         {
                             string loc = node.gameLocation != null ? node.gameLocation.name : "?";
@@ -232,16 +242,15 @@ namespace SODMotives
                     }
                     catch { }
 
-                    // Verify the override actually landed on OUR fresh item (guards the
-                    // "decoy text on a vanilla multipage doc" collision that started this).
-                    int clueId = -1; string presetNm = "?", ddsNow = "?";
-                    try { clueId = clue.id; } catch { }
-                    try { presetNm = clue.preset != null ? clue.preset.name : "<null>"; } catch { }
-                    try { ddsNow = clue.dds; } catch { }
+                    // Verify the override landed on OUR readable note (not the container SpawnItem
+                    // returned). spawnReturn vs active tells us which the game gave us.
+                    int clueId = -1; string ddsNow = "?";
+                    try { clueId = target.id; } catch { }
+                    try { ddsNow = target.dds; } catch { }
                     bool ddsOk = ddsNow == treeId;
 
                     bool victimInvolved = Motive.Same(af.sender, victim) || Motive.Same(af.recipient, victim);
-                    string rec = $"affair {(victimInvolved ? "(victim) " : "")}from {MotivesPlugin.Name(af.sender)} to {MotivesPlugin.Name(af.recipient)} @ {where} [{locDesc}]{posDesc} dds='{treeName}' tag={clueTag} id={clueId} preset='{presetNm}' [text={textSet} ddsOk={ddsOk}]";
+                    string rec = $"affair {(victimInvolved ? "(victim) " : "")}from {MotivesPlugin.Name(af.sender)} to {MotivesPlugin.Name(af.recipient)} @ {where} [{locDesc}]{posDesc} dds='{treeName}' tag={clueTag} id={clueId} target='{SafeItemPreset(target)}' (spawnReturn='{retPreset}' active='{actPreset}') [text={textSet} ddsOk={ddsOk}]";
                     recList.Add(rec);
                     MotivesPlugin.Log.LogInfo($"[SODMotives] clue: INJECTED {rec}");
                     idx++; placed++;
@@ -356,6 +365,12 @@ namespace SODMotives
         {
             int lo = Math.Min(x, y), hi = Math.Max(x, y);
             return ((long)lo << 32) | (uint)hi;
+        }
+
+        private static string SafeItemPreset(Interactable it)
+        {
+            try { return it == null ? "<null>" : (it.preset != null ? it.preset.name : "<no-preset>"); }
+            catch { return "?"; }
         }
 
         private static Interactable TrySpawn(MurderController.Murder murder, SpawnCfg cfg, MurderPreset.LeadSpawnWhere where, JobPreset.JobTag tag)

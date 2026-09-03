@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using HarmonyLib;
 using Il2CppInterop.Runtime;
+using Il2CppInterop.Runtime.InteropTypes.Arrays;
 
 namespace SODMotives
 {
@@ -25,7 +26,13 @@ namespace SODMotives
         // Pending "knowName was accepted" context, consumed by the next photo pick.
         private static bool _armed;
         private static Citizen _npc;
-        private static Interactable _speakingTo;
+
+        // Gossip armed for the NPC's NEXT answer bubble. The DDS/Strings/Speak path cannot
+        // render runtime text (Strings.Get rejects our entry — proven via spdiag), so instead
+        // we let the vanilla knowName answer create its bubble and REPLACE that bubble's text
+        // with our line (Patch_Bubble on SpeechBubbleController.Setup). Rides the proven render.
+        private static int _pendingHumanId = -1;
+        private static string _pendingText;
 
         // Postfix target for DoYouKnowThisPerson(+Bribe1/2/3): ARM ONLY, never speak.
         internal static void ArmForPick(Citizen npc, Interactable speakingTo, bool success)
@@ -35,46 +42,75 @@ namespace SODMotives
             {
                 if (success && npc != null)
                 {
-                    _armed = true; _npc = npc; _speakingTo = speakingTo;
+                    _armed = true; _npc = npc;
                     MotivesPlugin.Log.LogInfo($"[SODMotives][interro] armed — {Name(npc)} accepted 'do you know this person?'");
                 }
                 else
                 {
-                    // Reject (needs a bribe / refused): clear so the next pick can't replay us.
-                    _armed = false; _npc = null; _speakingTo = null;
+                    _armed = false; _npc = null;   // reject -> next pick can't replay us
                 }
             }
-            catch { _armed = false; _npc = null; _speakingTo = null; }
+            catch { _armed = false; _npc = null; }
         }
 
         // Postfix target for PhotoSelectButtonController.OnLeftClick: fire once on the fresh pick.
         internal static void OnPicked(Human subject)
         {
             if (!Enable || !_armed) return;
-            Citizen npc = _npc; Interactable speakingTo = _speakingTo;
-            _armed = false; _npc = null; _speakingTo = null;   // one-shot: never double-fire/replay
+            Citizen npc = _npc;
+            _armed = false; _npc = null;   // one-shot
 
             try
             {
-                if (npc == null || subject == null || npc.speechController == null) return;
+                if (npc == null || subject == null) return;
                 if (EventStore.Count == 0) AffairSim.SeedForNewGame();
 
                 string text = ComposeAbout(npc, subject);
                 if (text == null)
                 {
-                    // Visible in the log so a pick that yields nothing is distinguishable from a
-                    // pick that never fired (this NPC simply knows no affair touching the subject).
                     MotivesPlugin.Log.LogInfo($"[SODMotives][interro] {Name(npc)} asked about {Name(subject)} -> (nothing to add)");
-                    return; // leave the vanilla answer alone
+                    return; // this NPC knows no affair involving the subject; leave vanilla answer
                 }
 
-                Human.InteractionDialogInstance inter = null;
-                try { var ie = npc.interactionEvents; if (ie != null && ie.Count > 0) inter = ie[0]; } catch { }
-
-                MotivesPlugin.Log.LogInfo($"[SODMotives][interro] {Name(npc)} asked about {Name(subject)} -> \"{text}\"");
-                SpeakLine(npc, speakingTo, inter, subject, text);
+                // Arm the bubble hijack: the NPC's next answer bubble becomes our gossip line.
+                _pendingHumanId = npc.humanID;
+                _pendingText = text;
+                MotivesPlugin.Log.LogInfo($"[SODMotives][interro] {Name(npc)} asked about {Name(subject)} -> \"{text}\" (armed bubble)");
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] OnPicked error: {e.Message}"); }
+        }
+
+        // Replace the armed NPC's next speech bubble with our gossip, riding the vanilla render.
+        internal static void MaybeHijackBubble(SpeechBubbleController bubble, SpeechController sc)
+        {
+            if (_pendingHumanId < 0 || bubble == null || sc == null) return;
+            try
+            {
+                Human speaker = null;
+                try { var a = sc.actor; if (a != null) speaker = a.TryCast<Human>(); } catch { }
+                if (speaker == null || speaker.humanID != _pendingHumanId) return;
+
+                string text = _pendingText;
+                _pendingHumanId = -1; _pendingText = null;   // one-shot
+
+                // Swap the bubble's target text + word list and restart the typewriter reveal so
+                // it plays OUR line instead of the vanilla answer.
+                bubble.actualString = text;
+                try
+                {
+                    var parts = text.Split(' ');
+                    var arr = new Il2CppStringArray(parts.Length);
+                    for (int i = 0; i < parts.Length; i++) arr[i] = parts[i];
+                    bubble.words = arr;
+                }
+                catch { }
+                bubble.revealedChars = 0;
+                bubble.wordsRevealed = 0;
+                bubble.setFinalText = false;
+                try { if (bubble.text != null) bubble.text.text = ""; } catch { }
+                MotivesPlugin.Log.LogInfo($"[SODMotives][interro] hijacked bubble for {Name(speaker)} -> \"{text}\"");
+            }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] hijack error: {e.Message}"); }
         }
 
         // What this NPC can add about the picked person: an affair the SUBJECT is a
@@ -252,6 +288,14 @@ namespace SODMotives
         {
             try { Interrogation.OnPicked(__instance.citizen); } catch { }
         }
+    }
+
+    // Replace the armed NPC's next answer bubble with our gossip line (rides the vanilla render).
+    [HarmonyPatch(typeof(SpeechBubbleController), nameof(SpeechBubbleController.Setup))]
+    internal static class Patch_Bubble
+    {
+        static void Postfix(SpeechBubbleController __instance, SpeechController newSpeechController)
+            => Interrogation.MaybeHijackBubble(__instance, newSpeechController);
     }
 
     // TESTING CHEAT (DebugTools.AlwaysAnswer, F8): force the "Do you know this person?"

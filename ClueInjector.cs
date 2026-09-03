@@ -179,24 +179,47 @@ namespace SODMotives
                     }
                     try { usedIds.Add(clue.id); } catch { }
 
+                    // For an AFFAIR murder the motive note is a LOVE letter, so it must be authored
+                    // by an affair PARTICIPANT — a betrayed/jealous killer didn't write a love note.
+                    // If this suspect is the betrayed party of the case's affair (not a participant),
+                    // attribute the note to their cheating partner (a participant); the affair note
+                    // then reads as the real motive evidence the player finds. Unrelated suspects
+                    // (red herrings from other motives) keep their own attribution.
+                    Human author = s.who;
+                    try
+                    {
+                        if (s.mot.type == MotiveType.Infidelity &&
+                            MurderSelector.AffairByVictim.TryGetValue(victim.humanID, out var af) && af != null)
+                        {
+                            Human pa = af.a, pb = af.b;
+                            bool whoPart = Motive.Same(s.who, pa) || Motive.Same(s.who, pb);
+                            if (!whoPart)
+                            {
+                                Human sp = null; try { sp = s.who.partner; } catch { }
+                                if (Motive.Same(sp, pa) || Motive.Same(sp, pb)) author = sp;
+                            }
+                        }
+                    }
+                    catch { }
+
                     bool textSet = false;
                     try
                     {
                         // The reading page is rendered LIVE from the tree each open (no cache),
                         // so overriding to a document-type tree is all that's needed.
-                        clue.SetWriter(s.who);           // attribute to THIS suspect
+                        clue.SetWriter(author);           // affair participant for affair cases
                         clue.SetDDSOverride(treeId);      // sets Interactable.dds -> page + tooltip
                         var ev = clue.evidence;
                         if (ev != null)
                         {
                             ev.SetOverrideDDS(treeId);    // case-file summary text
-                            ev.SetWriter(s.who);
+                            ev.SetWriter(author);
                         }
                         // Sometimes stamp the author's fingerprints (traceable by prints as
                         // well as handwriting); sometimes not, so it isn't formulaic.
                         if (_rng.NextDouble() < FingerprintChance)
                         {
-                            try { clue.AddNewDynamicFingerprint(s.who, Interactable.PrintLife.manualRemoval); }
+                            try { clue.AddNewDynamicFingerprint(author, Interactable.PrintLife.manualRemoval); }
                             catch (Exception e4) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: print add: {e4.Message}"); }
                         }
                         // TESTING: make the note obvious in the evidence UI.
@@ -235,7 +258,8 @@ namespace SODMotives
                     bool ddsOk = ddsNow == treeId;
 
                     bool isKiller = s.who.humanID == killer.humanID;
-                    string rec = $"{(isKiller ? "[KILLER] " : "[decoy]  ")}from {MotivesPlugin.Name(s.who)} @ {where} [{locDesc}]{posDesc} ({s.mot.type}) dds='{treeName}' tag={clueTag} id={clueId} preset='{presetNm}' [text={textSet} ddsOk={ddsOk}]";
+                    string writtenBy = (author != null && author.humanID != s.who.humanID) ? $" writtenBy={MotivesPlugin.Name(author)}" : "";
+                    string rec = $"{(isKiller ? "[KILLER] " : "[decoy]  ")}suspect {MotivesPlugin.Name(s.who)}{writtenBy} @ {where} [{locDesc}]{posDesc} ({s.mot.type}) dds='{treeName}' tag={clueTag} id={clueId} preset='{presetNm}' [text={textSet} ddsOk={ddsOk}]";
                     recList.Add(rec);
                     MotivesPlugin.Log.LogInfo($"[SODMotives] clue: INJECTED {rec}");
                     idx++; placed++;

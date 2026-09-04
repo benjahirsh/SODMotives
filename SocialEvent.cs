@@ -4,22 +4,107 @@ using UnityEngine;
 
 namespace SODMotives
 {
-    // Generic social-event model (V2). Affairs first; Workplace/Feuds are added later
-    // by giving each type its own seeding + testimony phrasing. Everything else
-    // (store, knowledge, gossip, interrogation) is shared.
-    internal enum SocialEventType { Affair }
+    // Generic social-event model (V2). Affairs first; Workplace (Promotion / ChoppingBlock)
+    // added in 2.1; Feuds later. Each type only has to declare its own seeding, its
+    // (suspect -> victim) motive edges, its testimony phrasing, and its gossip audience.
+    // Everything else (store, knowledge, gossip, interrogation, selection) is shared.
+    internal enum SocialEventType { Affair, Promotion, ChoppingBlock }
+
+    // A directed "X has a real, event-backed reason to harm Y" edge derived from an event.
+    // The pool selector unions these across all events per victim. `score` only trims a
+    // pool larger than KillerPoolSize — the actual killer pick is uniform, so exact values
+    // rarely matter.
+    internal struct SuspectEdge
+    {
+        public Human suspect;
+        public Human victim;
+        public float score;
+        public MotiveType type;   // Infidelity | Professional | ...
+        public string detail;     // human-readable motive (logging + clue/testimony flavour)
+        public SocialEvent evt;   // the backing event (clue + gossip source)
+    }
 
     internal class SocialEvent
     {
         public int id;
         public SocialEventType type;
-        public Human a;          // primary participants
-        public Human b;
-        public string placeName; // where it's associated (flavour / lead)
+        public Human a;          // primary participants (affair: lover1; promotion: promotee; chopping: aggrieved)
+        public Human b;          // affair: lover2; promotion/chopping: boss / decision-maker
+        public readonly List<Human> group = new List<Human>();  // extra participants (promotion: resentful coworkers)
+        public string placeName; // where it's associated (affair: a home; workplace: company name)
         public float time;       // game time it "happened" (0 = backdated/unknown for now)
 
         // humanIDs of everyone who knows about this event (witnessed or told).
         public readonly HashSet<int> knownBy = new HashSet<int>();
+
+        // Emit every (suspect -> victim) motive edge this event creates. The selector filters
+        // invalid actors / self-edges and dedupes (suspect,victim) to the strongest edge.
+        internal void CollectEdges(List<SuspectEdge> outList)
+        {
+            switch (type)
+            {
+                case SocialEventType.Affair: CollectAffairEdges(outList); break;
+                case SocialEventType.Promotion: CollectPromotionEdges(outList); break;
+                case SocialEventType.ChoppingBlock: CollectChoppingEdges(outList); break;
+            }
+        }
+
+        private void Emit(List<SuspectEdge> o, Human s, Human v, float score, MotiveType t, string detail)
+        {
+            if (s == null || v == null) return;
+            o.Add(new SuspectEdge { suspect = s, victim = v, score = score, type = t, detail = detail, evt = this });
+        }
+
+        // Love-triangle edges: betrayed partners resent the cheater AND the lover; the secret
+        // lovers are volatile; and either cheater might silence the other's partner. Any member
+        // can be killer or victim (mirrors the V2.0 affair pairings, now individually scored).
+        private void CollectAffairEdges(List<SuspectEdge> o)
+        {
+            Human pa = SafePartner(a), pb = SafePartner(b);
+            string an = SafeName(a), bn = SafeName(b);
+            if (pa != null)
+            {
+                Emit(o, pa, a, 116f, MotiveType.Infidelity, $"their partner {an} was having an affair with {bn}");
+                Emit(o, pa, b, 114f, MotiveType.Infidelity, $"{bn} was sleeping with their partner {an}");
+                Emit(o, a, pa, 60f, MotiveType.Infidelity, $"wanted rid of their partner {SafeName(pa)} to be with {bn}");
+                Emit(o, b, pa, 65f, MotiveType.Infidelity, $"{SafeName(pa)} could expose the affair with {an}");
+            }
+            if (pb != null)
+            {
+                Emit(o, pb, b, 116f, MotiveType.Infidelity, $"their partner {bn} was having an affair with {an}");
+                Emit(o, pb, a, 114f, MotiveType.Infidelity, $"{an} was sleeping with their partner {bn}");
+                Emit(o, b, pb, 60f, MotiveType.Infidelity, $"wanted rid of their partner {SafeName(pb)} to be with {an}");
+                Emit(o, a, pb, 65f, MotiveType.Infidelity, $"{SafeName(pb)} could expose the affair with {bn}");
+            }
+            Emit(o, a, b, 70f, MotiveType.Infidelity, $"a volatile secret affair with {bn}");
+            Emit(o, b, a, 70f, MotiveType.Infidelity, $"a volatile secret affair with {an}");
+        }
+
+        // Promotion: a = promotee (never a suspect in their own promotion), b = boss/decider,
+        // group = resentful coworkers. Each resenter has a reason to kill the rival AND the boss.
+        private void CollectPromotionEdges(List<SuspectEdge> o)
+        {
+            string pn = SafeName(a), dn = SafeName(b);
+            string co = string.IsNullOrEmpty(placeName) ? "work" : placeName;
+            for (int i = 0; i < group.Count; i++)
+            {
+                Human r = group[i];
+                if (r == null) continue;
+                Emit(o, r, a, 92f, MotiveType.Professional, $"{pn} got the promotion at {co} they were passed over for");
+                if (b != null)
+                    Emit(o, r, b, 80f, MotiveType.Professional, $"{dn} passed them over and handed {pn} the promotion at {co}");
+            }
+        }
+
+        // Chopping block: a = aggrieved employee facing termination, b = boss who put them there.
+        private void CollectChoppingEdges(List<SuspectEdge> o)
+        {
+            if (b == null) return;
+            string co = string.IsNullOrEmpty(placeName) ? "work" : placeName;
+            Emit(o, a, b, 85f, MotiveType.Professional, $"{SafeName(b)} has them on the chopping block at {co}");
+        }
+
+        private static Human SafePartner(Human h) { if (h == null) return null; try { return h.partner; } catch { return null; } }
 
         // What an NPC who knows this event would say when asked.
         public string Testimony(int idx)

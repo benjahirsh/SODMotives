@@ -3,30 +3,36 @@ using System.Collections.Generic;
 
 namespace SODMotives
 {
-    // Chooses a motivated (killer -> victim) pair from the city's social graph,
-    // using weighted-random selection among the strongest feuds, softly favouring
-    // victims who have multiple motivated enemies (natural red herrings).
+    // V2.1 — VICTIM-CENTRIC, MIXED-MOTIVE selection.
+    // Build every real (suspect -> victim) motive edge from the event store (affairs +
+    // workplace), pick a victim with a rich pool of DIFFERENT-motive suspects, then pick the
+    // real killer at random from that pool. Each suspect's motive later drops its own clue;
+    // vanilla's physical layer (prints/CCTV/alibi) convicts. No dummy red herrings — richness
+    // comes from dense real seeding.
     internal static class MurderSelector
     {
         // Tunables (bound to BepInEx config in Plugin.Load).
         internal static bool EnableOverride = true;
-        internal static int TopPoolSize = 40;          // weighted pick drawn from this many top feuds
-        internal static float RedHerringBonusPer = 0.4f; // weight bonus per extra aggressor on the same victim
-        internal static float WeightExponent = 0.6f;   // <1 compresses score gaps so weaker motive types surface
-        internal static float SameTypePenalty = 0.4f;  // multiplier applied to a motive type that was just used
-        internal static bool StripSignatures = true;   // remove serial-killer calling card/moniker/graffiti on motivated cases
+        internal static int MinSuspects = 3;            // PREFER victims with at least this many real suspects
+        internal static int KillerPoolSize = 10;        // killer = uniform-random among the victim's top-N suspects
+        internal static bool StripSignatures = true;    // remove serial-killer calling card/moniker/graffiti on motivated cases
         // Deterministic (V2 design): force a vanilla case every Nth handled case so the
         // classic serial-killer hunt never disappears. 0 (or less) = never force vanilla.
         // TESTING DEFAULT = 0 so every new sandbox yields a mod case to test.
         internal static int VanillaCaseEvery = 0;
-        private static int _casesSinceForced = 0;
 
+        // --- legacy V1/V2.0 selector knobs, kept bound so existing .cfg files don't break;
+        //     no longer consulted by the victim-centric selector. Pruned in release cleanup. ---
+        internal static int TopPoolSize = 40;
+        internal static float RedHerringBonusPer = 0.4f;
+        internal static float WeightExponent = 0.6f;
+        internal static float SameTypePenalty = 0.4f;
+
+        private static int _casesSinceForced = 0;
         private static readonly Random _rng = new Random();
 
-        // Occasionally leave a case entirely to vanilla, preserving classic
-        // serial-killer hunts (signature and all) for variety.
-        // Call once per handled case. Returns true when this case should be left to
-        // vanilla to honour the "guaranteed vanilla every N" cadence.
+        // Occasionally leave a case entirely to vanilla, preserving classic serial-killer
+        // hunts (signature and all). Call once per handled case.
         internal static bool ShouldForceVanilla()
         {
             if (VanillaCaseEvery <= 0) return false;   // testing: never force vanilla
@@ -35,92 +41,28 @@ namespace SODMotives
             return false;
         }
 
-        // V2: pick a murder motivated by a REAL, gossiped affair — a betrayed partner
-        // kills the cheater or the lover. So the affair NPCs are gossiping about IS the
-        // motive, and the murder is solvable by interrogation. Populates the same
-        // bookkeeping as TryPick so clue injection / signature stripping still work.
-        internal static bool TryPickFromAffairs(out Human murderer, out Human victim, out SocialEvent affair)
-        {
-            murderer = null; victim = null; affair = null;
-            var all = EventStore.All;
-            if (all == null || all.Count == 0) return false;
-
-            var kCand = new List<Human>();
-            var vCand = new List<Human>();
-            var eCand = new List<SocialEvent>();
-            var enemyCount = new Dictionary<int, int>();
-            var seenPair = new HashSet<long>();
-
-            void AddCand(Human k, Human v, SocialEvent e)
-            {
-                if (!IsValidActor(k) || !IsValidActor(v) || Motive.Same(k, v)) return;
-                long pk = ((long)k.humanID << 32) | (uint)v.humanID;
-                if (!seenPair.Add(pk)) return;   // dedupe pairs shared across triangles
-                kCand.Add(k); vCand.Add(v); eCand.Add(e);
-                enemyCount[v.humanID] = enemyCount.TryGetValue(v.humanID, out int c) ? c + 1 : 1;
-            }
-
-            // Any member of a love triangle can kill any other; the affair is the shared
-            // motive (betrayed spouse, the cheater, or the lover — 6 directed pairings).
-            void AddTriangle(SocialEvent e, Human x, Human y, Human z)
-            {
-                var m = new[] { x, y, z };
-                for (int i = 0; i < m.Length; i++)
-                    for (int j = 0; j < m.Length; j++)
-                        if (i != j) AddCand(m[i], m[j], e);
-            }
-
-            for (int i = 0; i < all.Count; i++)
-            {
-                var e = all[i];
-                if (e == null || e.type != SocialEventType.Affair) continue;
-                Human a = e.a, b = e.b;
-                Human pa = null, pb = null;
-                try { pa = a != null ? a.partner : null; } catch { }
-                try { pb = b != null ? b.partner : null; } catch { }
-                if (pa != null) AddTriangle(e, pa, a, b);   // {betrayed, cheater, lover}
-                if (pb != null) AddTriangle(e, pb, b, a);   // the lover's own triangle
-                if (pa == null && pb == null) { AddCand(a, b, e); AddCand(b, a, e); } // volatile lovers
-            }
-
-            if (kCand.Count == 0) return false;
-
-            // Weight toward victims with several motivated enemies (natural red herrings).
-            double total = 0; var w = new double[kCand.Count];
-            for (int i = 0; i < kCand.Count; i++)
-            {
-                int ec = enemyCount[vCand[i].humanID];
-                w[i] = 1.0 + RedHerringBonusPer * (ec - 1);
-                total += w[i];
-            }
-            double roll = _rng.NextDouble() * total, acc = 0; int idx = 0;
-            for (int i = 0; i < kCand.Count; i++) { acc += w[i]; if (roll <= acc) { idx = i; break; } }
-
-            murderer = kCand[idx]; victim = vCand[idx]; affair = eCand[idx];
-
-            OverriddenVictimIds.Add(victim.humanID);
-            MotiveByVictim[victim.humanID] = new MotiveResult
-            {
-                type = MotiveType.Infidelity,
-                target = victim,
-                score = 120f,
-                detail = $"an affair between {SocialEvent.SafeName(affair.a)} and {SocialEvent.SafeName(affair.b)}",
-            };
-            AffairByVictim[victim.humanID] = affair;         // so F9 / logs can show nearest knowers
-            EventStore.MarkKnown(affair, murderer.humanID); // the killer (betrayed) knows — assume-known
-            return true;
-        }
-
+        // ---- bookkeeping shared with the clue injector / signature stripping / F9 ----
         // Victims whose case we overrode -> used to strip serial-killer signatures.
         internal static readonly HashSet<int> OverriddenVictimIds = new HashSet<int>();
-        // Motive chosen per victim -> used by the clue injector to pick clue text.
+        // The killer's chosen motive per victim -> logging / clue text.
         internal static readonly Dictionary<int, MotiveResult> MotiveByVictim = new Dictionary<int, MotiveResult>();
-        // The affair behind each overridden victim's case -> nearest-knower logging / F9.
+        // The full mixed-motive suspect pool per overridden victim -> drives clue injection (W3).
+        internal static readonly Dictionary<int, List<SuspectEdge>> PoolByVictim = new Dictionary<int, List<SuspectEdge>>();
+        // Back-compat: the affair behind an overridden victim's case, IF the killer's motive is
+        // an affair -> still used by the (affair-only) clue injector / F9 / interrogation aids
+        // until W3–W5 migrate those onto PoolByVictim.
         internal static readonly Dictionary<int, SocialEvent> AffairByVictim = new Dictionary<int, SocialEvent>();
-        // Recent motive types (most recent first) for cross-murder variety.
-        private static readonly List<MotiveType> _recentTypes = new List<MotiveType>();
 
-        private struct Candidate { public Human aggressor; public MotiveResult motive; public float weight; }
+        // Clear per-game selection state so a NEW sandbox in the same process doesn't misfire
+        // signature-strip / clue injection / F9 against reused humanIDs. Called from SeedForNewGame.
+        internal static void ResetForNewGame()
+        {
+            OverriddenVictimIds.Clear();
+            MotiveByVictim.Clear();
+            PoolByVictim.Clear();
+            AffairByVictim.Clear();
+            _casesSinceForced = 0;
+        }
 
         private static bool IsValidActor(Human h)
         {
@@ -129,75 +71,85 @@ namespace SODMotives
             return true;
         }
 
-        // Returns true and yields a motivated pair; false if the city has no real motives.
-        internal static bool TryPick(out Human murderer, out Human victim, out MotiveResult motive)
+        // Pick a victim rich in real, event-backed enemies, then a random killer from that pool.
+        // Returns the full ranked suspect pool (strongest first) via `pool` for clue injection.
+        internal static bool TryPickVictimCentric(out Human murderer, out Human victim, out List<SuspectEdge> pool)
         {
-            murderer = null; victim = null; motive = default;
+            murderer = null; victim = null; pool = null;
 
-            CityData city = CityData.Instance;
-            if (city == null || city.citizenDirectory == null) return false;
-            var cits = city.citizenDirectory;
-            int n = cits.Count;
+            var all = EventStore.All;
+            if (all == null || all.Count == 0) return false;
 
-            var cands = new List<Candidate>();
-            var targetAggr = new Dictionary<int, int>();
-
-            var targets = new List<MotiveResult>();
-            for (int i = 0; i < n; i++)
+            // 1) Gather every real (suspect -> victim) edge from all events.
+            var tmp = new List<SuspectEdge>();
+            var byVictim = new Dictionary<int, Dictionary<int, SuspectEdge>>(); // victimId -> (suspectId -> strongest edge)
+            var victimRef = new Dictionary<int, Human>();
+            for (int i = 0; i < all.Count; i++)
             {
-                Human a = cits[i];
-                if (!IsValidActor(a)) continue;
-                targets.Clear();
-                Motive.CollectTargets(a, targets);   // ALL motivated targets, not just the top one
-                foreach (var m in targets)
+                var e = all[i];
+                if (e == null) continue;
+                tmp.Clear();
+                try { e.CollectEdges(tmp); } catch { continue; }
+                for (int j = 0; j < tmp.Count; j++)
                 {
-                    if (m.target == null || !IsValidActor(m.target)) continue;
-                    cands.Add(new Candidate { aggressor = a, motive = m });
-                    int tid = m.target.humanID;
-                    targetAggr[tid] = targetAggr.TryGetValue(tid, out int c) ? c + 1 : 1;
+                    var ed = tmp[j];
+                    if (!IsValidActor(ed.suspect) || !IsValidActor(ed.victim) || Motive.Same(ed.suspect, ed.victim)) continue;
+                    int vid = ed.victim.humanID, sid = ed.suspect.humanID;
+                    if (!byVictim.TryGetValue(vid, out var perSuspect))
+                    {
+                        perSuspect = new Dictionary<int, SuspectEdge>();
+                        byVictim[vid] = perSuspect;
+                        victimRef[vid] = ed.victim;
+                    }
+                    // Keep the strongest edge per (suspect,victim) — a suspect may have several motives.
+                    if (!perSuspect.TryGetValue(sid, out var existing) || ed.score > existing.score)
+                        perSuspect[sid] = ed;
                 }
             }
+            if (byVictim.Count == 0) return false;
 
-            if (cands.Count == 0) return false;
+            // 2) Prefer victims with >= MinSuspects; else DEGRADE to the richest available tier
+            //    (never fall back to vanilla for the floor — the static graph would then always
+            //    be vanilla). floor = min(MinSuspects, richest) so we always have candidates.
+            int bestCount = 0;
+            foreach (var kv in byVictim) if (kv.Value.Count > bestCount) bestCount = kv.Value.Count;
+            if (bestCount == 0) return false;
+            int floor = Math.Min(MinSuspects, bestCount);
 
-            MotiveType lastType = _recentTypes.Count > 0 ? _recentTypes[0] : MotiveType.None;
-            for (int i = 0; i < cands.Count; i++)
+            var candVictims = new List<int>();
+            foreach (var kv in byVictim) if (kv.Value.Count >= floor) candVictims.Add(kv.Key);
+            if (candVictims.Count == 0) return false;
+
+            // 3) Uniform-random victim.
+            int chosenVid = candVictims[_rng.Next(candVictims.Count)];
+            victim = victimRef[chosenVid];
+
+            // 4) That victim's suspects, strongest first, capped at KillerPoolSize.
+            var suspects = new List<SuspectEdge>(byVictim[chosenVid].Values);
+            suspects.Sort((x, y) => y.score.CompareTo(x.score));
+            int poolN = Math.Min(Math.Max(1, KillerPoolSize), suspects.Count);
+
+            // 5) Uniform-random killer among the top pool.
+            var killerEdge = suspects[_rng.Next(poolN)];
+            murderer = killerEdge.suspect;
+
+            // 6) Record for clue injection / diagnostics.
+            pool = suspects;
+            PoolByVictim[chosenVid] = suspects;
+            OverriddenVictimIds.Add(chosenVid);
+            MotiveByVictim[chosenVid] = new MotiveResult
             {
-                var c = cands[i];
-                int ac = targetAggr[c.motive.target.humanID];
-                // Compress raw-score gaps (^exponent) so professional/money/feud
-                // motives get a real chance against dominant infidelity scores...
-                float w = (float)Math.Pow(Math.Max(0f, c.motive.score), WeightExponent);
-                // ...boost red-herring-rich victims...
-                w *= (1f + RedHerringBonusPer * (ac - 1));
-                // ...and discourage repeating the motive type from the last murder.
-                if (c.motive.type == lastType) w *= SameTypePenalty;
-                c.weight = w;
-                cands[i] = c;
-            }
-            cands.Sort((x, y) => y.weight.CompareTo(x.weight));
+                type = killerEdge.type,
+                target = victim,
+                score = killerEdge.score,
+                detail = killerEdge.detail,
+            };
+            // Back-compat: keep the affair-only downstream paths working until W3–W5 migrate them.
+            if (killerEdge.evt != null && killerEdge.evt.type == SocialEventType.Affair)
+                AffairByVictim[chosenVid] = killerEdge.evt;
+            if (killerEdge.evt != null)
+                EventStore.MarkKnown(killerEdge.evt, murderer.humanID);  // the killer knows their own motive event
 
-            int pool = Math.Min(TopPoolSize, cands.Count);
-            float total = 0f;
-            for (int i = 0; i < pool; i++) total += cands[i].weight;
-            if (total <= 0f) return false;
-
-            double roll = _rng.NextDouble() * total;
-            float acc = 0f; int idx = 0;
-            for (int i = 0; i < pool; i++) { acc += cands[i].weight; if (roll <= acc) { idx = i; break; } }
-
-            murderer = cands[idx].aggressor;
-            victim = cands[idx].motive.target;
-            motive = cands[idx].motive;
-
-            // Record for variety + signature stripping.
-            _recentTypes.Insert(0, motive.type);
-            if (_recentTypes.Count > 3) _recentTypes.RemoveAt(_recentTypes.Count - 1);
-            OverriddenVictimIds.Add(victim.humanID);
-            MotiveByVictim[victim.humanID] = motive;
-
-            int aggrOnVictim = targetAggr[victim.humanID];
-            MotivesPlugin.Log.LogInfo($"[SODMotives] selector: {cands.Count} motivated citizens; picked rank {idx + 1}/{pool} [{motive.type}]; victim has {aggrOnVictim} motivated enemy(ies).");
             return true;
         }
     }

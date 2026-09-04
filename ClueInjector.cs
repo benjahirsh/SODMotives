@@ -23,6 +23,14 @@ namespace SODMotives
         internal static readonly Dictionary<int, List<string>> CluesByVictim = new Dictionary<int, List<string>>();
         private static readonly HashSet<int> _injected = new HashSet<int>();
 
+        // Clear per-case clue state on a new game so reused humanIDs don't skip injection
+        // (via _injected) or surface a previous city's clue lines in F9. Called from SeedForNewGame.
+        internal static void ResetForNewGame()
+        {
+            _injected.Clear();
+            CluesByVictim.Clear();
+        }
+
         // Affair-appropriate DDS document trees (verified treeType==document, participants loose,
         // message saidBy:0->saidTo:1 so writer=from, reciever=to). vmail trees render blank.
         private static readonly (string id, string name)[] InfidelityTrees = {

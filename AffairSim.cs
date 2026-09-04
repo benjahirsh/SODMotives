@@ -14,6 +14,8 @@ namespace SODMotives
             try
             {
                 EventStore.Clear();
+                MurderSelector.ResetForNewGame();   // clear stale per-case bookkeeping (reused humanIDs across sandboxes)
+                ClueInjector.ResetForNewGame();
                 var city = CityData.Instance;
                 if (city == null || city.citizenDirectory == null) return;
                 var cits = city.citizenDirectory;

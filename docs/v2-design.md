@@ -178,6 +178,90 @@ Answers are generated from the NPC's `knownBy` events. Testimony is reliable.
 - **Separate mod:** vigilante/prevention (act before the murder), inheritance/family
   feuds, framing & false accusations, accidental (Knives-Out) murders.
 
+## V2.1 — Workplace rivalries + mixed-motive suspect pool (LOCKED 2026-09-04)
+
+**The pivot.** V2.0 picks a *motivated pair* (killer→victim) and injects only that
+motive's clue. V2.1 flips to **victim-centric**: choose a victim who has a **rich pool
+of real, event-backed suspects** (different people, different motives), pick the **real
+killer at random from that pool**, and seed **one clue-set per suspect's motive** at the
+scene. Motive + gossip narrow the player to a shortlist; the **vanilla physical layer
+(weapon prints / CCTV / alibi) — untouched — convicts the one.** Motive clues
+*supplement* forensics, never replace them — which **organically reduces** (never
+hard-prevents) lone-fingerprint cases — and the real killer looks **no guiltier than the
+red herrings** at the motive layer. "Workplace rivalry" is therefore not a case *type* — it's a motive
+*source* that feeds suspects into the shared pool, exactly like affairs.
+
+**Selection algorithm** (replaces the affair-first / V1-fallback cascade at
+`ExecuteNewMurder`; same gates: `procGenLoopActive`, `caseType==murder`,
+`VanillaCaseEvery`):
+1. Build citywide `(suspect → victim)` motive edges from **events only** (affairs +
+   workplace). The V1 `like`-based `Motive.Score` / `TryPick` is **retired from
+   selection** (it's the untraceable signal V2 exists to escape; keep only as a
+   diagnostic if useful).
+2. **Prefer** victims with **≥3 distinct real suspects** (`Selection/MinSuspects`, default 3).
+3. Pick the victim **uniformly at random** among those. **No vanilla fallback for the
+   floor** — the seeded graph is static, so gating to vanilla whenever the floor isn't met
+   would risk *always* going vanilla; instead **degrade gracefully** to the richest
+   available victim (≥2, then ≥1). Vanilla happens only via the explicit deterministic
+   `VanillaCaseEvery` cadence (default 0 = off in testing), or in the degenerate case where
+   the city has *zero* motivated victims (shouldn't occur after seeding).
+4. Rank that victim's suspects by motive strength, keep the **top 10**
+   (`Selection/KillerPoolSize`), pick the killer **uniformly at random** among them.
+5. Set `currentMurderer/currentVictim`; **record the full pool** (every suspect + the
+   event behind them) for clue injection. Vanilla then builds the guilt layer around the killer.
+
+**No dummy red herrings** — richness comes from real events only; density is the lever (see seeding).
+
+**Event types** (each = a module: seed · suspect-edges · testimony · clue-spec · audience):
+- **Affair** (unchanged shape): participants = the two lovers; suspect-edges = the
+  existing love-triangle pairings. Clue = **one** shared love letter (lovers' prints).
+- **Promotion**: **promotee P** (any employee with teammates; *never* a suspect in their
+  own promotion), **boss/decision-maker D** (`Occupation.boss`→Human, else
+  `Company.director`), **resenters R** = P's team (`Occupation.teamID`) minus P/D, capped
+  **2–5** (`Workplace/{Min,Max}Resenters`; fall back to nearest-in-rank coworkers if the
+  team is empty/huge). Suspect-edges: each `r∈R → P` (kill the rival) and `r∈R → D` (kill
+  the boss). Clues: **one official promotion notice** (names P; HR/boss prints) **+ one
+  personal threat note per resenter** (Dodgy_NoteRat-style, each carrying **that
+  resenter's** prints → several forensically-named suspects, one killer).
+- **ChoppingBlock** (the reframed "firing" — the NPC stays employed, consistent with the
+  static job sim; the game simulates **no** real firings): **aggrieved employee E** (on
+  probation / facing termination), **boss D**. Suspect-edge: `E → D`. Clues: **the
+  probation/termination record** (Probation_Notice / Employee_Record; HR/boss prints) **+
+  E's own angry note** (E's prints). Mainly enriches **boss-victim** pools.
+
+**Clue placement — motive-agnostic (KEY principle):** every clue lands at the victim's
+**home OR workplace at random**, independent of motive type
+(`home.PlaceObject` / `job.employer.placeOfBusiness.PlaceObject` — same primitive, both
+confirmed exposed). An affair letter can surface at the office; a termination notice at
+home. Injection is **pool-driven** (reads the recorded suspects), not re-derived from the
+home's residents. Total clues per case capped for scene sanity (`Clues/MaxCluesPerCase`).
+
+**Gossip & interrogation (same channel as affairs):** workplace audience = coworkers
+(`workTeam`/`workOther`/`workNotBoss`/`familiarWork`) **+ partners** (people vent about
+work at home) — a new case in `Gossip.Audience` / `IncludesPartners`.
+`Interrogation.ComposeAbout` dispatches per event type: coworkers **name the resenters**
+("X was passed over when Y got promoted — took it hard") so testimony expands an
+event-clue into named suspects; chopping-block phrasing ("Z's on thin ice — the boss has
+them on probation").
+
+**Seeding (WorkplaceSim, `OnStartGame` postfix, after affairs; seed-once & static — mirrors AffairSim):**
+- Enumerate companies (distinct `job.employer` across `citizenDirectory`, or a company
+  directory if one exists). Each `Company` exposes `companyRoster` (List&lt;Occupation&gt;,
+  `.employee`=Human), `director` (top boss), `placeOfBusiness` (office NewGameLocation).
+- **Generous** (`Workplace/SeedDensity`): every company with enough staff to form a
+  suspect team (≈≥4–5) gets **one Promotion** event (promotion-led).
+- A **subset** also gets **one ChoppingBlock** (`Workplace/ChoppingBlockChance`).
+- Backdate `time=0`; distribute gossip to the audience; add to `EventStore`. Density is
+  tuned so victims commonly clear the ≥3 bar — dial down after playtest.
+
+**New config:** `Workplace/{EnableWorkplace, SeedDensity, ChoppingBlockChance,
+MinResenters, MaxResenters}`, `Selection/{MinSuspects=3, KillerPoolSize=10}`.
+
+**Deferred within this line:** grow-new workplace events over time (seed-only for 2.1);
+**sabotage / credit-theft / humiliation** as a *separate, non-workplace "personal grudge"
+motive family* (its own later vertical); converting money/landlord & feud to event types
+(then they join the same pool).
+
 ## Status & resume kit
 
 _Kept current each session so any fresh context can pick up cold. To resume: read this
@@ -228,7 +312,23 @@ F10 teleport to scene · F11 to victim work · F12 to nearest affair-knower's ho
 - **C3** gossip-density tuning — adjust `Gossip.Audience` if finding a knower feels off.
 - **C4** pair interrogation "what's going on between X and Y?" (two-person pick / second
   armed context in `Interrogation.cs`).
-- **C5** Workplace/promotion event type (2.1) via the `Gossip` type-keyed seam.
+- **C5 → expanded into the V2.1 workplace + mixed-motive-pool line (spec above):**
+  - **W1** Event model + mixed-motive pool selector: generalize `SocialEvent` (roles +
+    resenter group), add `SocialEventType.Promotion`/`ChoppingBlock`, per-event
+    suspect-edges, citywide victim→suspects index; refactor `MurderSelector` to
+    victim-centric (≥3 victim / top-10 uniform killer / event-only pool / record full
+    pool / vanilla fallback); retire V1 `TryPick` from the override. **Regression gate:**
+    affairs still fire end-to-end through the NEW pool (no workplace events seeded yet).
+  - **W2** `WorkplaceSim` seeding (company enumeration, generous promotion + chopping
+    subset, resenter selection, gossip distribution). Workplace suspects enter the pool →
+    workplace-motivated cases appear; F9 shows them.
+  - **W3** Clue injection generalized + **pool-driven**: per-event clue specs, per-suspect
+    threat notes, official records, home/work random placement, author prints, cap.
+  - **W4** Interrogation generalized: `ComposeAbout` per event type; coworkers name the
+    resenters; chopping-block phrasing.
+  - **W5** F9/debug repoint at the REAL event pool; workplace nearest-knowers / teleport
+    aids; expose the new tuning knobs.
+  - **W6** Variety/balance playtest (event density, promotion:chopping ratio, ≥3 reachability).
 - **C6** Feud event type (2.2).
 - **C7** release cleanup for 2.0.0 — `ObviousTestNames=false`, `VanillaCaseEvery=3–4`,
   gate/remove debug hotkeys (F7 ghost, F9–F12), final variety playtest.

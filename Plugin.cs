@@ -27,14 +27,21 @@ namespace SODMotives
             // Config (BepInEx/config/com.benhirsh.sodmotives.cfg)
             MurderSelector.EnableOverride = Config.Bind("General", "EnableOverride", true,
                 "Replace vanilla killer/victim selection with a motivated pair from the social graph.").Value;
+            // V2.1 victim-centric selector knobs.
+            MurderSelector.MinSuspects = Config.Bind("Selection", "MinSuspects", 3,
+                "PREFER victims with at least this many real event-backed suspects. If none qualify, degrade to the richest available victim (never vanilla for the floor).").Value;
+            MurderSelector.KillerPoolSize = Config.Bind("Selection", "KillerPoolSize", 10,
+                "The real killer is picked uniformly at random from the victim's top-N strongest suspects.").Value;
+            // Legacy V1/V2.0 knobs — kept bound so existing .cfg files don't break; no longer
+            // consulted by the victim-centric selector. Pruned in release cleanup.
             MurderSelector.TopPoolSize = Config.Bind("Selection", "TopPoolSize", 40,
-                "Weighted-random pick is drawn from this many of the strongest feuds.").Value;
+                "(Legacy, unused) Weighted-random pick was drawn from this many of the strongest feuds.").Value;
             MurderSelector.RedHerringBonusPer = Config.Bind("Selection", "RedHerringBonusPer", 0.4f,
-                "Selection weight bonus per EXTRA motivated enemy the victim has (favours red-herring-rich victims).").Value;
+                "(Legacy, unused) Selection weight bonus per EXTRA motivated enemy the victim has.").Value;
             MurderSelector.WeightExponent = Config.Bind("Selection", "WeightExponent", 0.6f,
-                "Below 1.0 compresses score gaps so professional/money/feud motives surface, not only infidelity.").Value;
+                "(Legacy, unused) Below 1.0 compressed score gaps so weaker motives surfaced.").Value;
             MurderSelector.SameTypePenalty = Config.Bind("Selection", "SameTypePenalty", 0.4f,
-                "Weight multiplier for a motive type used in the previous murder (lower = more variety between cases).").Value;
+                "(Legacy, unused) Weight multiplier for a motive type used in the previous murder.").Value;
             MurderSelector.StripSignatures = Config.Bind("Flavour", "StripSignatures", true,
                 "Remove serial-killer calling card/moniker/graffiti from motivated cases so they read as personal crimes.").Value;
             MurderSelector.VanillaCaseEvery = Config.Bind("Flavour", "VanillaCaseEvery", 0,
@@ -339,40 +346,48 @@ namespace SODMotives
             try
             {
                 Human m, v;
-                // V2 FIRST: a murder driven by a REAL gossiped affair (betrayed partner kills
-                // cheater/lover) — so interrogating NPCs about the affair actually solves it.
-                if (MurderSelector.TryPickFromAffairs(out m, out v, out SocialEvent affair))
+                // V2.1: pick a victim rich in real, event-backed enemies (affairs + workplace),
+                // then a RANDOM killer from that mixed-motive pool. Every suspect is a real red
+                // herring; vanilla's physical evidence (built around the chosen killer) convicts.
+                if (MurderSelector.TryPickVictimCentric(out m, out v, out var suspectPool))
                 {
-                    MotivesPlugin.Log.LogInfo("[SODMotives] ************ AFFAIR MURDER (V2) ************");
+                    // Commit the override FIRST so a hiccup in the logging block below can't leave
+                    // the vanilla pair in place while the mod victim is already in the bookkeeping.
+                    newMurderer = m; newVictim = v; victimSite = null;
+                    __instance.currentMurderer = m; __instance.currentVictim = v;
+
+                    var killerMotive = MurderSelector.MotiveByVictim.TryGetValue(v.humanID, out var mr) ? mr : default;
+                    MotivesPlugin.Log.LogInfo("[SODMotives] ************ MOTIVATED MURDER (V2.1 mixed pool) ************");
                     MotivesPlugin.Log.LogInfo($"[SODMotives]   vanilla would have been: {MotivesPlugin.Name(newMurderer)} -> {MotivesPlugin.Name(newVictim)}");
-                    MotivesPlugin.Log.LogInfo($"[SODMotives]   {MotivesPlugin.Name(m)} kills {MotivesPlugin.Name(v)}");
-                    MotivesPlugin.Log.LogInfo($"[SODMotives]   over the affair between {MotivesPlugin.Name(affair.a)} and {MotivesPlugin.Name(affair.b)}");
+                    MotivesPlugin.Log.LogInfo($"[SODMotives]   VICTIM: {MotivesPlugin.Name(v)}  ({(suspectPool != null ? suspectPool.Count : 0)} real suspect(s) in pool)");
+                    MotivesPlugin.Log.LogInfo($"[SODMotives]   KILLER: {MotivesPlugin.Name(m)}  [{killerMotive.type}] {killerMotive.detail}");
+                    if (suspectPool != null)
+                    {
+                        MotivesPlugin.Log.LogInfo("[SODMotives]   SUSPECT POOL (each a real red herring; forensics convicts the one):");
+                        for (int i = 0; i < suspectPool.Count; i++)
+                        {
+                            var s = suspectPool[i];
+                            bool isKiller = s.suspect != null && m != null && s.suspect.humanID == m.humanID;
+                            MotivesPlugin.Log.LogInfo($"[SODMotives]       {(isKiller ? "* " : "  ")}{MotivesPlugin.F(s.score).PadLeft(6)}  {MotivesPlugin.Name(s.suspect)}  [{s.type}] {s.detail}");
+                        }
+                    }
+                    // Back-compat: on an affair-backed kill, log nearest knowers (F12 interro aid).
                     try
                     {
-                        UnityEngine.Vector3 scenePos = default;
-                        string sceneName = "victim's home";
-                        try { if (v != null && v.home != null && v.home.anchorNode != null) { scenePos = v.home.anchorNode.position; sceneName = v.home.name; } } catch { }
-                        MotivesPlugin.Log.LogInfo($"[SODMotives]   {affair.knownBy.Count} NPC(s) know it. Nearest knowers to {sceneName} (F10 to scene, then interview them):");
-                        foreach (var ln in affair.NearestKnowers(scenePos, 6)) MotivesPlugin.Log.LogInfo($"[SODMotives]       {ln}");
+                        if (MurderSelector.AffairByVictim.TryGetValue(v.humanID, out var affair) && affair != null)
+                        {
+                            UnityEngine.Vector3 scenePos = default; string sceneName = "victim's home";
+                            try { if (v.home != null && v.home.anchorNode != null) { scenePos = v.home.anchorNode.position; sceneName = v.home.name; } } catch { }
+                            MotivesPlugin.Log.LogInfo($"[SODMotives]   nearest affair-knowers to {sceneName}:");
+                            foreach (var ln in affair.NearestKnowers(scenePos, 6)) MotivesPlugin.Log.LogInfo($"[SODMotives]       {ln}");
+                        }
                     }
                     catch { }
-                    MotivesPlugin.Log.LogInfo("[SODMotives] *******************************************");
-                    newMurderer = m; newVictim = v; victimSite = null;
-                    __instance.currentMurderer = m; __instance.currentVictim = v;
-                }
-                // V1 FALLBACK: like-based scorer (professional/money/feud/other) until those
-                // become real event types too.
-                else if (MurderSelector.TryPick(out m, out v, out MotiveResult mot))
-                {
-                    MotivesPlugin.Log.LogInfo("[SODMotives] ****************** MOTIVE OVERRIDE (V1 fallback) ******************");
-                    MotivesPlugin.Log.LogInfo($"[SODMotives]   {MotivesPlugin.Name(m)} -> {MotivesPlugin.Name(v)}  [{mot.type}] {mot.detail} (score {MotivesPlugin.F(mot.score)})");
-                    MotivesPlugin.Log.LogInfo("[SODMotives] *****************************************************************");
-                    newMurderer = m; newVictim = v; victimSite = null;
-                    __instance.currentMurderer = m; __instance.currentVictim = v;
+                    MotivesPlugin.Log.LogInfo("[SODMotives] **********************************************************");
                 }
                 else
                 {
-                    MotivesPlugin.Log.LogInfo("[SODMotives] override: no motivated pair available this time; leaving vanilla pick untouched.");
+                    MotivesPlugin.Log.LogInfo("[SODMotives] override: no event-backed suspect pool available; leaving vanilla pick untouched.");
                 }
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] override error (leaving vanilla pick): {e}"); }

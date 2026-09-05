@@ -14,6 +14,7 @@ namespace SODMotives
         internal static bool Show = false;
         internal static bool Ghost = false;         // NPCs ignore the player (testing aid)
         internal static bool AlwaysAnswer = false;  // NPCs always accept "do you know this person?" (no bribe)
+        internal static MotiveType ForceMotiveType = MotiveType.None;  // F6: restrict the NEXT murder's suspect pool to one motive type
 
         internal static void Register()
         {
@@ -24,7 +25,7 @@ namespace SODMotives
                 GameObject.DontDestroyOnLoad(go);
                 go.hideFlags = HideFlags.HideAndDontSave;
                 go.AddComponent<DebugHotkey>();
-                MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys: F9=case solution, F10=teleport to scene, F11=teleport to victim's work, F12=teleport to nearest affair-knower, F8=toggle ALWAYS-ANSWER (no bribe), F7=toggle GHOST MODE (NPCs ignore you).");
+                MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys: F6=cycle FORCE MOTIVE (off/affair/professional), F7=ghost, F8=always-answer, F9=case solution, F10=teleport to scene, F11=to victim's work, F12=to nearest affair-knower.");
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] hotkey register failed: {e.Message}"); }
         }
@@ -50,6 +51,19 @@ namespace SODMotives
         internal static void ClearGhost()
         {
             try { var p = Player.Instance; if (p != null) { try { p.unreportable = false; } catch { } } } catch { }
+        }
+
+        // F6: cycle which motive type the NEXT murder is forced to. Only event-backed types
+        // (Infidelity/Professional) are useful; the filter is applied in TryPickVictimCentric.
+        internal static void CycleForceMotive()
+        {
+            switch (ForceMotiveType)
+            {
+                case MotiveType.None: ForceMotiveType = MotiveType.Infidelity; break;
+                case MotiveType.Infidelity: ForceMotiveType = MotiveType.Professional; break;
+                default: ForceMotiveType = MotiveType.None; break;
+            }
+            MotivesPlugin.Log.LogInfo($"[SODMotives] FORCE MOTIVE = {(ForceMotiveType == MotiveType.None ? "OFF (any motive)" : ForceMotiveType.ToString())} — applies to the NEXT new murder.");
         }
 
         internal static void TeleportToWork()
@@ -250,6 +264,7 @@ namespace SODMotives
                     if (DebugTools.Show) { DebugTools.Show = false; }
                     else { DebugTools.BuildSolution(); DebugTools.Show = true; }
                 }
+                if (Input.GetKeyDown(KeyCode.F6)) DebugTools.CycleForceMotive();
                 if (Input.GetKeyDown(KeyCode.F10)) DebugTools.TeleportToScene();
                 if (Input.GetKeyDown(KeyCode.F11)) DebugTools.TeleportToWork();
                 if (Input.GetKeyDown(KeyCode.F12)) DebugTools.TeleportToNearestKnower();
@@ -291,6 +306,18 @@ namespace SODMotives
                     if (_style == null) _style = new GUIStyle { fontSize = 14, wordWrap = false };
                     _style.normal.textColor = Color.cyan;
                     GUI.Label(new Rect(8, Screen.height - 46, 520, 20), "ALWAYS-ANSWER ON (F8) - NPCs never refuse 'do you know this person?'", _style);
+                }
+                catch { }
+            }
+
+            // Force-motive indicator.
+            if (DebugTools.ForceMotiveType != MotiveType.None)
+            {
+                try
+                {
+                    if (_style == null) _style = new GUIStyle { fontSize = 14, wordWrap = false };
+                    _style.normal.textColor = Color.yellow;
+                    GUI.Label(new Rect(8, Screen.height - 66, 520, 20), $"FORCE MOTIVE: {DebugTools.ForceMotiveType} (F6) - applies to next new murder", _style);
                 }
                 catch { }
             }

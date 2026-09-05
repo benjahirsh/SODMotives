@@ -46,6 +46,14 @@ namespace SODMotives
                 "Remove serial-killer calling card/moniker/graffiti from motivated cases so they read as personal crimes.").Value;
             MurderSelector.VanillaCaseEvery = Config.Bind("Flavour", "VanillaCaseEvery", 0,
                 "Force a full vanilla serial-killer case every Nth case (deterministic). 0 = never force vanilla (testing: every case is a mod case). Production suggestion: 3-4.").Value;
+            // Workplace-rivalry cases (V2.1) — built on-demand from live company rosters at murder time.
+            WorkplaceSim.Enable = Config.Bind("Workplace", "EnableWorkplace", true,
+                "Add workplace-rivalry cases (promotions + layoffs) as murder-motive sources, derived on-demand from real company rosters.").Value;
+            WorkplaceSim.MaxSuspects = Config.Bind("Workplace", "MaxSuspects", 5,
+                "Maximum suspects per workplace case (passed-over rivals / employees on the layoff list).").Value;
+            WorkplaceSim.PromotionShare = Config.Bind("Workplace", "PromotionShare", 0.4f,
+                "Of workplace cases where both are possible, the fraction that are promotions; the rest are layoffs (a boss-victim, most reliably multi-suspect).").Value;
+
             ClueInjector.Enable = Config.Bind("Clues", "InjectClues", true,
                 "Inject deliberately-ambiguous physical notes per motivated case, hinting at motives.").Value;
             ClueInjector.MaxClues = Config.Bind("Clues", "MaxCluesPerCase", 3,
@@ -54,6 +62,11 @@ namespace SODMotives
                 "TESTING: rename injected notes to 'MODCLUE ...' so they're easy to find. Set false for normal play.").Value;
             ClueInjector.FingerprintChance = Config.Bind("Clues", "FingerprintChance", 0.7f,
                 "Chance (0..1) a note carries the author's fingerprints. Below that, it's traceable only by handwriting.").Value;
+
+            // TESTING DEFAULT: force the first (and every) new murder to a workplace case so
+            // W2/W3 are fast to test. Cycle in-game with F6 (off / affair / professional).
+            // SET TO MotiveType.None FOR RELEASE.
+            DebugTools.ForceMotiveType = MotiveType.Professional;
 
             _harmony = new Harmony(Guid);
             _harmony.PatchAll(typeof(MotivesPlugin).Assembly);
@@ -387,7 +400,10 @@ namespace SODMotives
                 }
                 else
                 {
-                    MotivesPlugin.Log.LogInfo("[SODMotives] override: no event-backed suspect pool available; leaving vanilla pick untouched.");
+                    string filt = DebugTools.ForceMotiveType != MotiveType.None
+                        ? $" (FORCE MOTIVE={DebugTools.ForceMotiveType} active — no victim has enough suspects of that type; F6 to clear)"
+                        : "";
+                    MotivesPlugin.Log.LogInfo($"[SODMotives] override: no event-backed suspect pool available; leaving vanilla pick untouched.{filt}");
                 }
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] override error (leaving vanilla pick): {e}"); }

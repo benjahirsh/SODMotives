@@ -4,11 +4,12 @@ using UnityEngine;
 
 namespace SODMotives
 {
-    // Generic social-event model (V2). Affairs first; Workplace (Promotion / ChoppingBlock)
+    // Generic social-event model (V2). Affairs first; Workplace (Promotion / Layoffs)
     // added in 2.1; Feuds later. Each type only has to declare its own seeding, its
     // (suspect -> victim) motive edges, its testimony phrasing, and its gossip audience.
     // Everything else (store, knowledge, gossip, interrogation, selection) is shared.
-    internal enum SocialEventType { Affair, Promotion, ChoppingBlock }
+    // Workplace events are built ON DEMAND from live rosters (WorkplaceSim), not pre-seeded.
+    internal enum SocialEventType { Affair, Promotion, Layoffs }
 
     // A directed "X has a real, event-backed reason to harm Y" edge derived from an event.
     // The pool selector unions these across all events per victim. `score` only trims a
@@ -28,11 +29,12 @@ namespace SODMotives
     {
         public int id;
         public SocialEventType type;
-        public Human a;          // primary participants (affair: lover1; promotion: promotee; chopping: aggrieved)
-        public Human b;          // affair: lover2; promotion/chopping: boss / decision-maker
-        public readonly List<Human> group = new List<Human>();  // extra participants (promotion: resentful coworkers)
+        public Human a;          // affair: lover1 | promotion: promotee | layoffs: the boss (victim)
+        public Human b;          // affair: lover2 | promotion: boss/decider | layoffs: null
+        public readonly List<Human> group = new List<Human>();  // promotion: passed-over rivals | layoffs: the redundancy list (all suspects)
         public string placeName; // where it's associated (affair: a home; workplace: company name)
         public float time;       // game time it "happened" (0 = backdated/unknown for now)
+        public int companyId = -1; // workplace events only: source Company.companyID (per-game dedup)
 
         // humanIDs of everyone who knows about this event (witnessed or told).
         public readonly HashSet<int> knownBy = new HashSet<int>();
@@ -45,7 +47,7 @@ namespace SODMotives
             {
                 case SocialEventType.Affair: CollectAffairEdges(outList); break;
                 case SocialEventType.Promotion: CollectPromotionEdges(outList); break;
-                case SocialEventType.ChoppingBlock: CollectChoppingEdges(outList); break;
+                case SocialEventType.Layoffs: CollectLayoffsEdges(outList); break;
             }
         }
 
@@ -96,12 +98,18 @@ namespace SODMotives
             }
         }
 
-        // Chopping block: a = aggrieved employee facing termination, b = boss who put them there.
-        private void CollectChoppingEdges(List<SuspectEdge> o)
+        // Layoffs: a = the boss (victim); group = the employees on the redundancy list. Every one
+        // of them has a reason to kill the boss who was about to end their livelihood.
+        private void CollectLayoffsEdges(List<SuspectEdge> o)
         {
-            if (b == null) return;
+            string bn = SafeName(a);
             string co = string.IsNullOrEmpty(placeName) ? "work" : placeName;
-            Emit(o, a, b, 85f, MotiveType.Professional, $"{SafeName(b)} has them on the chopping block at {co}");
+            for (int i = 0; i < group.Count; i++)
+            {
+                Human l = group[i];
+                if (l == null) continue;
+                Emit(o, l, a, 85f, MotiveType.Professional, $"{bn} had them on the layoff list at {co}");
+            }
         }
 
         private static Human SafePartner(Human h) { if (h == null) return null; try { return h.partner; } catch { return null; } }
@@ -231,16 +239,21 @@ namespace SODMotives
             Acquaintance.ConnectionType.familiarWork,
         };
 
-        // Example for a future type — a workplace promotion is known by coworkers only
-        // (plus partners, via IncludesPartners):
-        //   private static readonly Acquaintance.ConnectionType[] WorkAudience =
-        //   { workTeam, workOther, familiarWork };
+        // Workplace events (promotion / chopping-block) are noticed by coworkers.
+        private static readonly Acquaintance.ConnectionType[] WorkAudience =
+        {
+            Acquaintance.ConnectionType.workTeam,
+            Acquaintance.ConnectionType.workOther,
+            Acquaintance.ConnectionType.familiarWork,
+        };
 
         private static Acquaintance.ConnectionType[] Audience(SocialEventType t)
         {
             switch (t)
             {
                 case SocialEventType.Affair: return AffairAudience;
+                case SocialEventType.Promotion:
+                case SocialEventType.Layoffs: return WorkAudience;
                 default: return AffairAudience;
             }
         }
@@ -248,12 +261,14 @@ namespace SODMotives
         // Are the participants' CURRENT partners told about this event type?
         //   Affair    -> false: a betrayed partner "knowing" is applied only at
         //                murder-selection time (assume-known), never free gossip.
-        //   Promotion -> true (future): people tell their partner good news.
+        //   Workplace -> true: people vent about work rivalries to their partner.
         private static bool IncludesPartners(SocialEventType t)
         {
             switch (t)
             {
                 case SocialEventType.Affair: return false;
+                case SocialEventType.Promotion:
+                case SocialEventType.Layoffs: return true;
                 default: return false;
             }
         }
@@ -267,6 +282,9 @@ namespace SODMotives
             bool partners = IncludesPartners(e.type);
             AddFor(e, e.a, conns, partners);
             AddFor(e, e.b, conns, partners);
+            if (e.group != null)
+                for (int i = 0; i < e.group.Count; i++)
+                    AddFor(e, e.group[i], conns, partners);
         }
 
         private static void AddFor(SocialEvent e, Human h, Acquaintance.ConnectionType[] conns, bool includePartner)

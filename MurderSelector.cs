@@ -52,6 +52,9 @@ namespace SODMotives
         // an affair -> still used by the (affair-only) clue injector / F9 / interrogation aids
         // until W3–W5 migrate those onto PoolByVictim.
         internal static readonly Dictionary<int, SocialEvent> AffairByVictim = new Dictionary<int, SocialEvent>();
+        // Companies that already produced a workplace murder this game -> don't build new workplace
+        // candidates for them (keeps EventStore bounded and avoids overlapping same-company cases).
+        internal static readonly HashSet<int> UsedWorkplaceCompanies = new HashSet<int>();
 
         // Clear per-game selection state so a NEW sandbox in the same process doesn't misfire
         // signature-strip / clue injection / F9 against reused humanIDs. Called from SeedForNewGame.
@@ -61,12 +64,14 @@ namespace SODMotives
             MotiveByVictim.Clear();
             PoolByVictim.Clear();
             AffairByVictim.Clear();
+            UsedWorkplaceCompanies.Clear();
             _casesSinceForced = 0;
         }
 
         private static bool IsValidActor(Human h)
         {
             if (h == null) return false;
+            try { if (h.isDead) return false; } catch { }   // never pick a dead person as victim/suspect
             try { int age = h.GetAge(); if (age > 0 && age < 16) return false; } catch { }
             return true;
         }
@@ -77,16 +82,27 @@ namespace SODMotives
         {
             murderer = null; victim = null; pool = null;
 
-            var all = EventStore.All;
-            if (all == null || all.Count == 0) return false;
+            // Combine STORED events (affairs, + already-materialized workplace cases) with LIVE
+            // workplace candidates built on-demand from company rosters (not yet in the store).
+            var events = new List<SocialEvent>();
+            var stored = EventStore.All;
+            if (stored != null) for (int i = 0; i < stored.Count; i++) events.Add(stored[i]);
+            int liveWorkplace = 0;
+            if (WorkplaceSim.Enable)
+            {
+                var cands = WorkplaceSim.CandidateEvents();
+                if (cands != null) { events.AddRange(cands); liveWorkplace = cands.Count; }
+            }
+            if (events.Count == 0) return false;
+            MotivesPlugin.Log.LogInfo($"[SODMotives] pool sources: {(stored != null ? stored.Count : 0)} stored + {liveWorkplace} live workplace candidate event(s).");
 
             // 1) Gather every real (suspect -> victim) edge from all events.
             var tmp = new List<SuspectEdge>();
             var byVictim = new Dictionary<int, Dictionary<int, SuspectEdge>>(); // victimId -> (suspectId -> strongest edge)
             var victimRef = new Dictionary<int, Human>();
-            for (int i = 0; i < all.Count; i++)
+            for (int i = 0; i < events.Count; i++)
             {
-                var e = all[i];
+                var e = events[i];
                 if (e == null) continue;
                 tmp.Clear();
                 try { e.CollectEdges(tmp); } catch { continue; }
@@ -94,6 +110,8 @@ namespace SODMotives
                 {
                     var ed = tmp[j];
                     if (!IsValidActor(ed.suspect) || !IsValidActor(ed.victim) || Motive.Same(ed.suspect, ed.victim)) continue;
+                    // Testing (F6): force the whole case to one motive type by dropping other-type edges.
+                    if (DebugTools.ForceMotiveType != MotiveType.None && ed.type != DebugTools.ForceMotiveType) continue;
                     int vid = ed.victim.humanID, sid = ed.suspect.humanID;
                     if (!byVictim.TryGetValue(vid, out var perSuspect))
                     {
@@ -144,6 +162,23 @@ namespace SODMotives
                 score = killerEdge.score,
                 detail = killerEdge.detail,
             };
+
+            // 7) Materialize any ON-DEMAND (live workplace) events behind this victim's pool. This
+            //    populates knownBy now; the affair-only clue/interrogation readers get wired onto
+            //    these in W3/W4. Stored events already have id != 0. Record the company so we don't
+            //    build a duplicate workplace case for it later.
+            for (int i = 0; i < suspects.Count; i++)
+            {
+                var ev = suspects[i].evt;
+                if (ev != null && ev.id == 0)   // a fresh workplace candidate not yet in the store
+                {
+                    Gossip.Distribute(ev);      // fill knownBy (coworkers + partners) before indexing
+                    EventStore.Add(ev);         // assigns id, indexes by knower
+                    if (ev.type != SocialEventType.Affair && ev.companyId >= 0)
+                        UsedWorkplaceCompanies.Add(ev.companyId);
+                }
+            }
+
             // Back-compat: keep the affair-only downstream paths working until W3–W5 migrate them.
             if (killerEdge.evt != null && killerEdge.evt.type == SocialEventType.Affair)
                 AffairByVictim[chosenVid] = killerEdge.evt;

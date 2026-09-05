@@ -73,6 +73,8 @@ namespace SODMotives
     {
         static void Postfix()
         {
+            // Seed affairs (clears the store + resets per-case state). Workplace cases are built
+            // ON-DEMAND at murder time from live rosters (WorkplaceSim.CandidateEvents), not seeded.
             try { AffairSim.SeedForNewGame(); }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][events] OnStartGame seed: {e.Message}"); }
         }

@@ -11,6 +11,13 @@ namespace SODMotives
     internal static class DebugTools
     {
         internal static readonly List<string> Overlay = new List<string>();
+        // Persistent bottom-left readout of where the current case's clues were injected (so you can
+        // find them without hunting). Populated by ClueInjector; cleared when a new case injects.
+        internal static readonly List<string> ClueHud = new List<string>();
+        internal static void AddClueHud(string line)
+        {
+            try { if (!string.IsNullOrEmpty(line)) { ClueHud.Add(line); while (ClueHud.Count > 8) ClueHud.RemoveAt(0); } } catch { }
+        }
         internal static bool Show = false;
         internal static bool Ghost = false;         // NPCs ignore the player (testing aid)
         internal static bool AlwaysAnswer = false;  // NPCs always accept "do you know this person?" (no bribe)
@@ -25,7 +32,7 @@ namespace SODMotives
                 GameObject.DontDestroyOnLoad(go);
                 go.hideFlags = HideFlags.HideAndDontSave;
                 go.AddComponent<DebugHotkey>();
-                MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys: F6=cycle FORCE MOTIVE (off/affair/professional), F7=ghost, F8=always-answer, F9=case solution, F10=teleport to scene, F11=to victim's work, F12=to nearest affair-knower.");
+                MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys: F4=spawn custom-text test note in your apartment, F5=trigger next murder, F6=cycle FORCE MOTIVE (off/affair/professional), F7=ghost, F8=always-answer, F9=case solution, F10=teleport to scene, F11=to victim's work, F12=to nearest affair-knower.");
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] hotkey register failed: {e.Message}"); }
         }
@@ -51,6 +58,68 @@ namespace SODMotives
         internal static void ClearGhost()
         {
             try { var p = Player.Instance; if (p != null) { try { p.unreportable = false; } catch { } } } catch { }
+        }
+
+        // F4: drop a custom-text test note into the player's apartment right now, listing a few live
+        // citizens as clickable links — verifies the custom DDS body renders, no murder needed.
+        internal static void SpawnTestNote()
+        {
+            var log = MotivesPlugin.Log;
+            try
+            {
+                var player = Player.Instance;
+                if (player == null) { log.LogInfo("[SODMotives][F4] No player."); return; }
+                NewGameLocation loc = null;
+                try { loc = player.home; } catch { }
+                if (loc == null) { log.LogInfo("[SODMotives][F4] No player home — enable 'start with apartment' in gameplay settings."); return; }
+
+                var people = new List<Human>();
+                try
+                {
+                    var dir = CityData.Instance != null ? CityData.Instance.citizenDirectory : null;
+                    if (dir != null)
+                    {
+                        for (int i = 0; i < dir.Count && people.Count < 5; i++)
+                        {
+                            var c = dir[i];
+                            if (c == null) continue;
+                            Human h = null; try { h = c.TryCast<Human>(); } catch { }
+                            if (h == null) continue;
+                            try { if (h.humanID == player.humanID) continue; } catch { }
+                            try { if (h.isDead) continue; } catch { }
+                            people.Add(h);
+                        }
+                    }
+                }
+                catch (Exception e) { log.LogWarning($"[SODMotives][F4] citizen gather: {e.Message}"); }
+
+                if (people.Count == 0) { log.LogInfo("[SODMotives][F4] No citizens found to list."); return; }
+                // Writer (author) separate from the listed names — mirrors a real case (boss signs, suspects listed).
+                Human writer = people[0];
+                var list = new List<Human>();
+                for (int i = 1; i < people.Count; i++) list.Add(people[i]);
+                if (list.Count == 0) list.Add(writer);   // fallback: only one citizen found
+                log.LogInfo($"[SODMotives][F4] spawning test custom-text note at {loc.name} — {list.Count} names, author {MotivesPlugin.Name(writer)}...");
+                bool ok = ClueInjector.SpawnTestCustomNote(loc, list, writer);
+                log.LogInfo($"[SODMotives][F4] test note {(ok ? "placed — read it in your apartment" : "FAILED")} (see [TEST] lines).");
+            }
+            catch (Exception e) { log.LogWarning($"[SODMotives][F4] error: {e}"); }
+        }
+
+        // F5: force the game to run its next murder NOW (testing) — combine with F6=Professional to
+        // get a workplace case fast instead of waiting for / re-rolling sandboxes. Our override still
+        // gates on proc-gen + caseType==murder, so a triggered kidnap/sniper is left to vanilla.
+        internal static void TriggerMurder()
+        {
+            var log = MotivesPlugin.Log;
+            try
+            {
+                var mc = MurderController.Instance;
+                if (mc == null) { log.LogInfo("[SODMotives][F5] no MurderController."); return; }
+                log.LogInfo($"[SODMotives][F5] triggering next murder (ForceMotive={ForceMotiveType})...");
+                mc.TriggerNextMurder();
+            }
+            catch (Exception e) { log.LogWarning($"[SODMotives][F5] trigger error: {e.Message}"); }
         }
 
         // F6: cycle which motive type the NEXT murder is forced to. Only event-backed types
@@ -130,34 +199,27 @@ namespace SODMotives
                 Overlay.Add($"VICTIM: {MotivesPlugin.Name(victim)}");
                 Overlay.Add($"SCENE : {scene}");
 
-                if (killer != null && victim != null)
-                {
-                    var mot = Motive.Score(killer, victim);
-                    Overlay.Add("MOTIVE: " + (mot.HasMotive
-                        ? $"[{mot.type}] {mot.detail} (score {MotivesPlugin.F(mot.score)})"
-                        : "none detected (unmotivated / vanilla)"));
-                }
+                // MOTIVE + SUSPECT POOL now read the REAL event-backed pool the killer was drawn
+                // from (MurderSelector), not the retired like-based Motive.Score.
+                if (victim != null && MurderSelector.MotiveByVictim.TryGetValue(victim.humanID, out var kmot))
+                    Overlay.Add($"MOTIVE: [{kmot.type}] {kmot.detail} (score {MotivesPlugin.F(kmot.score)})");
+                else if (killer != null && victim != null)
+                    Overlay.Add("MOTIVE: (vanilla / not overridden)");
 
                 if (victim != null)
                 {
-                    var city = CityData.Instance;
-                    if (city != null && city.citizenDirectory != null)
+                    if (MurderSelector.PoolByVictim.TryGetValue(victim.humanID, out var pool) && pool != null && pool.Count > 0)
                     {
-                        var cits = city.citizenDirectory;
-                        var suspects = new List<(float score, string line)>();
-                        for (int i = 0; i < cits.Count; i++)
+                        Overlay.Add($"SUSPECT POOL ({pool.Count} real event-backed suspects; killer *):");
+                        int show = Math.Min(10, pool.Count);
+                        for (int i = 0; i < show; i++)
                         {
-                            Human a = cits[i];
-                            if (a == null || Motive.Same(a, victim)) continue;
-                            var m = Motive.Score(a, victim);
-                            if (m.HasMotive)
-                                suspects.Add((m.score, $"  {MotivesPlugin.F(m.score).PadLeft(6)}  {MotivesPlugin.Name(a)}  [{m.type}] {m.detail}"));
+                            var ed = pool[i];
+                            bool isK = killer != null && ed.suspect != null && ed.suspect.humanID == killer.humanID;
+                            Overlay.Add($"  {(isK ? "*" : " ")}{MotivesPlugin.F(ed.score).PadLeft(6)}  {MotivesPlugin.Name(ed.suspect)}  [{ed.type}] {ed.detail}");
                         }
-                        suspects.Sort((x, y) => y.score.CompareTo(x.score));
-                        Overlay.Add($"SUSPECT SHORTLIST ({suspects.Count} with a motive toward the victim):");
-                        int show = Math.Min(8, suspects.Count);
-                        for (int i = 0; i < show; i++) Overlay.Add(suspects[i].line);
                     }
+                    else Overlay.Add("SUSPECT POOL: none recorded (vanilla case / not overridden).");
 
                     // Injected clues for this case.
                     try
@@ -264,6 +326,8 @@ namespace SODMotives
                     if (DebugTools.Show) { DebugTools.Show = false; }
                     else { DebugTools.BuildSolution(); DebugTools.Show = true; }
                 }
+                if (Input.GetKeyDown(KeyCode.F4)) DebugTools.SpawnTestNote();
+                if (Input.GetKeyDown(KeyCode.F5)) DebugTools.TriggerMurder();
                 if (Input.GetKeyDown(KeyCode.F6)) DebugTools.CycleForceMotive();
                 if (Input.GetKeyDown(KeyCode.F10)) DebugTools.TeleportToScene();
                 if (Input.GetKeyDown(KeyCode.F11)) DebugTools.TeleportToWork();
@@ -310,17 +374,31 @@ namespace SODMotives
                 catch { }
             }
 
-            // Force-motive indicator.
-            if (DebugTools.ForceMotiveType != MotiveType.None)
+            // Force-motive indicator — ALWAYS visible (incl. OFF) so the persistent F6 state, which
+            // survives sandbox re-rolls within one game, is never a surprise.
+            try
             {
-                try
+                if (_style == null) _style = new GUIStyle { fontSize = 14, wordWrap = false };
+                bool on = DebugTools.ForceMotiveType != MotiveType.None;
+                _style.normal.textColor = on ? Color.yellow : Color.gray;
+                string s = on ? $"FORCE MOTIVE: {DebugTools.ForceMotiveType} (F6)" : "FORCE MOTIVE: OFF (F6 to force affair/professional)";
+                GUI.Label(new Rect(8, Screen.height - 66, 560, 20), s, _style);
+            }
+            catch { }
+
+            // Injected-clue locations — where to find the current case's clues (stacked above F6-F8).
+            try
+            {
+                int n = DebugTools.ClueHud.Count;
+                if (n > 0)
                 {
                     if (_style == null) _style = new GUIStyle { fontSize = 14, wordWrap = false };
-                    _style.normal.textColor = Color.yellow;
-                    GUI.Label(new Rect(8, Screen.height - 66, 520, 20), $"FORCE MOTIVE: {DebugTools.ForceMotiveType} (F6) - applies to next new murder", _style);
+                    _style.normal.textColor = new Color(1f, 0.6f, 0.2f);   // orange
+                    for (int i = 0; i < n; i++)
+                        GUI.Label(new Rect(8, Screen.height - 86 - (n - i) * 20, 760, 20), "CLUE @ " + DebugTools.ClueHud[i], _style);
                 }
-                catch { }
             }
+            catch { }
 
             if (!DebugTools.Show) return;
             try

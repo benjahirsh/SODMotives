@@ -335,3 +335,11 @@ F10 teleport to scene · F11 to victim work · F12 to nearest affair-knower's ho
 - **C7** release cleanup — `ObviousTestNames=false`, `VanillaCaseEvery=3–4`,
   **`DebugTools.ForceMotiveType=None`** (Plugin.Load testing default is `Professional`),
   gate/remove debug hotkeys (F6 force-motive, F7 ghost, F9–F12), final variety playtest.
+- **C7b** custom probation-notice trees — the game crosses the case-board recipient-links of
+  letters sharing BOTH the same sender AND the same DDS tree, so layoff notices (all boss +
+  all `Probation_Notice`) collide. Interim: `ClueInjector.TerminationTrees` rotates distinct
+  real trees (Probation_Notice / Employee_Record / Ev_PrintedEmployeeDB) — swap-free but the
+  latter two don't clearly name the addressee in-body. RELEASE FIX: clone `Probation_Notice`
+  into N tree-ids with identical text (distinct GUIDs) so every layoff notice reads as a
+  probation notice AND the board links stay correct. (Promotion threats are unaffected —
+  different sender each.)

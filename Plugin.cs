@@ -32,6 +32,8 @@ namespace SODMotives
                 "PREFER victims with at least this many real event-backed suspects. If none qualify, degrade to the richest available victim (never vanilla for the floor).").Value;
             MurderSelector.KillerPoolSize = Config.Bind("Selection", "KillerPoolSize", 10,
                 "The real killer is picked uniformly at random from the victim's top-N strongest suspects.").Value;
+            MurderSelector.WorkplaceCaseShare = Config.Bind("Selection", "WorkplaceCaseShare", 0.5f,
+                "When the F6 force is OFF: target fraction of mod cases that feature a workplace motive, so the far-more-numerous affairs don't swamp workplace. 0 = affairs only, 1 = workplace only.").Value;
             // Legacy V1/V2.0 knobs — kept bound so existing .cfg files don't break; no longer
             // consulted by the victim-centric selector. Pruned in release cleanup.
             MurderSelector.TopPoolSize = Config.Bind("Selection", "TopPoolSize", 40,
@@ -56,12 +58,14 @@ namespace SODMotives
 
             ClueInjector.Enable = Config.Bind("Clues", "InjectClues", true,
                 "Inject deliberately-ambiguous physical notes per motivated case, hinting at motives.").Value;
-            ClueInjector.MaxClues = Config.Bind("Clues", "MaxCluesPerCase", 3,
-                "Notes injected per case: the killer's plus red herrings from other motivated suspects (so motive alone isn't a giveaway).").Value;
+            ClueInjector.MaxClues = Config.Bind("Clues", "MaxCluesPerCase", 8,
+                "Safety cap on total motive clues per case (one per event-suspect: love letter / promotion letter + rival threats / termination notices).").Value;
             ClueInjector.ObviousNames = Config.Bind("Clues", "ObviousTestNames", true,
                 "TESTING: rename injected notes to 'MODCLUE ...' so they're easy to find. Set false for normal play.").Value;
             ClueInjector.FingerprintChance = Config.Bind("Clues", "FingerprintChance", 0.7f,
                 "Chance (0..1) a note carries the author's fingerprints. Below that, it's traceable only by handwriting.").Value;
+            ClueInjector.WorkplaceClueShare = Config.Bind("Clues", "WorkplaceClueShare", 0.5f,
+                "Chance (0..1) a given clue is placed at the victim's WORKPLACE rather than home. Motive-agnostic: any motive's clue can land at either, so location never betrays the motive.").Value;
 
             // TESTING DEFAULT: force the first (and every) new murder to a workplace case so
             // W2/W3 are fast to test. Cycle in-game with F6 (off / affair / professional).

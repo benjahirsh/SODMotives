@@ -15,6 +15,7 @@ namespace SODMotives
         internal static bool EnableOverride = true;
         internal static int MinSuspects = 3;            // PREFER victims with at least this many real suspects
         internal static int KillerPoolSize = 10;        // killer = uniform-random among the victim's top-N suspects
+        internal static float WorkplaceCaseShare = 0.5f; // when NOT force-filtering (F6 off): target fraction of cases featuring a workplace motive, so affairs don't swamp workplace
         internal static bool StripSignatures = true;    // remove serial-killer calling card/moniker/graffiti on motivated cases
         // Deterministic (V2 design): force a vanilla case every Nth handled case so the
         // classic serial-killer hunt never disappears. 0 (or less) = never force vanilla.
@@ -94,7 +95,7 @@ namespace SODMotives
                 if (cands != null) { events.AddRange(cands); liveWorkplace = cands.Count; }
             }
             if (events.Count == 0) return false;
-            MotivesPlugin.Log.LogInfo($"[SODMotives] pool sources: {(stored != null ? stored.Count : 0)} stored + {liveWorkplace} live workplace candidate event(s).");
+            MotivesPlugin.Log.LogInfo($"[SODMotives] pool sources: {(stored != null ? stored.Count : 0)} stored + {liveWorkplace} live workplace candidate event(s); ForceMotive={DebugTools.ForceMotiveType}.");
 
             // 1) Gather every real (suspect -> victim) edge from all events.
             var tmp = new List<SuspectEdge>();
@@ -138,8 +139,33 @@ namespace SODMotives
             foreach (var kv in byVictim) if (kv.Value.Count >= floor) candVictims.Add(kv.Key);
             if (candVictims.Count == 0) return false;
 
-            // 3) Uniform-random victim.
-            int chosenVid = candVictims[_rng.Next(candVictims.Count)];
+            // 3) Balance case types so affairs (far more numerous) don't swamp workplace when the
+            //    F6 force is OFF. Bucket victims by whether they have a workplace / affair suspect
+            //    (mixed victims sit in BOTH, preserving mixed pools), then pick a bucket by share.
+            List<int> bucket = candVictims;
+            if (DebugTools.ForceMotiveType == MotiveType.None)
+            {
+                var workV = new List<int>();
+                var affairV = new List<int>();
+                foreach (int vid in candVictims)
+                {
+                    bool hasWork = false, hasAffair = false;
+                    foreach (var ed in byVictim[vid].Values)
+                    {
+                        if (ed.type == MotiveType.Professional) hasWork = true;
+                        else if (ed.type == MotiveType.Infidelity) hasAffair = true;
+                    }
+                    if (hasWork) workV.Add(vid);
+                    if (hasAffair) affairV.Add(vid);
+                }
+                bool wantWork = _rng.NextDouble() < WorkplaceCaseShare;
+                bucket = wantWork ? workV : affairV;
+                if (bucket.Count == 0) bucket = wantWork ? affairV : workV;   // fall back to the other type
+                if (bucket.Count == 0) bucket = candVictims;
+            }
+
+            // 4) Uniform-random victim within the chosen bucket.
+            int chosenVid = bucket[_rng.Next(bucket.Count)];
             victim = victimRef[chosenVid];
 
             // 4) That victim's suspects, strongest first, capped at KillerPoolSize.

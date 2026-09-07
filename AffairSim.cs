@@ -16,6 +16,7 @@ namespace SODMotives
                 EventStore.Clear();
                 MurderSelector.ResetForNewGame();   // clear stale per-case bookkeeping (reused humanIDs across sandboxes)
                 ClueInjector.ResetForNewGame();
+                Persistence.ResetForNewGame();       // clear note records so a fresh city can't carry a prior city's
                 var city = CityData.Instance;
                 if (city == null || city.citizenDirectory == null) return;
                 var cits = city.citizenDirectory;

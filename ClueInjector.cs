@@ -371,7 +371,7 @@ namespace SODMotives
         // each citizen's evidence, so they're clickable/board-pinnable. Returns the tree id, or null.
         // NOTE: these registrations + link ids are in-memory/session-only; a save+reload would need
         // them re-registered (persistence is a follow-up).
-        private static string BuildRedundancyDocTree(List<Human> uniq, Human author, out int linked)
+        private static string BuildRedundancyDocTree(List<Human> uniq, Human author, out int linked, string fixedTreeId = null)
         {
             linked = 0;
             try
@@ -381,7 +381,9 @@ namespace SODMotives
                 string uid = System.Guid.NewGuid().ToString("N");
                 string blockKey = "sodmotives.redlist.block." + uid;
                 string messageKey = "sodmotives.redlist.msg." + uid;
-                string treeId = "sodmotives.redlist.tree." + uid;
+                // On save/reload replay, re-register under the SAME tree id the surviving note still points
+                // at (only the tree id must match; block/message/link keys can be freshly minted).
+                string treeId = !string.IsNullOrEmpty(fixedTreeId) ? fixedTreeId : ("sodmotives.redlist.tree." + uid);
 
                 // Body: heading + one clickable citizen link per suspect (plain name if no evidence node).
                 var sb = new System.Text.StringBuilder();
@@ -500,6 +502,35 @@ namespace SODMotives
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: BuildRedundancyDocTree: {e.Message}"); return null; }
         }
 
+        // Save/reload replay (Persistence): the note OBJECT survived (its int id, its `dds` tree-id override,
+        // and its title), but the custom DDS body, clickable name-links, and board connections were
+        // runtime-only and are gone. Re-register the tree under the SAME id, re-point the live note at it,
+        // and redraw the document->citizen connections. Does NOT place anything — the note already exists.
+        internal static void RebuildCustomNote(Interactable note, List<Human> citizens, Human author, string treeId)
+        {
+            if (note == null || string.IsNullOrEmpty(treeId)) return;
+            int linked;
+            string built = BuildRedundancyDocTree(citizens, author, out linked, treeId);
+            if (built == null) { MotivesPlugin.Log.LogWarning($"[SODMotives] persist: rebuild tree failed for '{treeId}'."); return; }
+
+            var docEv = note.evidence;
+            try { if (author != null) note.SetWriter(author); } catch { }
+            try { note.SetDDSOverride(treeId); } catch { }
+            if (docEv != null)
+            {
+                try { docEv.SetOverrideDDS(treeId); } catch { }
+                try { if (author != null) docEv.SetWriter(author); } catch { }
+            }
+
+            int reconnected = 0;
+            var fp = ResolveConnectFactPreset(docEv);
+            if (citizens != null) for (int i = 0; i < citizens.Count; i++) if (AddCitizenConnection(docEv, citizens[i], fp)) reconnected++;
+
+            int id = -1; try { id = note.id; } catch { }
+            MotivesPlugin.Log.LogInfo($"[SODMotives] persist: rebuilt note id={id} tree='{treeId}' names={(citizens != null ? citizens.Count : 0)} bodyLinks={linked} reconnected={reconnected}.");
+            try { DebugTools.AddClueHud($"restored list (reload) — id={id}"); } catch { }
+        }
+
         // Preferred layoffs clue: a placed note whose body is our custom readable/clickable list, plus
         // a clean title and the connections tab. Returns false (nothing placed) so the caller can fall
         // back if the custom tree can't be built or placed.
@@ -541,6 +572,15 @@ namespace SODMotives
             string where = "?", locDesc = "?";
             try { var node = note.node; if (node != null) { var gl = node.gameLocation; string loc = gl != null ? gl.name : "?"; string room = ""; try { if (node.room != null) room = node.room.GetName(); } catch { } locDesc = string.IsNullOrEmpty(room) ? loc : $"{room}, {loc}"; where = ClassifyLocation(victim, loc); } } catch { }
             int itemId = -1; try { itemId = note.id; } catch { }
+            // Persist for save/reload: record the ids needed to re-register the custom tree + reconnect.
+            try
+            {
+                var pids = new List<int>();
+                for (int i = 0; i < uniq.Count; i++) if (uniq[i] != null) pids.Add(uniq[i].humanID);
+                Persistence.RecordNote(itemId, treeId, "layoffs", boss != null ? boss.humanID : -1, pids,
+                    ObviousNames ? "MODCLUE Redundancy List" : "Redundancy List");
+            }
+            catch (Exception pe) { MotivesPlugin.Log.LogWarning($"[SODMotives] persist: record layoffs note: {pe.Message}"); }
             string rec = $"redundancy list (custom text) [{where}: {locDesc}] itemId={itemId} names={uniq.Count} bodyLinks={linkedBody} connected={linked}";
             recList.Add(rec);
             MotivesPlugin.Log.LogInfo($"[SODMotives] clue: INJECTED {rec}");
@@ -589,6 +629,14 @@ namespace SODMotives
                 string locDesc = "?";
                 try { var node = note.node; if (node != null) { var gl = node.gameLocation; string ln = gl != null ? gl.name : "?"; string room = ""; try { if (node.room != null) room = node.room.GetName(); } catch { } locDesc = string.IsNullOrEmpty(room) ? ln : $"{room}, {ln}"; } } catch { }
                 int itemId = -1; try { itemId = note.id; } catch { }
+                // Persist for save/reload — makes the F4 test note itself the persistence test harness.
+                try
+                {
+                    var pids = new List<int>();
+                    for (int i = 0; i < people.Count; i++) if (people[i] != null) pids.Add(people[i].humanID);
+                    Persistence.RecordNote(itemId, treeId, "test", writer != null ? writer.humanID : -1, pids, "MODCLUE Test Redundancy List");
+                }
+                catch (Exception pe) { MotivesPlugin.Log.LogWarning($"[SODMotives][TEST] persist: record note: {pe.Message}"); }
                 MotivesPlugin.Log.LogInfo($"[SODMotives][TEST] placed custom-text note [{locDesc}] itemId={itemId} people={people.Count} bodyLinks={linkedBody} connected={linked} tree={treeId}");
                 try { DebugTools.AddClueHud($"TEST list — {locDesc}"); } catch { }
                 return true;

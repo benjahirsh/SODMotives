@@ -75,6 +75,7 @@ namespace SODMotives
             _harmony = new Harmony(Guid);
             _harmony.PatchAll(typeof(MotivesPlugin).Assembly);
             DebugTools.Register();
+            Persistence.Register();   // save/reload replay of custom notes (drives the replay poll)
             Log.LogInfo($"[SODMotives] Patches applied. Override = {(MurderSelector.EnableOverride ? "ON (motivated murders)" : "OFF (observation only)")}.");
         }
 

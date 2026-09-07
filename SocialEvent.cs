@@ -114,25 +114,88 @@ namespace SODMotives
 
         private static Human SafePartner(Human h) { if (h == null) return null; try { return h.partner; } catch { return null; } }
 
-        // What an NPC who knows this event would say when asked.
-        public string Testimony(int idx)
+        // What an NPC who knows this WORKPLACE event would say when asked about `subject`.
+        // Returns the line for the subject's OWN role in the event, or null if the subject
+        // isn't part of it (or this is an affair — Interrogation composes those inline, keeping
+        // that hard-won path untouched). Design rules (W4, locked):
+        //   * Subject's role only — one answer reveals only the picked person's own involvement;
+        //     the player assembles the suspect pool by asking about each coworker separately.
+        //   * The subject is referred to as "they/them", NEVER by name — the player just picked
+        //     their photo, so restating the name is redundant. Only the event's OTHER anchors
+        //     (the promotee, when the subject isn't them) are named; the suspect `group` is
+        //     never enumerated.
+        //   * Resentment applied equally — every passed-over rival / laid-off employee gets the
+        //     same bitter flavour, so the real killer reads no guiltier than the red herrings.
+        //   * Layoffs are framed as an ECONOMIC necessity ("the place lost money, the boss had
+        //     to make cuts"), never a literal "redundancy list" — the physical clue is the hard
+        //     list; the gossip is the soft, oblique lead.
+        //   * Rumour framing ("word is / I heard") so a partner-knower (told at home) isn't
+        //     oddly claiming firsthand office knowledge, and every word stays TRUE.
+        // `seed` should be stable per (npc, subject) so re-asking the same person is consistent.
+        public string TestimonyAbout(Human subject, int seed)
         {
-            string an = SafeName(a), bn = SafeName(b);
+            if (subject == null) return null;
+            int sid;
+            try { sid = subject.humanID; } catch { return null; }
+            string co = string.IsNullOrEmpty(placeName) ? "work" : placeName;
+
             switch (type)
             {
-                case SocialEventType.Affair:
-                    // Phrased as rumour/knowledge, not a specific eyewitness claim, so every
-                    // word stays TRUE and corroboratable against the real relationship graph
-                    // (we don't simulate an actual sighting at a place/time).
-                    switch (idx % 3)
-                    {
-                        case 0: return $"Word is, {an} and {bn} are seeing each other on the sly.";
-                        case 1: return $"You didn't hear it from me, but {an} and {bn} have something going on behind their partners' backs.";
-                        default: return $"There's talk about {an} and {bn}. More than just friends, if you follow me.";
-                    }
+                case SocialEventType.Promotion:
+                {
+                    string pn = SafeName(a);                   // promotee (anchor; never the subject in these branches)
+                    if (a != null && a.humanID == sid)        // the subject IS the promotee
+                        return Pick(seed,
+                            $"Word is they just landed the big promotion at {co} — the one the whole team was after.",
+                            $"They're the one who got bumped up at {co} not long ago. Not everyone was pleased about it.",
+                            $"Heard they got promoted over the rest of the floor at {co} recently.");
+                    if (b != null && b.humanID == sid)        // the subject IS the boss / decider
+                        return Pick(seed,
+                            $"They run {co} — word is they just handed {pn} that promotion over everyone else.",
+                            $"That's the boss at {co}; they picked {pn} for the promotion and passed the whole team over.");
+                    if (InGroup(sid))                         // a passed-over rival (equal resentment)
+                        return Pick(seed,
+                            $"They were up for that promotion at {co} — the one {pn} got instead. Took it hard, I heard.",
+                            $"One of the ones passed over when {pn} got bumped up at {co}. Weren't best pleased.",
+                            $"They reckoned that promotion at {co} had their name on it. {pn} got it instead.");
+                    return null;
+                }
+
+                case SocialEventType.Layoffs:
+                {
+                    if (a != null && a.humanID == sid)        // the subject IS the boss (victim)
+                        return Pick(seed,
+                            $"They run {co}. Word is the place has been losing money and they had to make a round of cuts.",
+                            $"Things have been tight at {co} lately — from what I hear they've had to let a few people go.");
+                    if (InGroup(sid))                         // someone let go in the cuts (equal resentment)
+                        return Pick(seed,
+                            $"Rough patch at {co} — the company's been bleeding money and the boss had to let people go. They were one of them.",
+                            $"They lost their job at {co} when the cuts came round; place has been losing money, I hear.",
+                            $"Heard {co} let them go when money got tight. Didn't see it coming, poor sod.");
+                    return null;
+                }
             }
-            return "Nothing comes to mind.";
+            return null;   // Affair (handled inline in Interrogation) or unknown type.
         }
+
+        private bool InGroup(int humanId)
+        {
+            for (int i = 0; i < group.Count; i++)
+                if (group[i] != null && group[i].humanID == humanId) return true;
+            return false;
+        }
+
+        // True if `humanId` is any participant of this event (a, b, or in the group).
+        internal bool InvolvesHuman(int humanId)
+        {
+            if (a != null && a.humanID == humanId) return true;
+            if (b != null && b.humanID == humanId) return true;
+            return InGroup(humanId);
+        }
+
+        // Deterministic variant pick (stable per seed; never negative-indexes).
+        private static string Pick(int seed, params string[] variants)
+            => variants[((seed % variants.Length) + variants.Length) % variants.Length];
 
         internal static string SafeName(Human h)
         {

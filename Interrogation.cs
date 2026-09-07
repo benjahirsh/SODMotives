@@ -27,12 +27,20 @@ namespace SODMotives
         private static bool _armed;
         private static Citizen _npc;
 
-        // Gossip armed for the NPC's NEXT answer bubble. The DDS/Strings/Speak path cannot
-        // render runtime text (Strings.Get rejects our entry — proven via spdiag), so instead
-        // we let the vanilla knowName answer create its bubble and REPLACE that bubble's text
-        // with our line (Patch_Bubble on SpeechBubbleController.Setup). Rides the proven render.
-        private static int _pendingHumanId = -1;
-        private static string _pendingText;
+        // Gossip delivery — a NEW trailing bubble, leaving the vanilla answer bubbles untouched.
+        // The DDS/Strings/Speak path can't render runtime text (Strings.Get rejects our entry),
+        // so we can't just Speak the gossip. Instead, two-phase on SpeechBubbleController.Setup:
+        //   Phase 1 — when the armed NPC's vanilla answer bubble spawns, we know the answer is
+        //     fully queued, so we enqueue a NEW bubble on that NPC's speechController REUSING the
+        //     vanilla bubble's (valid) dictRef/entryRef (guaranteed to render), landing it at the
+        //     END of the queue. We record OUR QueueElement's native pointer. Vanilla left alone.
+        //   Phase 2 — when OUR queued bubble spawns (matched by that pointer), we replace its text
+        //     with the gossip and restart the reveal. Result: real answer, then our gossip bubble.
+        private static int _pendingHumanId = -1;                        // armed NPC awaiting its vanilla answer (phase 1)
+        private static System.Collections.Generic.List<string> _pendingLines; // one gossip line per event TYPE -> one bubble each
+        // Our queued gossip bubbles, keyed by their QueueElement pointer -> the text to inject (phase 2).
+        private static readonly System.Collections.Generic.Dictionary<System.IntPtr, string> _pendingByPtr
+            = new System.Collections.Generic.Dictionary<System.IntPtr, string>();
 
         // Postfix target for DoYouKnowThisPerson(+Bribe1/2/3): ARM ONLY, never speak.
         internal static void ArmForPick(Citizen npc, Interactable speakingTo, bool success)
@@ -65,77 +73,184 @@ namespace SODMotives
                 if (npc == null || subject == null) return;
                 if (EventStore.Count == 0) AffairSim.SeedForNewGame();
 
-                string text = ComposeAbout(npc, subject);
-                if (text == null)
+                var lines = ComposeLines(npc, subject);
+                if (lines.Count == 0)
                 {
                     MotivesPlugin.Log.LogInfo($"[SODMotives][interro] {Name(npc)} asked about {Name(subject)} -> (nothing to add)");
-                    return; // this NPC knows no affair involving the subject; leave vanilla answer
+                    return; // this NPC knows nothing about the subject; leave the vanilla answer
                 }
 
-                // Arm the bubble hijack: the NPC's next answer bubble becomes our gossip line.
+                // Arm phase 1: the NPC's vanilla answer bubble triggers us to enqueue ONE trailing
+                // gossip bubble per line. Clear any stale phase-2 state from a previous pick.
                 _pendingHumanId = npc.humanID;
-                _pendingText = text;
-                MotivesPlugin.Log.LogInfo($"[SODMotives][interro] {Name(npc)} asked about {Name(subject)} -> \"{text}\" (armed bubble)");
+                _pendingLines = lines;
+                _pendingByPtr.Clear();
+                MotivesPlugin.Log.LogInfo($"[SODMotives][interro] {Name(npc)} asked about {Name(subject)} -> {lines.Count} gossip line(s) (armed trailing bubbles)");
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] OnPicked error: {e.Message}"); }
         }
 
-        // Replace the armed NPC's next speech bubble with our gossip, riding the vanilla render.
-        internal static void MaybeHijackBubble(SpeechBubbleController bubble, SpeechController sc)
+        // Two-phase delivery on every SpeechBubbleController.Setup (see the field comment):
+        // phase 2 first (inject our gossip into our own queued bubble), then phase 1 (on the
+        // armed NPC's vanilla answer, enqueue that trailing gossip bubble). The vanilla answer
+        // bubbles are never modified — the gossip is its own bubble at the end of the sequence.
+        internal static void OnBubbleSetup(SpeechBubbleController bubble, SpeechController sc)
         {
-            if (_pendingHumanId < 0 || bubble == null || sc == null) return;
+            if (bubble == null || sc == null) return;
             try
             {
+                // Phase 2: one of our enqueued gossip bubbles just spawned -> set its text.
+                if (_pendingByPtr.Count > 0)
+                {
+                    System.IntPtr elemPtr = System.IntPtr.Zero;
+                    try { var s = bubble.speech; if (s != null) elemPtr = s.Pointer; } catch { }
+                    if (elemPtr != System.IntPtr.Zero && _pendingByPtr.TryGetValue(elemPtr, out var gossip))
+                    {
+                        _pendingByPtr.Remove(elemPtr);
+                        SetBubbleText(bubble, gossip);
+                        MotivesPlugin.Log.LogInfo($"[SODMotives][interro] gossip bubble rendered -> \"{gossip}\"");
+                        return;
+                    }
+                }
+
+                // Phase 1: the armed NPC's vanilla answer bubble spawned -> the answer is fully
+                // queued, so enqueue ONE trailing bubble PER gossip line (each reusing this bubble's
+                // valid dictRef/entryRef so it renders), recording each QueueElement pointer for
+                // phase 2. The vanilla answer bubbles are never touched.
+                if (_pendingHumanId < 0 || _pendingLines == null) return;
                 Human speaker = null;
                 try { var a = sc.actor; if (a != null) speaker = a.TryCast<Human>(); } catch { }
                 if (speaker == null || speaker.humanID != _pendingHumanId) return;
 
-                string text = _pendingText;
-                _pendingHumanId = -1; _pendingText = null;   // one-shot
+                var lines = _pendingLines;
+                _pendingHumanId = -1; _pendingLines = null;   // one-shot phase 1
 
-                // Swap the bubble's target text + word list and restart the typewriter reveal so
-                // it plays OUR line instead of the vanilla answer.
-                bubble.actualString = text;
-                try
+                string dict = null, entry = null;
+                try { var s = bubble.speech; if (s != null) { dict = s.dictRef; entry = s.entryRef; } } catch { }
+                if (string.IsNullOrEmpty(dict)) return;   // can't clone -> bail
+
+                var q = sc.speechQueue;
+                foreach (var line in lines)
                 {
-                    var parts = text.Split(' ');
-                    var arr = new Il2CppStringArray(parts.Length);
-                    for (int i = 0; i < parts.Length; i++) arr[i] = parts[i];
-                    bubble.words = arr;
+                    if (string.IsNullOrEmpty(line)) continue;
+                    int before = q != null ? q.Count : -1;
+                    sc.Speak(dict, entry, false, false, false, 0f);   // append a trailing bubble, no interrupt
+                    if (q != null && q.Count > before && q.Count > 0)
+                    {
+                        var ours = q[q.Count - 1];
+                        var ptr = ours != null ? ours.Pointer : System.IntPtr.Zero;
+                        if (ptr != System.IntPtr.Zero) _pendingByPtr[ptr] = line;
+                    }
                 }
-                catch { }
-                bubble.revealedChars = 0;
-                bubble.wordsRevealed = 0;
-                bubble.setFinalText = false;
-                try { if (bubble.text != null) bubble.text.text = ""; } catch { }
-                MotivesPlugin.Log.LogInfo($"[SODMotives][interro] hijacked bubble for {Name(speaker)} -> \"{text}\"");
+                if (_pendingByPtr.Count > 0)
+                    MotivesPlugin.Log.LogInfo($"[SODMotives][interro] queued {_pendingByPtr.Count} trailing gossip bubble(s) for {Name(speaker)}");
+                else
+                    MotivesPlugin.Log.LogWarning("[SODMotives][interro] could not queue trailing gossip bubbles");
             }
-            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] hijack error: {e.Message}"); }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][interro] bubble error: {e.Message}"); }
         }
 
-        // What this NPC can add about the picked person: an affair the SUBJECT is a
-        // participant in (never the NPC's own). Generic — works for any citizen, not just
-        // murder-involved ones. A non-participant (e.g. a betrayed spouse) correctly yields
-        // nothing: there is no affair-gossip about someone who isn't in an affair. Such a
-        // victim's murder is still solvable by following the graph to their cheating partner.
-        private static string ComposeAbout(Human npc, Human subject)
+        // Set a bubble's target text + word list and restart the typewriter reveal from 0.
+        private static void SetBubbleText(SpeechBubbleController bubble, string text)
         {
-            SocialEvent affair = null;
+            bubble.actualString = text;
+            try
+            {
+                var parts = text.Split(' ');
+                var arr = new Il2CppStringArray(parts.Length);
+                for (int i = 0; i < parts.Length; i++) arr[i] = parts[i];
+                bubble.words = arr;
+            }
+            catch { }
+            bubble.revealedChars = 0;
+            bubble.wordsRevealed = 0;
+            bubble.setFinalText = false;
+            try { if (bubble.text != null) bubble.text.text = ""; } catch { }
+        }
+
+        // Safety backstop on how many gossip bubbles one answer produces (affairs are always a
+        // single collapsed bubble; each other event the subject is in adds one). NOT a per-type
+        // cap — keep it comfortably above the number of motive event types a subject could
+        // realistically be in at once (affair + professional + planned feud/theft/...), so genuine
+        // multi-motive subjects fully surface. It only guards against a pathological pile-up.
+        private const int MaxGossipBubbles = 6;
+
+        // The gossip lines this NPC can add about the picked person — ONE per event type, each
+        // becoming its own trailing bubble. The subject's involvement can span types (e.g. an
+        // affair AND a passed-over promotion). Each line refers to the subject as "they" (the
+        // player just picked their photo; restating the name is noise). Generic — works for any
+        // citizen. A non-participant (a betrayed spouse with no affair of their own, an outsider
+        // to the company) yields an empty list; the murder stays solvable via the graph.
+        private static List<string> ComposeLines(Human npc, Human subject)
+        {
+            var lines = new List<string>();
+            // Never narrate about the very person being interviewed (you picked their own photo).
+            if (Motive.Same(npc, subject)) return lines;
+
+            // Stable per (npc, subject) so re-asking the same person gives the same lines.
+            int seed = npc.humanID * 31 + subject.humanID;
+
+            // Gather the subject's affair partners (that this NPC knows, never the NPC's own
+            // affair) and workplace lines separately. Multiple affairs of the same subject
+            // COLLAPSE into ONE line naming each lover once — so affairs are a single bubble.
+            var lovers = new List<Human>();
+            var workLines = new List<string>();
             foreach (var e in EventStore.KnownBy(npc.humanID))
             {
-                if (e.type != SocialEventType.Affair) continue;
-                if (!Involves(e, subject)) continue;
-                if (Involves(e, npc)) continue; // won't tattle on their own affair
-                affair = e; break;
+                if (e.type == SocialEventType.Affair)
+                {
+                    if (!Involves(e, subject) || Involves(e, npc)) continue;
+                    Human other = Motive.Same(e.a, subject) ? e.b : e.a;
+                    if (other != null && !ContainsHuman(lovers, other)) lovers.Add(other);
+                }
+                else
+                {
+                    // Workplace (Promotion / Layoffs): the subject's own role. Coworkers discuss
+                    // office drama freely even when involved themselves — resentment is applied
+                    // equally, so it's no tell. Null when the subject isn't in this event.
+                    string wl = e.TestimonyAbout(subject, seed);
+                    if (!string.IsNullOrEmpty(wl) && !workLines.Contains(wl)) workLines.Add(wl);
+                }
             }
-            if (affair == null) return null;
 
-            Human other = Motive.Same(affair.a, subject) ? affair.b : affair.a;
+            // One affair bubble (if any) + one bubble per non-affair event line, capped only by
+            // the safety backstop (so future feud/theft motives surface alongside these).
+            if (lovers.Count > 0) lines.Add(AffairLine(subject, lovers));
+            for (int i = 0; i < workLines.Count && lines.Count < MaxGossipBubbles; i++) lines.Add(workLines[i]);
+            return lines;
+        }
+
+        // Affair gossip about the subject (subject = "they"), naming each distinct lover once and
+        // the betrayed partner once. Opener avoids "Word is" so it doesn't echo the workplace
+        // bubble's phrasing when both appear.
+        private static string AffairLine(Human subject, List<Human> lovers)
+        {
             Human sp = SafePartner(subject);
             var sb = new System.Text.StringBuilder();
-            sb.Append($"Actually — since you ask about {Name(subject)}: between us, word is they'd been carrying on with {Name(other)} behind their partner's back. ");
-            if (sp != null) sb.Append($"Can't imagine {Name(sp)} took that well.");
-            return sb.ToString().TrimEnd();
+            sb.Append($"Between you and me — they've been carrying on with {JoinNames(lovers)} behind their partner's back.");
+            if (sp != null) sb.Append($" Can't imagine {Name(sp)} took that well.");
+            return sb.ToString();
+        }
+
+        private static bool ContainsHuman(List<Human> list, Human h)
+        {
+            if (h == null) return false;
+            for (int i = 0; i < list.Count; i++) if (list[i] != null && list[i].humanID == h.humanID) return true;
+            return false;
+        }
+
+        // "X" / "X and Y" / "X, Y and Z"
+        private static string JoinNames(List<Human> people)
+        {
+            if (people.Count == 0) return "someone";
+            if (people.Count == 1) return Name(people[0]);
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < people.Count; i++)
+            {
+                if (i > 0) sb.Append(i == people.Count - 1 ? " and " : ", ");
+                sb.Append(Name(people[i]));
+            }
+            return sb.ToString();
         }
 
         // ---- helpers ----
@@ -164,7 +279,7 @@ namespace SODMotives
     internal static class Patch_Bubble
     {
         static void Postfix(SpeechBubbleController __instance, SpeechController newSpeechController)
-            => Interrogation.MaybeHijackBubble(__instance, newSpeechController);
+            => Interrogation.OnBubbleSetup(__instance, newSpeechController);
     }
 
     // TESTING CHEAT (DebugTools.AlwaysAnswer, F8): force the "Do you know this person?"

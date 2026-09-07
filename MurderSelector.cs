@@ -53,6 +53,9 @@ namespace SODMotives
         // an affair -> still used by the (affair-only) clue injector / F9 / interrogation aids
         // until W3–W5 migrate those onto PoolByVictim.
         internal static readonly Dictionary<int, SocialEvent> AffairByVictim = new Dictionary<int, SocialEvent>();
+        // The actual motive event behind the killer, for ANY event type (affair / promotion /
+        // layoffs). Drives the type-agnostic F9 knower list + F12 nearest-knower teleport.
+        internal static readonly Dictionary<int, SocialEvent> EventByVictim = new Dictionary<int, SocialEvent>();
         // Companies that already produced a workplace murder this game -> don't build new workplace
         // candidates for them (keeps EventStore bounded and avoids overlapping same-company cases).
         internal static readonly HashSet<int> UsedWorkplaceCompanies = new HashSet<int>();
@@ -65,6 +68,7 @@ namespace SODMotives
             MotiveByVictim.Clear();
             PoolByVictim.Clear();
             AffairByVictim.Clear();
+            EventByVictim.Clear();
             UsedWorkplaceCompanies.Clear();
             _casesSinceForced = 0;
         }
@@ -209,7 +213,10 @@ namespace SODMotives
             if (killerEdge.evt != null && killerEdge.evt.type == SocialEventType.Affair)
                 AffairByVictim[chosenVid] = killerEdge.evt;
             if (killerEdge.evt != null)
+            {
+                EventByVictim[chosenVid] = killerEdge.evt;               // any-type motive event (F9/F12 knower aids)
                 EventStore.MarkKnown(killerEdge.evt, murderer.humanID);  // the killer knows their own motive event
+            }
 
             return true;
         }

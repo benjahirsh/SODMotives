@@ -403,6 +403,29 @@ namespace SODMotives
             _nextId = 1;
         }
 
+        // Persistence (pass 2): replace the whole store with a set imported from the save sidecar,
+        // PRESERVING each event's id (so the MurderSelector maps that reference events by id still
+        // line up) and rebuilding the per-knower index from each event's knownBy. _nextId is set
+        // past the max restored id so any NEW event created after the load can't collide with a
+        // restored one. Each event is expected to already have its scalar fields + resolved
+        // a/b/group/knownBy populated by the caller.
+        internal static void RehydrateFrom(List<SocialEvent> events)
+        {
+            _events.Clear();
+            _byKnower.Clear();
+            int maxId = 0;
+            if (events != null)
+                for (int i = 0; i < events.Count; i++)
+                {
+                    var e = events[i];
+                    if (e == null) continue;
+                    _events.Add(e);
+                    if (e.id > maxId) maxId = e.id;
+                    foreach (int k in e.knownBy) Index(k, e);
+                }
+            _nextId = maxId + 1;
+        }
+
         internal static SocialEvent Add(SocialEvent e)
         {
             e.id = _nextId++;

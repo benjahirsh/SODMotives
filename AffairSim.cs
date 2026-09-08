@@ -74,9 +74,22 @@ namespace SODMotives
     {
         static void Postfix()
         {
-            // Seed affairs (clears the store + resets per-case state). Workplace cases are built
-            // ON-DEMAND at murder time from live rosters (WorkplaceSim.CandidateEvents), not seeded.
-            try { AffairSim.SeedForNewGame(); }
+            // OnStartGame fires on a LOAD as well as a new game (confirmed in-game 2026-09-08). On a
+            // load we must NOT re-seed/reset — that would clobber the sidecar import (EventStore + the
+            // per-case maps). Persistence raises a load flag in the LoadSaveState hook (which fires
+            // before this) and consumes it here: if this OnStartGame is part of a load, skip the seed
+            // and let the replay tick restore (or fallback-seed) instead. On a genuine new game the
+            // flag is clear, so we seed as normal. Workplace cases are still built ON-DEMAND at murder
+            // time from live rosters (WorkplaceSim.CandidateEvents), never seeded here.
+            try
+            {
+                // Skip the re-seed on a load (the flag), and also while a load's import is still
+                // pending (belt against OnStartGame firing more than once during one load — a second
+                // fire would otherwise re-seed over the incoming maps). A genuine new game trips
+                // neither, so it seeds normally.
+                if (Persistence.ConsumeLoadSeedSkip() || Persistence.IsImportPending()) return;
+                AffairSim.SeedForNewGame();
+            }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][events] OnStartGame seed: {e.Message}"); }
         }
     }

@@ -71,7 +71,11 @@ namespace SODMotives
             try
             {
                 if (npc == null || subject == null) return;
-                if (EventStore.Count == 0) AffairSim.SeedForNewGame();
+                // No lazy re-seed here: OnStartGame seeds new games and the sidecar import (or its
+                // affair fallback) handles loads, so the store is already populated by interrogation
+                // time. If it's genuinely empty (e.g. a paramour-free city), ComposeLines simply yields
+                // no gossip — we must NOT call SeedForNewGame, which would clear the restored note
+                // Records + per-case maps (and re-derive nothing new).
 
                 var lines = ComposeLines(npc, subject);
                 if (lines.Count == 0)

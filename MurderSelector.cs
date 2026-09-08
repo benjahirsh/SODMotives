@@ -73,6 +73,37 @@ namespace SODMotives
             _casesSinceForced = 0;
         }
 
+        // Persistence (pass 2): replace all per-case maps with state imported from the save sidecar.
+        // Callers pass already-resolved objects (Humans via the id->Human map, events via the
+        // id->SocialEvent map), so this just clears + copies. Restores F9's "mod case" verdict,
+        // the suspect pool, and the knower aids (F9/F12) after a reload.
+        internal static void RehydrateMaps(
+            HashSet<int> overridden,
+            Dictionary<int, MotiveResult> motiveByVictim,
+            Dictionary<int, List<SuspectEdge>> poolByVictim,
+            Dictionary<int, SocialEvent> affairByVictim,
+            Dictionary<int, SocialEvent> eventByVictim,
+            HashSet<int> usedCompanies)
+        {
+            OverriddenVictimIds.Clear();
+            if (overridden != null) foreach (int v in overridden) OverriddenVictimIds.Add(v);
+
+            MotiveByVictim.Clear();
+            if (motiveByVictim != null) foreach (var kv in motiveByVictim) MotiveByVictim[kv.Key] = kv.Value;
+
+            PoolByVictim.Clear();
+            if (poolByVictim != null) foreach (var kv in poolByVictim) PoolByVictim[kv.Key] = kv.Value;
+
+            AffairByVictim.Clear();
+            if (affairByVictim != null) foreach (var kv in affairByVictim) AffairByVictim[kv.Key] = kv.Value;
+
+            EventByVictim.Clear();
+            if (eventByVictim != null) foreach (var kv in eventByVictim) EventByVictim[kv.Key] = kv.Value;
+
+            UsedWorkplaceCompanies.Clear();
+            if (usedCompanies != null) foreach (int c in usedCompanies) UsedWorkplaceCompanies.Add(c);
+        }
+
         private static bool IsValidActor(Human h)
         {
             if (h == null) return false;

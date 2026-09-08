@@ -1,184 +1,155 @@
-# Persistence handover — pass 1 done, pass 2 next
+# Persistence handover — pass 1 & 2 DONE
 
-**Branch:** `v2` · **Date:** 2026-09-07 · Companion to `docs/save-reload-recon.md` (the original
-decompile-grounded design) and the auto-loaded memory `sod-motives-mod.md`.
+**Branch:** `v2` · **Date:** 2026-09-08 · Companion to `docs/save-reload-recon.md` (the original
+decompile-grounded recon) and the auto-loaded memory `sod-motives-mod.md`.
 
-This is a resume kit for continuing the save/reload persistence work in a fresh session. Trust it,
-but **verify any symbol before relying on it** — regenerate interop decompiles with `ilspycmd`
-against `<game>\BepInEx\interop\Assembly-CSharp.dll` if needed. Game root:
+Save/reload persistence for the mod's runtime-only state is **complete and verified in-game**. This
+doc is the as-built record + a resume kit. Trust it, but **verify any symbol before relying on it** —
+regenerate interop decompiles with `ilspycmd` against
+`<game>\BepInEx\interop\Assembly-CSharp.dll` if needed. Game root:
 `C:\Program Files (x86)\Steam\steamapps\common\Shadows of Doubt`.
 
 ---
 
 ## Status
 
-- **Pass 1 (custom-note reload) — DONE, committed `dd0e046`, verified in-game.** After save→reload,
-  mod-authored custom notes (the layoffs "Redundancy List" + the F4 test note) now come back with
-  their body text, clickable name-links, and case-board connections fully restored.
-- **Pass 2 (interrogation/gossip reload) — NOT STARTED.** This is the next unit: make NPC testimony
-  and the F9 aids survive a reload, by rehydrating `EventStore` + the `MurderSelector` per-victim maps
-  from the same sidecar. Design below.
+- **Pass 1 (custom-note reload) — DONE, committed `dd0e046`, verified in-game.** After a save→reload,
+  mod-authored custom notes (the layoffs "Redundancy List" + the F4 test note) come back with their
+  body text, clickable name-links, and case-board connections restored.
+- **Pass 2 (interrogation/gossip reload) — DONE (2026-09-08), verified in-game.** After a save→reload
+  the F9 panel keeps its "motivated (mod)" verdict + suspect pool + knowers, and asking a knower about
+  the victim still produces the mod gossip bubble. Verified across many NPCs and 4+ save/reload cycles;
+  state re-persists identically cycle after cycle (log: `persist2: imported N event(s) + maps (…
+  1 injected)` → `persist2: OnStartGame during a load — skipping new-game re-seed`, note rebuilt,
+  `replay complete`, zero warnings).
 
 Build/test loop: `dotnet build -c Release` (auto-deploys to the game's `plugins` folder only when the
 game is CLOSED; restart the game to load). Log at `<game>\BepInEx\LogOutput.log`, filter
-`[SODMotives]` (persistence lines are tagged `[SODMotives] persist:`).
+`[SODMotives]` (persistence lines tagged `[SODMotives] persist:` / `persist2:`).
 
 ---
 
-## Pass 1 architecture (what pass 2 extends)
+## Pass 1 architecture (custom notes)
 
-The note **object** survives a reload (int `id`, its `dds` tree-id override, and its `customName`
-title all persist as ordinary serialized evidence — plus the native writer/author fact). Everything
-the tree id *points at* is runtime-only and rebuilt from StreamingAssets at boot (Toolbox DDS
-tree/block/message, the `Strings` `dds.blocks` body, `AddOrGetLink` ids, our `CreateFact` links), so a
-reloaded note renders blank with dead links and no connections. Fix = a mod-owned **sidecar** replayed
+The note **object** survives a reload (int `id`, its `dds` tree-id override, and its `customName` title
+persist as ordinary serialized evidence — plus the native writer/author fact). Everything the tree id
+*points at* is runtime-only and rebuilt from StreamingAssets at boot (Toolbox DDS tree/block/message,
+the `Strings` `dds.blocks` body, `AddOrGetLink` ids, our `CreateFact` links), so a reloaded note renders
+blank with dead links and no connections. Fix = a mod-owned **sidecar** `<save>.sodmotives.dat` replayed
 on load.
 
-Files:
-- **`Persistence.cs`** (new) — the whole mechanism:
-  - `Records : List<NoteRecord>` + `RecordNote(...)` — accumulates every custom note placed
-    (`{interactableId, treeId, kind, authorHumanId, citizenHumanIds, title}`), deduped by
-    `interactableId`.
-  - `OnSave(path)` — writes the sidecar `<save>.sodmotives.dat` (line-based, tab-delimited; header
-    `SODMOTIVES_SIDECAR\tv1`, one `N\t…` line per note). Deliberately NOT JSON (avoids IL2CPP
-    reflection quirks).
-  - `MarkReplayPending()` — arms a replay; `Tick()` — polled every frame by `PersistenceRunner`
-    (a `MonoBehaviour`, `DontDestroyOnLoad`), waits until `CityData.Instance.citizenDirectory` +
-    `savableInteractableDictionary` are live, then rebuilds each note **once** (`_replayedIds`
-    guards duplicate connections), retrying while interactables are still streaming in (~15 s /
-    900-frame timeout).
-  - Sidecar path resolution: `_selectedSavePath` (from the clicked load-menu slot) ?? `_currentSavePath`
-    (last save this session).
-- **Harmony hooks** (in `Persistence.cs`, auto-registered via `PatchAll`):
-  - `Patch_Persist_Save` → postfix `SaveStateController.CaptureSaveStateAsync(string path, bool)`
-    ([decomp :1583]) → `OnSave(path)`.
-  - `Patch_Persist_Load` → postfix `SaveStateController.LoadSaveState(StateSaveData)` ([:1612],
-    **fires only on load, not new-game**) → `MarkReplayPending()`.
-  - `Patch_Persist_SlotClick` → postfix `SaveGameEntryController.OnLeftClick()` → capture
-    `__instance.info.FullName` (the clicked `.sodb`).
-- **`ClueInjector.cs`** — `BuildRedundancyDocTree` gained an optional `fixedTreeId` (re-register under
-  the SAME surviving tree id); new `RebuildCustomNote(note, citizens, author, treeId)` does the replay
-  (rebuild tree + re-point `SetDDSOverride`/`SetOverrideDDS` + redraw citizen connections); `RecordNote`
-  called at both custom-note sites (F4 `SpawnTestCustomNote` kind `"test"`, real `InjectLayoffsCustomText`
-  kind `"layoffs"`).
+- **`Persistence.cs`** — the whole mechanism: `Records` (custom notes placed, deduped by
+  `interactableId`); `OnSave(path)` writes the sidecar; `MarkReplayPending()` arms a replay; `Tick()`
+  (polled by the `PersistenceRunner` MonoBehaviour, `DontDestroyOnLoad`) waits until
+  `CityData.Instance.citizenDirectory` + `savableInteractableDictionary` are live, then rebuilds each
+  note once (`_replayedIds` guards duplicate connections), retrying while interactables stream in
+  (~15 s / 900-frame timeout).
+- **Harmony hooks:** `Patch_Persist_Save` → postfix `SaveStateController.CaptureSaveStateAsync(string,
+  bool)` → `OnSave`; `Patch_Persist_Load` → postfix `SaveStateController.LoadSaveState(StateSaveData)`
+  (fires only on load) → `MarkReplayPending`; `Patch_Persist_SlotClick` → postfix
+  `SaveGameEntryController.OnLeftClick()` → capture the clicked `.sodb` path.
+- **`ClueInjector.cs`** — `BuildRedundancyDocTree(fixedTreeId)` re-registers under the surviving tree id;
+  `RebuildCustomNote(note, citizens, author, treeId)` replays a note (rebuild tree + re-point
+  `SetDDSOverride`/`SetOverrideDDS` + redraw citizen connections); `RecordNote` at both custom-note sites.
 - **`Plugin.cs`** — `Persistence.Register()` in `Load()`.
-- **`AffairSim.cs`** — `Persistence.ResetForNewGame()` in `SeedForNewGame()` (clears `Records` on a new
-  game; does NOT clear `_replayPending`).
-
-Verified interop signatures (decompiles in scratchpad `decomp-save/`, regenerate if gone):
-`SaveStateController.CaptureSaveStateAsync(string,bool)`, `SaveStateController.LoadSaveState(StateSaveData)`,
-`SaveGameEntryController.info : FileInfo` + `OnLeftClick()`, `CityData.savableInteractableDictionary :
-Dictionary<int,Interactable>` ([CityData :1482]), `CityData.interactableDirectory` ([:1437]),
-`CityData.citizenDirectory : List<Citizen>` ([:1227]), `CityConstructor.generateNew : bool` ([:2252]),
-`CityConstructor.LoadState.loadComplete` ([:41]).
 
 ---
 
-## Pass 2 — rehydrate interrogation/gossip
+## Pass 2 architecture (interrogation / gossip) — as built
 
-### Goal
+Same sidecar, same replay tick. On save, `Persistence.OnSave` now also serializes the whole
+social-event web + the per-case selection maps; on load, `Persistence.Tick` imports them once (as soon
+as `CityData` citizens are live), independently of the note replay. Sidecar header bumped to `v2`.
 
-After F6→Professional, F5 (a real workplace case), asking a knower about the victim yields the mod
-gossip bubble, and F9 shows the pool + knowers. Today, a save→reload **loses all of this**: `EventStore`
-and the `MurderSelector` per-victim maps are plain mod statics, never serialized, so after reload an NPC
-asked about the still-active case says nothing and F9/F12 have no data. Pass 2 persists them on the same
-sidecar and imports them in the same replay tick.
+**The gate (why it's a flag, not `generateNew`).** The watch-first probe proved two things in-game:
+`MurderController.OnStartGame` **fires on load** as well as on a new game, and
+`CityConstructor.Instance.generateNew` reads **False even on a new game** by the time `OnStartGame` runs
+— so it cannot tell the two apart. Gate instead on `Persistence._loadInProgress`:
+- Set true in the `LoadSaveState` postfix (`MarkReplayPending`) — fires only on load, and BEFORE
+  `OnStartGame` (confirmed by log order).
+- The `OnStartGame` postfix (`AffairSim.cs`) calls `Persistence.ConsumeLoadSeedSkip()`; on a load it
+  SKIPS `AffairSim.SeedForNewGame()` and lets the import populate. **Consumed only by `OnStartGame`
+  (never by the replay tick)**, so it is still set whichever of {tick-import, `OnStartGame`} runs first —
+  the observed order is tick-import THEN `OnStartGame`, and the import is never clobbered.
+- Belt: the postfix also skips while `IsImportPending()` (guards a hypothetical double-fire).
 
-### Recommended design: import everything, don't re-seed on load (Option B)
+**Sidecar format (`v2`, tab-delimited).** Line kinds:
+- `N` note (pass 1): `id treeId kind authorId citizenIdsCsv title`
+- `E` event: `id type aId bId placeName time companyId groupCsv knownByCsv`
+- `OV` / `UW`: overridden-victim ids / used-workplace-company ids (csv)
+- `MB` motive-by-victim: `victimId type targetId score detail`
+- `PB` pool edge (many per victim): `victimId suspectId score type detail eventId`
+- `AB` / `EB`: affair-by-victim / event-by-victim: `victimId eventId`
+- `IJ`: injected-victim ids (csv) — which victims' clue-set was already placed
 
-On a NEW game, `AffairSim.SeedForNewGame()` (hooked to `MurderController.OnStartGame`) clears `EventStore`
-and re-seeds affairs from the live `paramour` graph; workplace cases are materialized on-demand at murder
-time. On LOAD we want the world exactly as it was saved, with event ids intact so the `MurderSelector`
-maps still line up. So:
+**Import (`Persistence.ImportEventsAndMaps`).** Rebuild each `SocialEvent` (resolve `a`/`b`/`group` via
+the id→Human map, refill `knownBy` — note `group`/`knownBy` are `readonly`, mutate in place), install via
+`EventStore.RehydrateFrom` (ids preserved, `_byKnower` rebuilt, `_nextId = max+1`); build an
+id→SocialEvent map; rebuild the six `MurderSelector` maps via `MurderSelector.RehydrateMaps` (edges/AB/EB
+resolve events by id → the same installed objects); restore `ClueInjector._injected` via
+`RestoreInjectedOnLoad`. **Fallback:** if the sidecar has no `E` lines (pre-pass-2 / vanilla save),
+re-seed affairs from the live graph so gossip still works and pass-1 notes still restore. `Records` is
+rebuilt from the loaded sidecar so the next save can't inherit a different timeline's notes.
 
-1. **Do NOT re-seed on load.** Import the saved `EventStore` (events with their ids + `knownBy`) verbatim
-   from the sidecar, plus the `MurderSelector` maps. Affairs come from the sidecar (they were seeded at
-   new-game and saved), so nothing needs re-deriving and every reference resolves by id.
-2. This hinges on **`SeedForNewGame` not running on load** — see the risk section below. Verify first;
-   gate if necessary.
+**New API:** `EventStore.RehydrateFrom(List<SocialEvent>)` (`SocialEvent.cs`),
+`MurderSelector.RehydrateMaps(...)` (`MurderSelector.cs`), `ClueInjector.GetInjectedVictimIds()` /
+`RestoreInjectedOnLoad(...)` (`ClueInjector.cs`), `Persistence.ConsumeLoadSeedSkip()` /
+`IsImportPending()`.
 
-### What to persist (exact shapes — grounded)
+**Persisted shapes (grounded):** `SocialEvent` (`SocialEvent.cs`) `{id, type, a/b→humanID (null→-1),
+group→ids, placeName, time, companyId, knownBy→ids}`; `MotiveResult` (`Motive.cs`)
+`{type, target→humanID, score, detail}`; `SuspectEdge` (`SocialEvent.cs`)
+`{suspect→humanID, score, type, detail, evt→event id}` (victim is the map key).
 
-`EventStore` (`SocialEvent.cs:391`): private `_events`, `_byKnower`, `_nextId`. Export by reading
-`EventStore.All`; per `SocialEvent` (`SocialEvent.cs:28`):
-- `id:int`, `type:SocialEventType` (Affair/Promotion/Layoffs), `placeName:string`, `time:float`,
-  `companyId:int`
-- `a`/`b` → `a.humanID`/`b.humanID` (Human, may be null → -1)
-- `group` → `List<int>` of `group[i].humanID`
-- `knownBy` → the `HashSet<int>` verbatim (already ids)
+**Adversarial review (general-purpose agent) — 4 fixes applied, 1 accepted:**
+- **#1** `Records` rebuilt from the loaded sidecar each load (no cross-save contamination).
+- **#3** `_selectedSavePath` consumed per load (a stale load-menu slot can't shadow the current save path).
+- **#4** `_injected` persisted (`IJ`) — a re-fired `SetMurderState(post)` on load can't inject a
+  duplicate clue-set. Confirmed in-game NOT to re-fire, so belt-and-suspenders.
+- **#5** removed the vestigial lazy re-seed at `Interrogation.OnPicked` (it could clear restored data).
+- **ACCEPTED, not fixed — #2:** a double `OnStartGame` straddling a replay-tick frame could re-seed
+  after import. Unobserved (exactly one fire per load in every test); the pass-2 test doubles as the
+  check. Proper fix if it ever manifests: hook `CityConstructor.GenerateNewCity` to clear
+  `_loadInProgress` on a genuine new game (its own watch-first exercise).
 
-`MurderSelector` maps (`MurderSelector.cs:47-61`, all `internal static readonly` → Persistence can
-clear+repopulate directly, same assembly):
-- `OverriddenVictimIds : HashSet<int>` — verbatim ids.
-- `MotiveByVictim : Dictionary<int, MotiveResult>` — per victim id: `MotiveResult{type:MotiveType,
-  target:Human→humanID, score:float, detail:string}` (confirm `MotiveResult` fields in `Motive.cs`).
-- `PoolByVictim : Dictionary<int, List<SuspectEdge>>` — per victim id, a list of
-  `SuspectEdge{suspect→humanID, victim→humanID, score:float, type:MotiveType, detail:string,
-  evt→SocialEvent.id}` (`SuspectEdge` is `SocialEvent.cs:18`).
-- `AffairByVictim`, `EventByVictim : Dictionary<int, SocialEvent>` — per victim id → the event's `id`.
-- `UsedWorkplaceCompanies : HashSet<int>` — verbatim ids.
-
-### Import order (in `Persistence.Tick`, after the id→Human map is built)
-
-1. Build `id→Human` map (already done in `Tick` for pass 1 — reuse it).
-2. Rebuild events: `new SocialEvent()` per exported event, set scalar fields, resolve `a`/`b`/`group`
-   via the map, refill `knownBy` (note: `group` and `knownBy` are `readonly` — mutate in place with
-   `.Add`, don't reassign). Register into a fresh `EventStore` **preserving each `id`** and rebuilding
-   `_byKnower` from `knownBy`, then set `_nextId = max(id)+1`. Build a local `id→SocialEvent` map.
-3. Rehydrate the `MurderSelector` maps, resolving Humans via the id→Human map and events via the
-   id→SocialEvent map.
-
-### API additions likely needed
-
-- **`EventStore`**: an import entry point (private `_events`/`_byKnower`/`_nextId` are inaccessible to
-  `Persistence`). Add `internal static void RehydrateFrom(List<SocialEvent> events)` — `Clear()`, add each
-  preserving `id`, index each `knownBy` id, set `_nextId`. (Export needs no new API — `All` + public
-  fields suffice.)
-- **`MurderSelector`**: optional `RehydrateMaps(...)` helper for encapsulation; not strictly required —
-  the maps are `internal` and can be cleared/repopulated from `Persistence` directly.
-- **`Persistence`**: extend the sidecar with new line types (e.g. `E\t…` per event; `OV`, `MB`, `PB`,
-  `AB`, `EB`, `UW` for the maps) written in `OnSave` and parsed in the replay. Keep `v1` readable or bump
-  the header to `v2` and branch. **Also: `Tick` currently early-returns when there are zero `N` records —
-  change it so event/map import still runs when there are events/maps but no notes.**
-
-### Test (pass 2)
-
-1. F6→Professional, F5 → a workplace case. F9 shows pool + `NEAREST KNOWERS`. F8 (always-answer), F12 to a
-   knower, interview → ask about the victim → confirm the trailing gossip bubble appears.
-2. Save → quit to menu → reload.
-3. Interview the same knower about the victim again → the gossip bubble should **still** appear; F9 should
-   still show the pool/knowers. (Also re-open the redundancy-list clue — pass 1 should still restore it.)
+Interop decompiles for pass 2 in scratchpad `decomp-pass2/` (`CityConstructor`, `MurderController`,
+`SaveStateController`); pass-1 decompiles in `decomp-save/`. Regenerate with `ilspycmd` if gone.
 
 ---
 
-## THE risk to design around (read before coding pass 2)
+## Regression test (either pass)
 
-`SeedForNewGame` (→ `EventStore.Clear()` + re-seed + `MurderSelector.ResetForNewGame()` +
-`Persistence.ResetForNewGame()`) is hooked to `MurderController.OnStartGame` (`AffairSim.cs:71`). Pass 2's
-whole design assumes **`OnStartGame` fires on NEW GAME ONLY, not on load** — which is consistent with the
-existing "interrogation breaks on reload because `EventStore` is empty" finding (if it re-seeded on load,
-`EventStore` wouldn't be empty). **Verify this explicitly** (log a line in the `OnStartGame` postfix and
-watch whether it fires during a load).
-
-- If it is new-game-only: no change needed; import in the replay tick as designed.
-- If it ALSO fires on load: it will clobber the imported `EventStore`/maps. Mitigate by gating
-  `SeedForNewGame` to skip when loading — e.g. check `CityConstructor` `generateNew == false`, or a
-  "load in progress" flag set by the `LoadSaveState` hook — and let the sidecar import populate instead.
-  (`Persistence.ResetForNewGame` already deliberately does NOT clear `_replayPending`, as a first guard.)
-
-Related, minor: pass 1's `Records` has the same theoretical clobber exposure; it hasn't bitten because
-`OnStartGame` appears new-game-only. Confirming this once settles both.
+1. New game / sandbox. **F6** → `Professional`, **F5** → a workplace case. **F9** shows
+   `CASE TYPE: motivated (mod)` + suspect pool + `NEAREST KNOWERS`.
+2. **F8** (always-answer), **F12** to the nearest knower, interview → "Do you know this person?" → pick
+   the victim → the trailing gossip bubble appears.
+3. **Save.** Pause menu → **Load** that save. (There is no "quit to menu"; pause-menu Load is the reload
+   path, and staying in one launch keeps a single log file.)
+4. **F9** still shows `motivated (mod)` + pool + knowers; re-interview → gossip bubble still appears;
+   the redundancy-list clue still reads (pass 1). Repeat save→load once more to confirm re-persistence.
 
 ---
 
-## Resume prompt
+## What's next (roadmap)
+
+Persistence is feature-complete. Open items (details in memory `sod-motives-mod.md` / `docs/roadmap-recon.md`):
+- **W5 config knobs** — bind `Interrogation.Enable`; repoint the last affair-only log around
+  `Plugin.cs:394`; move `DebugTools.ForceMotiveType` default to `None` for release.
+- **Promotion-clue custom-doc polish** — route the promotion letter through the reusable custom-doc engine.
+- **V2.2 motive-texture** — real-suspects-only; testimony = pointer / clue = detail; variable specificity
+  weighted to the knower's vantage (spec in memory).
+- **Release cleanup** — `ObviousTestNames=false`; gate/hide the F-key debug tools.
+
+---
+
+## Resume prompt (paste after /clear)
 
 > Resume the SOD Motives mod (Shadows of Doubt, BepInEx IL2CPP) at `C:\Users\opiate\workspace\SODMotives`,
 > branch `v2`. Read the auto-loaded memory `sod-motives-mod.md` and `docs/persistence-handover.md` first;
 > trust them but VERIFY any symbol still exists before relying on it (regenerate interop decompiles with
-> `ilspycmd` if needed). Persistence PASS 1 (custom-note reload) is DONE, committed `dd0e046`, and verified
-> in-game. Start persistence PASS 2: rehydrate the interrogation/gossip layer (`EventStore` +
-> `MurderSelector` per-victim maps) onto the SAME sidecar so NPC testimony and the F9 aids survive
-> save/reload — follow `docs/persistence-handover.md` §"Pass 2". Interrogate me on the design forks before
-> writing code (my usual pattern) — especially whether `SeedForNewGame`/`OnStartGame` fires on load and how
-> to gate it.
+> `ilspycmd` against `<game>\BepInEx\interop\Assembly-CSharp.dll` into a scratchpad if needed).
+> Save/reload PERSISTENCE IS DONE and verified in-game: pass 1 (custom notes) committed `dd0e046`; pass 2
+> (interrogation/gossip — EventStore + MurderSelector maps + `ClueInjector._injected` on a `v2` sidecar,
+> gated by `Persistence._loadInProgress`) committed on `v2` (see `git log`). Next, pick up the roadmap
+> (handover §"What's next" / memory): W5 config knobs, promotion-clue custom-doc polish, or V2.2
+> motive-texture. Interrogate me on the design forks before writing code (my usual pattern).

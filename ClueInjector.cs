@@ -42,6 +42,27 @@ namespace SODMotives
             CluesByVictim.Clear();
         }
 
+        // Persistence (pass 2): the victim ids whose clue-set has already been injected this game.
+        // Saved so a reload can restore it — otherwise `_injected` is empty after load and, now that
+        // pass 2 restores OverriddenVictimIds + PoolByVictim, a SetMurderState(post) that re-fires on
+        // load would pass every gate and inject a DUPLICATE clue-set (+ duplicate note records).
+        internal static List<int> GetInjectedVictimIds()
+        {
+            var outList = new List<int>(_injected.Count);
+            foreach (int id in _injected) outList.Add(id);
+            return outList;
+        }
+
+        // Persistence (pass 2): on LOAD, restore which victims were already injected so re-injection is
+        // suppressed for them, while a case saved BEFORE the kill (not yet injected) can still inject
+        // when it reaches 'post'. Also drops any prior in-session load's F9 clue-location lines.
+        internal static void RestoreInjectedOnLoad(List<int> victimIds)
+        {
+            _injected.Clear();
+            CluesByVictim.Clear();
+            if (victimIds != null) for (int i = 0; i < victimIds.Count; i++) _injected.Add(victimIds[i]);
+        }
+
         // Register a clone of srcTreeId under newTreeId — identical rendering, distinct id. Idempotent;
         // returns newTreeId on success, else falls back to srcTreeId. Il2Cpp-safe: explicit field
         // assignment, a NEW list holding the SAME message element refs (so msgIDs/text are shared).

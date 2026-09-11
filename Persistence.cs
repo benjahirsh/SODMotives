@@ -182,6 +182,7 @@ namespace SODMotives
                 // --- maps (pass 2) ---
                 sb.Append("OV\t").Append(IntSetCsv(MurderSelector.OverriddenVictimIds)).Append('\n');
                 sb.Append("UW\t").Append(IntSetCsv(MurderSelector.UsedWorkplaceCompanies)).Append('\n');
+                sb.Append("UB\t").Append(IntSetCsv(MurderSelector.UsedBuildings)).Append('\n');
 
                 foreach (var kv in MurderSelector.MotiveByVictim)
                 {
@@ -258,6 +259,7 @@ namespace SODMotives
             public List<EventRec> events = new List<EventRec>();
             public List<int> overridden = new List<int>();
             public List<int> usedCompanies = new List<int>();
+            public List<int> usedBuildings = new List<int>();
             public List<MotiveRec> motives = new List<MotiveRec>();
             public List<EdgeRec> edges = new List<EdgeRec>();
             public List<int[]> affairBy = new List<int[]>();   // [victimId, eventId]
@@ -317,6 +319,7 @@ namespace SODMotives
                             break;
                         case "OV": if (p.Length >= 2) s.overridden = ParseIntCsv(p[1]); break;
                         case "UW": if (p.Length >= 2) s.usedCompanies = ParseIntCsv(p[1]); break;
+                        case "UB": if (p.Length >= 2) s.usedBuildings = ParseIntCsv(p[1]); break;
                         case "MB":
                             if (p.Length < 6) break;
                             if (!int.TryParse(p[1], out int mv)) break;
@@ -451,7 +454,7 @@ namespace SODMotives
                     for (int j = 0; j < r.citizenHumanIds.Count; j++)
                     { Human h; if (map.TryGetValue(r.citizenHumanIds[j], out h) && h != null) people.Add(h); }
 
-                try { ClueInjector.RebuildCustomNote(inter, people, author, r.treeId); }
+                try { ClueInjector.RebuildCustomNote(inter, people, author, r.treeId, r.kind); }
                 catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] persist: rebuild id={r.interactableId} failed: {e.Message}"); }
                 _replayedIds.Add(r.interactableId);   // once, even on failure — no duplicate connections
                 done++;
@@ -496,6 +499,7 @@ namespace SODMotives
 
             var ov = new HashSet<int>(side.overridden);
             var uw = new HashSet<int>(side.usedCompanies);
+            var ub = new HashSet<int>(side.usedBuildings);
 
             var mb = new Dictionary<int, MotiveResult>();
             for (int i = 0; i < side.motives.Count; i++)
@@ -534,7 +538,7 @@ namespace SODMotives
             for (int i = 0; i < side.eventBy.Count; i++)
             { SocialEvent ev; if (idToEvent.TryGetValue(side.eventBy[i][1], out ev) && ev != null) eb[side.eventBy[i][0]] = ev; }
 
-            MurderSelector.RehydrateMaps(ov, mb, pb, ab, eb, uw);
+            MurderSelector.RehydrateMaps(ov, mb, pb, ab, eb, uw, ub);
             // Restore which victims were already injected so a SetMurderState(post) that re-fires on
             // load can't inject a duplicate clue-set (a case saved pre-kill stays un-injected -> it
             // will inject normally when it reaches 'post').

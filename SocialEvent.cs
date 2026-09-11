@@ -9,7 +9,7 @@ namespace SODMotives
     // (suspect -> victim) motive edges, its testimony phrasing, and its gossip audience.
     // Everything else (store, knowledge, gossip, interrogation, selection) is shared.
     // Workplace events are built ON DEMAND from live rosters (WorkplaceSim), not pre-seeded.
-    internal enum SocialEventType { Affair, Promotion, Layoffs }
+    internal enum SocialEventType { Affair, Promotion, Layoffs, Eviction, RentArrears }
 
     // A directed "X has a real, event-backed reason to harm Y" edge derived from an event.
     // The pool selector unions these across all events per victim. `score` only trims a
@@ -35,6 +35,7 @@ namespace SODMotives
         public string placeName; // where it's associated (affair: a home; workplace: company name)
         public float time;       // game time it "happened" (0 = backdated/unknown for now)
         public int companyId = -1; // workplace events only: source Company.companyID (per-game dedup)
+        public int buildingId = -1; // property events only: source NewBuilding.buildingID (per-game dedup). LIVE-ONLY — not serialized; only the materialize loop reads it, and UsedBuildings persists separately.
 
         // humanIDs of everyone who knows about this event (witnessed or told).
         public readonly HashSet<int> knownBy = new HashSet<int>();
@@ -48,6 +49,8 @@ namespace SODMotives
                 case SocialEventType.Affair: CollectAffairEdges(outList); break;
                 case SocialEventType.Promotion: CollectPromotionEdges(outList); break;
                 case SocialEventType.Layoffs: CollectLayoffsEdges(outList); break;
+                case SocialEventType.Eviction: CollectEvictionEdges(outList); break;
+                case SocialEventType.RentArrears: CollectRentArrearsEdges(outList); break;
             }
         }
 
@@ -112,6 +115,27 @@ namespace SODMotives
             }
         }
 
+        // Eviction: a = landlord (victim); group = aggrieved tenants being cleared out for a
+        // redevelopment. Every tenant about to lose their home has a reason to kill the landlord.
+        private void CollectEvictionEdges(List<SuspectEdge> o)
+        {
+            string co = string.IsNullOrEmpty(placeName) ? "their building" : placeName;
+            for (int i = 0; i < group.Count; i++)
+            {
+                Human t = group[i];
+                if (t == null) continue;
+                Emit(o, t, a, 85f, MotiveType.Money, $"{SafeName(a)} was clearing them out of {co} in the redevelopment");
+            }
+        }
+
+        // RentArrears: a = tenant (victim); b = landlord (the lone suspect). A landlord fed up with
+        // a tenant who wouldn't pay is the one holding the grudge.
+        private void CollectRentArrearsEdges(List<SuspectEdge> o)
+        {
+            string co = string.IsNullOrEmpty(placeName) ? "their building" : placeName;
+            Emit(o, b, a, 70f, MotiveType.Money, $"their tenant at {co} owed them months of back rent");
+        }
+
         private static Human SafePartner(Human h) { if (h == null) return null; try { return h.partner; } catch { return null; } }
 
         // What an NPC who knows this WORKPLACE event would say when asked about `subject`.
@@ -174,6 +198,34 @@ namespace SODMotives
                             $"Heard {co} let them go when money got tight. Didn't see it coming, poor sod.");
                     return null;
                 }
+
+                case SocialEventType.Eviction:
+                {
+                    // A landlord runs several places, so gossip stays generic — never a specific flat
+                    // (the specific address could be the killer's own home). Pointer, not detail.
+                    if (a != null && a.humanID == sid)        // the subject IS the landlord (victim)
+                        return Pick(seed,
+                            "They're a landlord — word is they're clearing one of their buildings out for a redevelopment.",
+                            "Heard they let places out; turfing the tenants out of one of their properties to redevelop it.");
+                    if (InGroup(sid))                         // a tenant being evicted (equal grievance)
+                        return Pick(seed,
+                            "Poor sod's being turfed out of their place — the landlord's clearing the whole building for a redevelopment.",
+                            "They're losing their home — their landlord's clearing the building out to redevelop it.");
+                    return null;
+                }
+
+                case SocialEventType.RentArrears:
+                {
+                    if (a != null && a.humanID == sid)        // the subject IS the tenant (victim)
+                        return Pick(seed,
+                            "Word is they'd fallen well behind on their rent — their landlord was chasing hard.",
+                            "Heard they were months behind on the rent. Their landlord wasn't happy about it.");
+                    if (b != null && b.humanID == sid)        // the subject IS the landlord (suspect)
+                        return Pick(seed,
+                            "They're a landlord — had a tenant who just wouldn't pay up.",
+                            "Word is they let places out; one of their tenants had stopped paying the rent.");
+                    return null;
+                }
             }
             return null;   // Affair (handled inline in Interrogation) or unknown type.
         }
@@ -207,7 +259,7 @@ namespace SODMotives
         // HOME is nearest the given scene position — so the player can teleport to the scene
         // and interview the neighbours/coworkers standing closest. Formatted "Name — Address
         // (bldg B/floor F) — Dm", nearest first. One directory scan; call once per case, not per frame.
-        internal List<string> NearestKnowers(Vector3 scenePos, int max)
+        internal List<string> NearestKnowers(Vector3 scenePos, int max, Human mustKnow = null)
         {
             var scored = new List<(float d, string line)>();
             try
@@ -221,6 +273,9 @@ namespace SODMotives
                         int id = h.humanID;
                         if ((a != null && a.humanID == id) || (b != null && b.humanID == id)) continue;
                         if (!knownBy.Contains(id)) continue;
+                        // Only list knowers who can NAME the person being investigated — they're the ones
+                        // who'll identify the photo (give a name) and volunteer gossip.
+                        if (mustKnow != null && !Motive.KnowsName(h, mustKnow)) continue;
 
                         NewAddress home = null; try { home = h.home; } catch { }
                         if (home == null) continue;
@@ -246,7 +301,7 @@ namespace SODMotives
 
         // The single knower (excluding participants) whose home is nearest the scene — for
         // a "teleport to the closest gossip" testing hotkey.
-        internal Human NearestKnowerHuman(Vector3 scenePos)
+        internal Human NearestKnowerHuman(Vector3 scenePos, Human mustKnow = null)
         {
             Human best = null; float bestD = float.MaxValue;
             try
@@ -260,6 +315,7 @@ namespace SODMotives
                         int id = h.humanID;
                         if ((a != null && a.humanID == id) || (b != null && b.humanID == id)) continue;
                         if (!knownBy.Contains(id)) continue;
+                        if (mustKnow != null && !Motive.KnowsName(h, mustKnow)) continue;
                         NewAddress home = null; try { home = h.home; } catch { }
                         if (home == null) continue;
                         float d = float.MaxValue;
@@ -310,6 +366,18 @@ namespace SODMotives
             Acquaintance.ConnectionType.familiarWork,
         };
 
+        // Property events (eviction / rent arrears) are noticed around the home — fellow tenants,
+        // neighbours, close friends — and via the landlord edge itself, so the whole tenant pool is
+        // reachable even when co-tenants aren't directly acquainted with one another.
+        private static readonly Acquaintance.ConnectionType[] PropertyAudience =
+        {
+            Acquaintance.ConnectionType.neighbor,
+            Acquaintance.ConnectionType.housemate,
+            Acquaintance.ConnectionType.familiarResidence,
+            Acquaintance.ConnectionType.friend,
+            Acquaintance.ConnectionType.landlord,
+        };
+
         private static Acquaintance.ConnectionType[] Audience(SocialEventType t)
         {
             switch (t)
@@ -317,6 +385,8 @@ namespace SODMotives
                 case SocialEventType.Affair: return AffairAudience;
                 case SocialEventType.Promotion:
                 case SocialEventType.Layoffs: return WorkAudience;
+                case SocialEventType.Eviction:
+                case SocialEventType.RentArrears: return PropertyAudience;
                 default: return AffairAudience;
             }
         }
@@ -332,6 +402,8 @@ namespace SODMotives
                 case SocialEventType.Affair: return false;
                 case SocialEventType.Promotion:
                 case SocialEventType.Layoffs: return true;
+                case SocialEventType.Eviction:
+                case SocialEventType.RentArrears: return true;
                 default: return false;
             }
         }

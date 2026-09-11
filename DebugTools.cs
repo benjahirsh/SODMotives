@@ -21,6 +21,22 @@ namespace SODMotives
         internal static bool Show = false;
         internal static bool Ghost = false;         // NPCs ignore the player (testing aid)
         internal static bool AlwaysAnswer = false;  // NPCs always accept "do you know this person?" (no bribe)
+
+        // F8 HUD readout: the last NPC who spoke to the player (so you can always identify who you're
+        // talking to — the game has no forceable "tell me your name" dialog). Set from Interrogation's
+        // speech-bubble hook; ignores the player's own lines.
+        internal static string TalkingToLabel = null;
+        internal static void NoteTalkingTo(Human h)
+        {
+            try
+            {
+                if (h == null) return;
+                var p = Player.Instance;
+                if (p != null && h.humanID == p.humanID) return;   // ignore the player's own speech
+                TalkingToLabel = MotivesPlugin.Name(h);
+            }
+            catch { }
+        }
         internal static MotiveType ForceMotiveType = MotiveType.None;  // F6: restrict the NEXT murder's suspect pool to one motive type
 
         internal static void Register()
@@ -32,7 +48,7 @@ namespace SODMotives
                 GameObject.DontDestroyOnLoad(go);
                 go.hideFlags = HideFlags.HideAndDontSave;
                 go.AddComponent<DebugHotkey>();
-                MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys: F4=spawn custom-text test note in your apartment, F5=trigger next murder, F6=cycle FORCE MOTIVE (off/affair/professional), F7=ghost, F8=always-answer, F9=case solution, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower (affair/workplace).");
+                MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys: F4=spawn custom-text test note in your apartment, F5=trigger next murder, F6=cycle FORCE MOTIVE (off/affair/professional/money-landlord), F7=ghost, F8=always-answer, F9=case solution, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower (affair/workplace).");
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] hotkey register failed: {e.Message}"); }
         }
@@ -123,13 +139,15 @@ namespace SODMotives
         }
 
         // F6: cycle which motive type the NEXT murder is forced to. Only event-backed types
-        // (Infidelity/Professional) are useful; the filter is applied in TryPickVictimCentric.
+        // (Infidelity/Professional/Money-landlord) are useful; the filter is applied in TryPickVictimCentric.
+        // (Money reliably forces an EVICTION case; a lone rent-arrears tenant has too few suspects to win.)
         internal static void CycleForceMotive()
         {
             switch (ForceMotiveType)
             {
                 case MotiveType.None: ForceMotiveType = MotiveType.Infidelity; break;
                 case MotiveType.Infidelity: ForceMotiveType = MotiveType.Professional; break;
+                case MotiveType.Professional: ForceMotiveType = MotiveType.Money; break;
                 default: ForceMotiveType = MotiveType.None; break;
             }
             MotivesPlugin.Log.LogInfo($"[SODMotives] FORCE MOTIVE = {(ForceMotiveType == MotiveType.None ? "OFF (any motive)" : ForceMotiveType.ToString())} — applies to the NEXT new murder.");
@@ -233,21 +251,13 @@ namespace SODMotives
                     }
                     catch { }
 
-                    // Any mod case (affair / promotion / layoffs): who to interview, nearest the
-                    // scene first (F12 jumps to the closest). Knowers = the event's gossip audience.
-                    try
-                    {
-                        if (MurderSelector.EventByVictim.TryGetValue(victim.humanID, out var evt) && evt != null)
-                        {
-                            Vector3 scenePos = ScenePos(victim);
-                            Overlay.Add($"NEAREST KNOWERS [{evt.type}] (interview these; F12 = jump to closest):");
-                            foreach (var ln in evt.NearestKnowers(scenePos, 6)) Overlay.Add("  " + ln);
-                        }
-                    }
-                    catch { }
+                    // Combined interview list: NPCs who BOTH know the victim personally (can name them
+                    // from the face-only body profile) AND know a motive event about them — the only ones
+                    // who, shown the victim's photo, will identify them AND volunteer the gossip. Nearest
+                    // the scene first (F12 = jump to closest); shows which events each one knows.
+                    try { AddVictimKnowers(victim, ScenePos(victim)); } catch { }
 
-                    // Multi-span testing aid: who knows how many events of each type ABOUT THE
-                    // VICTIM, plus any city-wide multi-event subjects to interview about.
+                    // City-wide multi-span subjects to interview about (a guaranteed multi-event target).
                     try { AddKnowerBreakdown(victim); } catch { }
                 }
             }
@@ -258,16 +268,15 @@ namespace SODMotives
             foreach (var l in Overlay) log.LogInfo("[SODMotives][F9]   " + l);
         }
 
-        // For multi-span testing: (1) every NPC who knows an event INVOLVING THE VICTIM, with a
-        // per-type count and a '*' when they know >=2 (ask THEM about the victim to see a combined
-        // answer); (2) city-wide subjects who appear in >=2 events, so you always have a guaranteed
-        // multi-span subject to ask a knower about even when the victim is in only one event.
-        private static void AddKnowerBreakdown(Human victim)
+        // The combined victim-interview list: every NPC who KNOWS THE VICTIM'S NAME (can identify the
+        // face-only body profile) AND knows a motive event involving the victim — so, shown the photo,
+        // they'll both name them and volunteer the gossip. Nearest the scene first; shows which events.
+        private static void AddVictimKnowers(Human victim, Vector3 scenePos)
         {
             if (victim == null) return;
             int vid = victim.humanID;
 
-            // (1) per-knower type counts over every event involving the victim.
+            // events about the victim, tallied per knower and per type.
             var perKnower = new Dictionary<int, Dictionary<SocialEventType, int>>();
             foreach (var e in EventStore.All)
             {
@@ -279,23 +288,41 @@ namespace SODMotives
                     m.TryGetValue(e.type, out int c); m[e.type] = c + 1;
                 }
             }
+
             var dir = CityData.Instance != null ? CityData.Instance.citizenDirectory : null;
-            if (perKnower.Count > 0 && dir != null)
-            {
-                var rows = new List<(int total, string line)>();
+            var rows = new List<(float d, string line)>();
+            if (dir != null)
                 for (int i = 0; i < dir.Count; i++)
                 {
                     var h = dir[i]; if (h == null) continue;
-                    if (!perKnower.TryGetValue(h.humanID, out var m)) continue;
-                    int total = 0; foreach (var kv in m) total += kv.Value;
-                    rows.Add((total, $"{(total >= 2 ? "*" : " ")} {MotivesPlugin.Name(h)} — {FmtTypes(m)}"));
+                    if (!perKnower.TryGetValue(h.humanID, out var m)) continue;   // knows no event about the victim
+                    if (!Motive.KnowsName(h, victim)) continue;                    // can't name the victim -> skip
+                    NewAddress home = null; try { home = h.home; } catch { }
+                    float dist = float.MaxValue; bool hasPos = false; string addr = "?"; int floor = 0, bld = -1;
+                    if (home != null)
+                    {
+                        try { var an = home.anchorNode; if (an != null) { dist = Vector3.Distance(scenePos, an.position); hasPos = true; } } catch { }
+                        try { addr = home.name; } catch { }
+                        try { if (home.floor != null) floor = home.floor.floor; } catch { }
+                        try { if (home.building != null) bld = home.building.buildingID; } catch { }
+                    }
+                    string dtxt = hasPos ? $"{dist:0}m" : "?m";
+                    rows.Add((dist, $"{MotivesPlugin.Name(h)} — {addr} (bldg {bld}/floor {floor}) — {dtxt} — [{FmtTypes(m)}]"));
                 }
-                rows.Sort((x, y) => y.total.CompareTo(x.total));
-                Overlay.Add("KNOWERS x EVENTS ABOUT VICTIM (* = multi-span; ask them about the VICTIM):");
-                for (int i = 0; i < rows.Count && i < 8; i++) Overlay.Add("  " + rows[i].line);
-            }
+            rows.Sort((x, y) => x.d.CompareTo(y.d));
+            Overlay.Add("VICTIM KNOWERS — know the victim + a motive event (F12 = jump to closest):");
+            if (rows.Count == 0) Overlay.Add("  (nobody both knows the victim's name AND a motive event about them)");
+            for (int i = 0; i < rows.Count && i < 8; i++) Overlay.Add("  " + rows[i].line);
+        }
 
-            // (2) city-wide subjects in >=2 events (any) — a guaranteed multi-span subject to test.
+        // A guaranteed multi-span subject to interview about: city-wide subjects who appear in >=2
+        // events, so multi-span gossip is always testable even when the victim is in only one event.
+        private static void AddKnowerBreakdown(Human victim)
+        {
+            if (victim == null) return;
+            var dir = CityData.Instance != null ? CityData.Instance.citizenDirectory : null;
+
+            // City-wide subjects in >=2 events (any) — a guaranteed multi-span subject to test.
             var subj = new Dictionary<int, Dictionary<SocialEventType, int>>();
             foreach (var e in EventStore.All)
             {
@@ -392,7 +419,7 @@ namespace SODMotives
                 if (!MurderSelector.EventByVictim.TryGetValue(victim.humanID, out var evt) || evt == null)
                 { log.LogInfo("[SODMotives][F12] Not a mod motive case (no event-backed knowers)."); return; }
 
-                Human k = evt.NearestKnowerHuman(ScenePos(victim));
+                Human k = evt.NearestKnowerHuman(ScenePos(victim), victim);
                 if (k == null || k.home == null) { log.LogInfo("[SODMotives][F12] No knower with a home found."); return; }
                 var player = Player.Instance;
                 NewNode node = player.FindSafeTeleport(k.home, false, true);
@@ -448,7 +475,7 @@ namespace SODMotives
                 if (Input.GetKeyDown(KeyCode.F8))
                 {
                     DebugTools.AlwaysAnswer = !DebugTools.AlwaysAnswer;
-                    MotivesPlugin.Log.LogInfo($"[SODMotives] ALWAYS-ANSWER (no bribe) {(DebugTools.AlwaysAnswer ? "ON" : "OFF")}");
+                    MotivesPlugin.Log.LogInfo($"[SODMotives] ALWAYS-ANSWER (no bribe) {(DebugTools.AlwaysAnswer ? "ON" : "OFF")} — while ON, the top-right HUD shows who you're talking to.");
                 }
                 if (Input.GetKeyDown(KeyCode.F7))
                 {
@@ -479,16 +506,21 @@ namespace SODMotives
                 bool fm = DebugTools.ForceMotiveType != MotiveType.None;
                 _hudStyle.normal.textColor = fm ? Color.yellow : Color.gray;
                 GUI.Label(new Rect(x, y, w, 20),
-                    fm ? $"FORCE MOTIVE: {DebugTools.ForceMotiveType} (F6)" : "FORCE MOTIVE: OFF (F6 to force affair/professional)",
+                    fm ? $"FORCE MOTIVE: {DebugTools.ForceMotiveType} (F6)" : "FORCE MOTIVE: OFF (F6 to force affair/professional/money)",
                     _hudStyle);
                 y += 20f;
 
-                // Always-answer (F8).
+                // Always-answer (F8) + who-you're-talking-to readout.
                 if (DebugTools.AlwaysAnswer)
                 {
                     _hudStyle.normal.textColor = Color.cyan;
                     GUI.Label(new Rect(x, y, w, 20), "ALWAYS-ANSWER ON (F8) - NPCs never refuse 'do you know this person?'", _hudStyle);
                     y += 20f;
+                    if (!string.IsNullOrEmpty(DebugTools.TalkingToLabel))
+                    {
+                        GUI.Label(new Rect(x, y, w, 20), "TALKING TO: " + DebugTools.TalkingToLabel, _hudStyle);
+                        y += 20f;
+                    }
                 }
 
                 // Ghost (F7).

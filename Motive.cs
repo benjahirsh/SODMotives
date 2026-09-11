@@ -30,9 +30,35 @@ namespace SODMotives
         internal const float SouredLike = 0.45f;
         // Minimum total score to count as a real motive:
         internal const float MinMotive = 12f;
+        // Minimum DIRECTED familiarity (Acquaintance.known, 0..1) for A to be treated as knowing B's
+        // NAME — i.e. able to identify B from a photo. Verified from live data: real relationships
+        // (friend/neighbor/coworker) sit ~0.6-0.9; casual familiar-residence/work edges ~0.1-0.2.
+        // Bound to config ([Selection] NameKnownThreshold).
+        internal static float NameKnownThreshold = 0.35f;
 
         internal static bool Same(Human a, Human b)
             => a != null && b != null && a.humanID == b.humanID;
+
+        // Does A know B's NAME — able to identify B from a photo and give their name. Verified from live
+        // acquaintance data: both the `knowsName` ConnectionType and per-edge `dataKeys` are UNPOPULATED
+        // for NPC<->NPC edges, so name-knowledge is inferred from a DIRECTED edge A->B with enough
+        // familiarity (`known` >= NameKnownThreshold). Direction matters: B->A alone (B is faintly
+        // familiar with A) does NOT mean A knows B — that asymmetry was the bug that listed non-knowers.
+        // Gates gossip + the F9 knower list so gossipers are exactly those who can also name the victim.
+        internal static bool KnowsName(Human a, Human b)
+        {
+            if (a == null || b == null) return false;
+            try
+            {
+                if (a.FindAcquaintanceExists(b, out var acq) && acq != null)
+                {
+                    float known = 0f; try { known = acq.known; } catch { }
+                    return known >= NameKnownThreshold;
+                }
+            }
+            catch { }
+            return false;
+        }
 
         // Directed like A->B, or NaN if no edge.
         internal static float Like(Human a, Human b)

@@ -34,6 +34,8 @@ namespace SODMotives
                 "The real killer is picked uniformly at random from the victim's top-N strongest suspects.").Value;
             MurderSelector.WorkplaceCaseShare = Config.Bind("Selection", "WorkplaceCaseShare", 0.5f,
                 "When the F6 force is OFF: target fraction of mod cases that feature a workplace motive, so the far-more-numerous affairs don't swamp workplace. 0 = affairs only, 1 = workplace only.").Value;
+            Motive.NameKnownThreshold = Config.Bind("Selection", "NameKnownThreshold", 0.35f,
+                "Minimum directed familiarity (Acquaintance.known, 0..1) for an NPC to count as knowing a person's NAME (able to identify their photo). Gates interrogation gossip + the F9 knower list. Real relationships sit ~0.6-0.9; casual acquaintances ~0.1-0.2.").Value;
             // Legacy V1/V2.0 knobs — kept bound so existing .cfg files don't break; no longer
             // consulted by the victim-centric selector. Pruned in release cleanup.
             MurderSelector.TopPoolSize = Config.Bind("Selection", "TopPoolSize", 40,
@@ -55,6 +57,15 @@ namespace SODMotives
                 "Maximum suspects per workplace case (passed-over rivals / employees on the layoff list).").Value;
             WorkplaceSim.PromotionShare = Config.Bind("Workplace", "PromotionShare", 0.4f,
                 "Of workplace cases where both are possible, the fraction that are promotions; the rest are layoffs (a boss-victim, most reliably multi-suspect).").Value;
+            // Landlord/tenant (property) cases (V2.3) — built on-demand from the live residency graph.
+            PropertySim.Enable = Config.Bind("Property", "EnableProperty", true,
+                "Add landlord/tenant cases (eviction/redevelopment + rent arrears) as murder-motive sources, derived on-demand from real landlord/tenant relationships.").Value;
+            PropertySim.MaxTenantSuspects = Config.Bind("Property", "MaxTenantSuspects", 6,
+                "Maximum tenant suspects per eviction case (the aggrieved tenants being cleared out for redevelopment).").Value;
+            MurderSelector.PropertyCaseShare = Config.Bind("Property", "PropertyCaseShare", 0.25f,
+                "When the F6 force is OFF: target fraction of mod cases that feature a landlord/property motive (affair = the remainder after workplace + property).").Value;
+            PropertySim.EvictionShare = Config.Bind("Property", "EvictionShare", 0.6f,
+                "Of eligible buildings, the fraction whose case is an eviction (landlord victim, many tenant suspects); the rest are rent-arrears (a tenant victim, the landlord suspect).").Value;
 
             ClueInjector.Enable = Config.Bind("Clues", "InjectClues", true,
                 "Inject deliberately-ambiguous physical notes per motivated case, hinting at motives.").Value;
@@ -67,10 +78,10 @@ namespace SODMotives
             ClueInjector.WorkplaceClueShare = Config.Bind("Clues", "WorkplaceClueShare", 0.5f,
                 "Chance (0..1) a given clue is placed at the victim's WORKPLACE rather than home. Motive-agnostic: any motive's clue can land at either, so location never betrays the motive.").Value;
 
-            // TESTING DEFAULT: force the first (and every) new murder to a workplace case so
-            // W2/W3 are fast to test. Cycle in-game with F6 (off / affair / professional).
+            // TESTING DEFAULT: force the first (and every) new murder to a landlord/property (eviction)
+            // case so V2.3 is fast to test. Cycle in-game with F6 (off / affair / professional / money).
             // SET TO MotiveType.None FOR RELEASE.
-            DebugTools.ForceMotiveType = MotiveType.Professional;
+            DebugTools.ForceMotiveType = MotiveType.Money;
 
             _harmony = new Harmony(Guid);
             _harmony.PatchAll(typeof(MotivesPlugin).Assembly);

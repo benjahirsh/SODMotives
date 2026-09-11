@@ -308,6 +308,8 @@ namespace SODMotives
                         case SocialEventType.Affair:    placed += InjectAffair(victim, ev, recList, placed); break;
                         case SocialEventType.Promotion: placed += InjectPromotion(victim, ev, recList, placed); break;
                         case SocialEventType.Layoffs:   placed += InjectLayoffs(victim, ev, recList, placed); break;
+                        case SocialEventType.Eviction:  placed += InjectEviction(victim, ev, recList, placed); break;
+                        case SocialEventType.RentArrears: placed += InjectRentArrears(victim, ev, recList, placed); break;
                     }
                 }
                 // No forced "killer clue": the suspicion layer names/reveals the suspects (termination
@@ -355,6 +357,140 @@ namespace SODMotives
             return n;
         }
 
+        // Eviction (landlord = victim): ONE landlord-authored redevelopment PLAN placed at the landlord's
+        // HOME, naming the PROPERTY ADDRESSES being cleared (each aggrieved tenant's unit) as clickable
+        // location links + board connections — the trail the player follows to the buildings, then to
+        // the residents. Landlord's prints only. (Not a tenant name-list: it's a property schedule.)
+        private static int InjectEviction(Human victim, SocialEvent ev, List<string> recList, int placed)
+        {
+            if (placed >= MaxClues || ev.a == null) return 0;
+            Human landlord = ev.a;   // the landlord/victim who wrote the plan
+
+            // The pool suspects for THIS event (tenants), for the optional list + connections.
+            var uniq = new List<Human>(); var seen = new HashSet<int>();
+            if (MurderSelector.PoolByVictim.TryGetValue(victim.humanID, out var pool) && pool != null)
+                for (int i = 0; i < pool.Count; i++)
+                { var e = pool[i]; if (e.evt == ev && e.suspect != null && seen.Add(e.suspect.humanID)) uniq.Add(e.suspect); }
+            if (uniq.Count == 0)
+                for (int i = 0; i < ev.group.Count; i++) { var h = ev.group[i]; if (h != null && seen.Add(h.humanID)) uniq.Add(h); }
+
+            // Always list the tenants: the game exposes NO landlord->tenant trail the player can follow
+            // (no per-tenancy agreements in the landlord's filebox/computer, no owner->buildings lookup,
+            // no name-reveal API), so this plan is the only reliable way to discover the suspect pool.
+            int linkedBody;
+            string treeId = BuildEvictionDocTree(landlord, uniq, out linkedBody);
+            if (treeId == null) { LogFail("eviction plan", landlord, victim); return 0; }
+
+            // Place at the landlord's HOME (their private plan); fall back to the generic home/work placement.
+            Interactable note = null;
+            NewGameLocation home = null; try { home = landlord.home; } catch { }
+            if (home != null) note = PlaceClueNote(home, landlord, landlord, null, treeId, null);
+            if (note == null) note = PlaceClue(victim, landlord, null, treeId);
+            if (note == null) { LogFail("eviction plan", landlord, victim); return 0; }
+
+            var docEv = note.evidence;
+            try { note.SetWriter(landlord); } catch { }
+            try { if (docEv != null) docEv.SetWriter(landlord); } catch { }
+            try { note.SetDDSOverride(treeId); } catch { }
+            if (docEv != null) { try { docEv.SetOverrideDDS(treeId); } catch { } }
+            try { note.AddNewDynamicFingerprint(landlord, Interactable.PrintLife.manualRemoval); } catch { }
+
+            if (docEv != null)
+            {
+                try
+                {
+                    docEv.AddOrSetCustomName(Evidence.DataKey.name, ObviousNames ? "MODCLUE Redevelopment Plan" : "Redevelopment Plan");
+                    try { var tied = docEv.GetTiedKeys(Evidence.DataKey.name); if (tied != null) for (int i = 0; i < tied.Count; i++) { var k = tied[i]; if (k != Evidence.DataKey.name) { try { docEv.AddOrSetCustomName(k, ""); } catch { } } } } catch { }
+                    try { docEv.AddOrSetCustomName(Evidence.DataKey.code, ""); } catch { }
+                    try { docEv.UpdateName(); } catch { }
+                    try { note.UpdateName(true, Evidence.DataKey.name); } catch { note.UpdateName(); }
+                }
+                catch { }
+            }
+
+            // One board connection line per listed property address (doc -> location).
+            int linked = 0;
+            var fp = ResolveConnectFactPreset(docEv);
+            for (int i = 0; i < uniq.Count; i++) { var hm = SafeHome(uniq[i]); if (hm != null && AddLocationConnection(docEv, hm, fp)) linked++; }
+
+            string where = "?", locDesc = "?";
+            try { var node = note.node; if (node != null) { var gl = node.gameLocation; string loc = gl != null ? gl.name : "?"; string room = ""; try { if (node.room != null) room = node.room.GetName(); } catch { } locDesc = string.IsNullOrEmpty(room) ? loc : $"{room}, {loc}"; where = ClassifyLocation(victim, loc); } } catch { }
+            int itemId = -1; try { itemId = note.id; } catch { }
+            try
+            {
+                var pids = new List<int>();
+                for (int i = 0; i < uniq.Count; i++) if (uniq[i] != null) pids.Add(uniq[i].humanID);
+                Persistence.RecordNote(itemId, treeId, "eviction", landlord != null ? landlord.humanID : -1, pids,
+                    ObviousNames ? "MODCLUE Redevelopment Plan" : "Redevelopment Plan");
+            }
+            catch (Exception pe) { MotivesPlugin.Log.LogWarning($"[SODMotives] persist: record eviction note: {pe.Message}"); }
+            string rec = $"eviction plan [{where}: {locDesc}] itemId={itemId} addresses={uniq.Count} bodyLinks={linkedBody} connected={linked}";
+            recList.Add(rec);
+            MotivesPlugin.Log.LogInfo($"[SODMotives] clue: INJECTED {rec}");
+            try { DebugTools.AddClueHud($"redevelopment plan — {where}: {locDesc}"); } catch { }
+            return 1;
+        }
+
+        // RentArrears (tenant = victim): ONE landlord-authored final rent demand placed at the
+        // tenant-victim's HOME, naming + printing the landlord (the aggrieved party / suspect).
+        private static int InjectRentArrears(Human victim, SocialEvent ev, List<string> recList, int placed)
+        {
+            if (placed >= MaxClues || ev.a == null || ev.b == null) return 0;
+            Human tenant = ev.a;    // victim
+            Human landlord = ev.b;  // suspect / author
+
+            int linkedBody;
+            string treeId = BuildRentDemandDocTree(landlord, out linkedBody);
+            if (treeId == null) { LogFail("rent demand", landlord, tenant); return 0; }
+
+            // Place at the tenant-victim's HOME; fall back to the generic home/work placement.
+            Interactable note = null;
+            NewGameLocation home = null; try { home = tenant.home; } catch { }
+            if (home != null) note = PlaceClueNote(home, tenant, landlord, tenant, treeId, null);
+            if (note == null) note = PlaceClue(victim, landlord, tenant, treeId);
+            if (note == null) { LogFail("rent demand", landlord, tenant); return 0; }
+
+            var docEv = note.evidence;
+            try { note.SetWriter(landlord); } catch { }
+            try { if (docEv != null) docEv.SetWriter(landlord); } catch { }
+            try { note.SetDDSOverride(treeId); } catch { }
+            if (docEv != null) { try { docEv.SetOverrideDDS(treeId); } catch { } }
+            try { note.AddNewDynamicFingerprint(landlord, Interactable.PrintLife.manualRemoval); } catch { }
+
+            if (docEv != null)
+            {
+                try
+                {
+                    docEv.AddOrSetCustomName(Evidence.DataKey.name, ObviousNames ? "MODCLUE Rent Demand Notice" : "Rent Demand Notice");
+                    try { var tied = docEv.GetTiedKeys(Evidence.DataKey.name); if (tied != null) for (int i = 0; i < tied.Count; i++) { var k = tied[i]; if (k != Evidence.DataKey.name) { try { docEv.AddOrSetCustomName(k, ""); } catch { } } } } catch { }
+                    try { docEv.AddOrSetCustomName(Evidence.DataKey.code, ""); } catch { }
+                    try { docEv.UpdateName(); } catch { }
+                    try { note.UpdateName(true, Evidence.DataKey.name); } catch { note.UpdateName(); }
+                }
+                catch { }
+            }
+
+            int linked = 0;
+            var fp = ResolveConnectFactPreset(docEv);
+            if (AddCitizenConnection(docEv, landlord, fp)) linked++;
+
+            string where = "?", locDesc = "?";
+            try { var node = note.node; if (node != null) { var gl = node.gameLocation; string loc = gl != null ? gl.name : "?"; string room = ""; try { if (node.room != null) room = node.room.GetName(); } catch { } locDesc = string.IsNullOrEmpty(room) ? loc : $"{room}, {loc}"; where = ClassifyLocation(victim, loc); } } catch { }
+            int itemId = -1; try { itemId = note.id; } catch { }
+            try
+            {
+                var pids = new List<int>(); if (landlord != null) pids.Add(landlord.humanID);
+                Persistence.RecordNote(itemId, treeId, "rentdemand", landlord != null ? landlord.humanID : -1, pids,
+                    ObviousNames ? "MODCLUE Rent Demand Notice" : "Rent Demand Notice");
+            }
+            catch (Exception pe) { MotivesPlugin.Log.LogWarning($"[SODMotives] persist: record rent demand note: {pe.Message}"); }
+            string rec = $"rent demand [{where}: {locDesc}] itemId={itemId} landlord={MotivesPlugin.Name(landlord)} bodyLinks={linkedBody} connected={linked}";
+            recList.Add(rec);
+            MotivesPlugin.Log.LogInfo($"[SODMotives] clue: INJECTED {rec}");
+            try { DebugTools.AddClueHud($"rent demand — {where}: {locDesc}"); } catch { }
+            return 1;
+        }
+
         // Layoffs: ONE boss-authored "redundancy list". Preferred form = an EvidenceMultiPage whose
         // body is the list of laid-off employees rendered as CLICKABLE, board-pinnable names (the same
         // mechanism as the vanilla employee roster / calendar). Falls back to a DDS HR-record note with
@@ -392,59 +528,70 @@ namespace SODMotives
         // each citizen's evidence, so they're clickable/board-pinnable. Returns the tree id, or null.
         // NOTE: these registrations + link ids are in-memory/session-only; a save+reload would need
         // them re-registered (persistence is a follow-up).
-        private static string BuildRedundancyDocTree(List<Human> uniq, Human author, out int linked, string fixedTreeId = null)
+        // Emit a clickable citizen link (<link=id>Name</link>) minted from the citizen's evidence node,
+        // or the plain name if none. Increments `linked` on a successful link.
+        private static string CitizenLink(Human h, ref int linked)
         {
-            linked = 0;
+            string disp = SocialEvent.SafeName(h);
+            if (h == null) return disp;
+            try
+            {
+                Evidence cev = null;
+                try { cev = h.evidenceEntry; } catch { }
+                if (cev == null) { try { h.CreateEvidence(); cev = h.evidenceEntry; } catch { } }
+                if (cev != null)
+                {
+                    var ld = Strings.AddOrGetLink(cev, null);
+                    if (ld != null) { linked++; return "<link=\"" + ld.id + "\">" + disp + "</link>"; }
+                }
+            }
+            catch { }
+            return disp;
+        }
+
+        // Emit a clickable ADDRESS link (<link=id>address</link>) for a tenant's home unit, minted from
+        // the location's evidence (EvidenceLocation : Evidence), or plain address text if none. Used by
+        // the eviction plan to name the PROPERTIES being cleared instead of the tenants. Increments
+        // `linked` on a successful link.
+        private static string AddressLink(Human tenant, ref int linked)
+        {
+            NewAddress home = SafeHome(tenant);
+            if (home == null) return "a property";
+            string disp = "a property";
+            try { if (!string.IsNullOrEmpty(home.name)) disp = home.name; } catch { }
+            try
+            {
+                Evidence lev = null;
+                try { lev = home.evidenceEntry; } catch { }
+                if (lev == null) { try { home.CreateEvidence(); lev = home.evidenceEntry; } catch { } }
+                if (lev != null)
+                {
+                    var ld = Strings.AddOrGetLink(lev, null);
+                    if (ld != null) { linked++; return "<link=\"" + ld.id + "\">" + disp + "</link>"; }
+                }
+            }
+            catch { }
+            return disp;
+        }
+
+        private static NewAddress SafeHome(Human h) { try { return h != null ? h.home : null; } catch { return null; } }
+
+        // Register a custom DDS *document* tree whose single always-display block renders `body`
+        // (arbitrary readable text; TMP <link> markup preserved). Registers block/message/tree into
+        // Toolbox's DDS dictionaries + writes the block text into the "dds.blocks" table (the same
+        // pipeline the game + DDSLoader mods use). Returns the tree id, or null. On save/reload replay,
+        // pass the surviving note's tree id as `fixedTreeId` (only the tree id must match; block/message
+        // keys can be freshly minted). NOTE: these registrations + link ids are session-only.
+        private static string RegisterCustomDocTree(string body, string fixedTreeId = null)
+        {
             try
             {
                 var tb = Toolbox.Instance;
                 if (tb == null) return null;
                 string uid = System.Guid.NewGuid().ToString("N");
-                string blockKey = "sodmotives.redlist.block." + uid;
-                string messageKey = "sodmotives.redlist.msg." + uid;
-                // On save/reload replay, re-register under the SAME tree id the surviving note still points
-                // at (only the tree id must match; block/message/link keys can be freshly minted).
-                string treeId = !string.IsNullOrEmpty(fixedTreeId) ? fixedTreeId : ("sodmotives.redlist.tree." + uid);
-
-                // Body: heading + one clickable citizen link per suspect (plain name if no evidence node).
-                var sb = new System.Text.StringBuilder();
-                sb.Append("REDUNDANCY NOTICE\n\n");
-                sb.Append("The following staff are scheduled for termination:\n\n");
-                for (int i = 0; i < uniq.Count; i++)
-                {
-                    Human h = uniq[i];
-                    string disp = SocialEvent.SafeName(h);
-                    string cell = disp;
-                    try
-                    {
-                        Evidence cev = null;
-                        try { cev = h.evidenceEntry; } catch { }
-                        if (cev == null) { try { h.CreateEvidence(); cev = h.evidenceEntry; } catch { } }
-                        if (cev != null)
-                        {
-                            var ld = Strings.AddOrGetLink(cev, null);
-                            if (ld != null) { cell = "<link=\"" + ld.id + "\">" + disp + "</link>"; linked++; }
-                        }
-                    }
-                    catch { }
-                    sb.Append("- "); sb.Append(cell); sb.Append('\n');
-                }
-                // Sign it, so the note has a readable author (a clickable link to the writer/boss).
-                if (author != null)
-                {
-                    string aname = SocialEvent.SafeName(author);
-                    string acell = aname;
-                    try
-                    {
-                        Evidence aev = null;
-                        try { aev = author.evidenceEntry; } catch { }
-                        if (aev == null) { try { author.CreateEvidence(); aev = author.evidenceEntry; } catch { } }
-                        if (aev != null) { var ald = Strings.AddOrGetLink(aev, null); if (ald != null) acell = "<link=\"" + ald.id + "\">" + aname + "</link>"; }
-                    }
-                    catch { }
-                    sb.Append("\n\nIssued by: "); sb.Append(acell);
-                }
-                string body = sb.ToString();
+                string blockKey = "sodmotives.doc.block." + uid;
+                string messageKey = "sodmotives.doc.msg." + uid;
+                string treeId = !string.IsNullOrEmpty(fixedTreeId) ? fixedTreeId : ("sodmotives.doc.tree." + uid);
 
                 // 1) Register the block's TEXT into the "dds.blocks" string table (proven DDSLoader path).
                 int lineNo = 1;
@@ -501,7 +648,7 @@ namespace SODMotives
                         try { ms.lineSpace = 4f; } catch { }
                         try { ms.alignH = 0; } catch { }
                         try { ms.alignV = 0; } catch { }
-                        try { ms.usePages = true; } catch { }   // paginate long rosters instead of overflowing
+                        try { ms.usePages = true; } catch { }   // paginate long bodies instead of overflowing
                     }
                 }
                 catch { }
@@ -516,22 +663,79 @@ namespace SODMotives
                 catch { }
 
                 tb.allDDSTrees[treeId] = tree;
-
-                MotivesPlugin.Log.LogInfo($"[SODMotives] clue: built custom redundancy tree '{treeId}' ({uniq.Count} names, {linked} clickable).");
                 return treeId;
             }
-            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: BuildRedundancyDocTree: {e.Message}"); return null; }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: RegisterCustomDocTree: {e.Message}"); return null; }
+        }
+
+        // Layoffs: a boss-authored redundancy list — heading + one clickable citizen link per laid-off
+        // suspect, signed by the boss. (Body building split from tree registration in V2.3; the rendered
+        // document is identical to before.)
+        private static string BuildRedundancyDocTree(List<Human> uniq, Human author, out int linked, string fixedTreeId = null)
+        {
+            linked = 0;
+            var sb = new System.Text.StringBuilder();
+            sb.Append("REDUNDANCY NOTICE\n\n");
+            sb.Append("The following staff are scheduled for termination:\n\n");
+            if (uniq != null)
+                for (int i = 0; i < uniq.Count; i++) { sb.Append("- "); sb.Append(CitizenLink(uniq[i], ref linked)); sb.Append('\n'); }
+            if (author != null) { sb.Append("\n\nIssued by: "); sb.Append(CitizenLink(author, ref linked)); }
+            string treeId = RegisterCustomDocTree(sb.ToString(), fixedTreeId);
+            if (treeId != null) MotivesPlugin.Log.LogInfo($"[SODMotives] clue: built custom redundancy tree '{treeId}' ({(uniq != null ? uniq.Count : 0)} names, {linked} clickable).");
+            return treeId;
+        }
+
+        // Eviction: a landlord's confidential redevelopment plan naming the PROPERTY ADDRESSES being
+        // cleared (each aggrieved tenant's unit) as clickable location links — the trail the player
+        // follows to the buildings, then to the residents. Signed by the landlord. `tenants` supplies
+        // the affected units (via each tenant's home).
+        private static string BuildEvictionDocTree(Human landlord, List<Human> tenants, out int linked, string fixedTreeId = null)
+        {
+            linked = 0;
+            var sb = new System.Text.StringBuilder();
+            sb.Append("REDEVELOPMENT PLAN — CONFIDENTIAL\n\n");
+            sb.Append("The following properties are to be cleared for redevelopment. All current tenancies are to be terminated and the residents moved out ahead of the works. Proceed quietly; expect complaints.\n\n");
+            if (tenants != null && tenants.Count > 0)
+            {
+                sb.Append("Properties to be vacated:\n\n");
+                for (int i = 0; i < tenants.Count; i++) { sb.Append("- "); sb.Append(AddressLink(tenants[i], ref linked)); sb.Append('\n'); }
+            }
+            if (landlord != null) { sb.Append("\n\nIssued by: "); sb.Append(CitizenLink(landlord, ref linked)); }
+            string treeId = RegisterCustomDocTree(sb.ToString(), fixedTreeId);
+            if (treeId != null) MotivesPlugin.Log.LogInfo($"[SODMotives] clue: built eviction plan tree '{treeId}' (addresses={(tenants != null ? tenants.Count : 0)}, {linked} clickable).");
+            return treeId;
+        }
+
+        // RentArrears: a landlord's final rent demand. Names + links the landlord (the aggrieved party)
+        // as its author.
+        private static string BuildRentDemandDocTree(Human landlord, out int linked, string fixedTreeId = null)
+        {
+            linked = 0;
+            var sb = new System.Text.StringBuilder();
+            sb.Append("FINAL RENT DEMAND\n\n");
+            sb.Append("Your rent is seriously overdue — you are now several months in arrears. Settle the outstanding balance IN FULL immediately, or eviction proceedings will begin and the debt will be handed to collection.\n\n");
+            sb.Append("This is your final notice.\n\n");
+            sb.Append("Issued by: ");
+            sb.Append(CitizenLink(landlord, ref linked));
+            string treeId = RegisterCustomDocTree(sb.ToString(), fixedTreeId);
+            if (treeId != null) MotivesPlugin.Log.LogInfo($"[SODMotives] clue: built rent demand tree '{treeId}' ({linked} clickable).");
+            return treeId;
         }
 
         // Save/reload replay (Persistence): the note OBJECT survived (its int id, its `dds` tree-id override,
         // and its title), but the custom DDS body, clickable name-links, and board connections were
         // runtime-only and are gone. Re-register the tree under the SAME id, re-point the live note at it,
         // and redraw the document->citizen connections. Does NOT place anything — the note already exists.
-        internal static void RebuildCustomNote(Interactable note, List<Human> citizens, Human author, string treeId)
+        internal static void RebuildCustomNote(Interactable note, List<Human> citizens, Human author, string treeId, string kind = null)
         {
             if (note == null || string.IsNullOrEmpty(treeId)) return;
             int linked;
-            string built = BuildRedundancyDocTree(citizens, author, out linked, treeId);
+            // Rebuild the SAME body the note was placed with — a kind-agnostic rebuild would re-render an
+            // eviction plan as a redundancy list, or a rent demand as "...termination: <landlord>".
+            string built =
+                kind == "eviction"   ? BuildEvictionDocTree(author, citizens, out linked, treeId) :
+                kind == "rentdemand" ? BuildRentDemandDocTree(author, out linked, treeId) :
+                                       BuildRedundancyDocTree(citizens, author, out linked, treeId);
             if (built == null) { MotivesPlugin.Log.LogWarning($"[SODMotives] persist: rebuild tree failed for '{treeId}'."); return; }
 
             var docEv = note.evidence;
@@ -545,7 +749,14 @@ namespace SODMotives
 
             int reconnected = 0;
             var fp = ResolveConnectFactPreset(docEv);
-            if (citizens != null) for (int i = 0; i < citizens.Count; i++) if (AddCitizenConnection(docEv, citizens[i], fp)) reconnected++;
+            if (citizens != null)
+                for (int i = 0; i < citizens.Count; i++)
+                {
+                    // Eviction connects to the property ADDRESSES (each tenant's home); others to the citizen.
+                    bool ok = (kind == "eviction") ? AddLocationConnection(docEv, SafeHome(citizens[i]), fp)
+                                                   : AddCitizenConnection(docEv, citizens[i], fp);
+                    if (ok) reconnected++;
+                }
 
             int id = -1; try { id = note.id; } catch { }
             MotivesPlugin.Log.LogInfo($"[SODMotives] persist: rebuilt note id={id} tree='{treeId}' names={(citizens != null ? citizens.Count : 0)} bodyLinks={linked} reconnected={reconnected}.");
@@ -934,15 +1145,29 @@ namespace SODMotives
             Evidence empEv = null;
             try { empEv = emp.evidenceEntry; } catch { }
             if (empEv == null) { try { emp.CreateEvidence(); empEv = emp.evidenceEntry; } catch { } }
-            if (empEv == null) return false;
+            return AddEvidenceConnection(docEv, empEv, fp);
+        }
 
-            Evidence from = _connectSwap ? empEv : docEv;   // preset may want finding-fact reversed
-            Evidence to = _connectSwap ? docEv : empEv;
+        // Draw ONE case-board connection: document -> a property address (its location evidence node).
+        private static bool AddLocationConnection(Evidence docEv, NewAddress loc, FactPreset fp)
+        {
+            if (docEv == null || loc == null) return false;
+            Evidence locEv = null;
+            try { locEv = loc.evidenceEntry; } catch { }
+            if (locEv == null) { try { loc.CreateEvidence(); locEv = loc.evidenceEntry; } catch { } }
+            return AddEvidenceConnection(docEv, locEv, fp);
+        }
+
+        // Shared connection core: document -> target evidence node (a citizen OR a location).
+        private static bool AddEvidenceConnection(Evidence docEv, Evidence targetEv, FactPreset fp)
+        {
+            if (docEv == null || targetEv == null) return false;
+            Evidence from = _connectSwap ? targetEv : docEv;   // preset may want finding-fact reversed
+            Evidence to = _connectSwap ? docEv : targetEv;
 
             // PRIMARY: the game's own fact pipeline with forced discovery. A raw `new Fact().ConnectFact()`
-            // creates the link UNDISCOVERED, so it never draws on the board even after the note is read
-            // (only the game-made writer/location facts showed). CreateFact(..., forceDiscoveryOnCreate:true)
-            // marks it discovered so the line renders once the list itself is found.
+            // creates the link UNDISCOVERED, so it never draws on the board even after the note is read.
+            // CreateFact(..., forceDiscoveryOnCreate:true) marks it discovered so the line renders.
             if (!string.IsNullOrEmpty(_connectFpName))
             {
                 try
@@ -950,7 +1175,7 @@ namespace SODMotives
                     var f = EvidenceCreator.Instance.CreateFact(_connectFpName, from, to, null, null, true, null, null, null, false);
                     if (f != null) return true;
                 }
-                catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: CreateFact({MotivesPlugin.Name(emp)}): {e.Message}"); }
+                catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: CreateFact(connection): {e.Message}"); }
             }
 
             // FALLBACK: raw ctor with the cloned preset (allowDuplicates=true).
@@ -963,7 +1188,7 @@ namespace SODMotives
                 fact.ConnectFact();
                 return true;
             }
-            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: AddCitizenConnection({MotivesPlugin.Name(emp)}): {e.Message}"); return false; }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: AddEvidenceConnection: {e.Message}"); return false; }
         }
 
         // Reorder a suspect group so the killer is first — their clue then places into empty

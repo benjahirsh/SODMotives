@@ -46,6 +46,7 @@ namespace SODMotives
         internal static void ArmForPick(Citizen npc, Interactable speakingTo, bool success)
         {
             if (!Enable) return;
+            try { DebugTools.NoteTalkingTo(npc); } catch { }   // F8 HUD: update "who you're talking to" on any photo-show
             try
             {
                 if (success && npc != null)
@@ -101,6 +102,10 @@ namespace SODMotives
         internal static void OnBubbleSetup(SpeechBubbleController bubble, SpeechController sc)
         {
             if (bubble == null || sc == null) return;
+            // Testing aid (F8 HUD): note the NPC who's speaking so DebugTools can show who you're
+            // talking to. The game has no forceable "tell me your name" dialog, so this readout is
+            // how you always identify the current interlocutor. Ignores the player's own lines.
+            try { var a0 = sc.actor; var h0 = a0 != null ? a0.TryCast<Human>() : null; if (h0 != null) DebugTools.NoteTalkingTo(h0); } catch { }
             try
             {
                 // Phase 2: one of our enqueued gossip bubbles just spawned -> set its text.
@@ -190,6 +195,12 @@ namespace SODMotives
             var lines = new List<string>();
             // Never narrate about the very person being interviewed (you picked their own photo).
             if (Motive.Same(npc, subject)) return lines;
+
+            // Only volunteer gossip about someone this NPC can NAME. Knowing an EVENT (via its gossip
+            // audience — e.g. a tenant's friend hearing about a redevelopment) is NOT the same as knowing
+            // the subject: such an NPC can't identify the photo (no name), so gossip from them reads as
+            // coming from a stranger. Gate on the `knowsName` connection so gossip + photo-ID agree.
+            if (!Motive.KnowsName(npc, subject)) return lines;
 
             // Stable per (npc, subject) so re-asking the same person gives the same lines.
             int seed = npc.humanID * 31 + subject.humanID;
@@ -286,9 +297,13 @@ namespace SODMotives
             => Interrogation.OnBubbleSetup(__instance, newSpeechController);
     }
 
-    // TESTING CHEAT (DebugTools.AlwaysAnswer, F8): force the "Do you know this person?"
-    // success roll so NPCs always accept — no bribe needed. This runs upstream of the
-    // picker-vs-bribe branch, using the engine's own ForceSuccess override.
+    // TESTING CHEAT (DebugTools.AlwaysAnswer, F8): force the "Do you know this person?" success roll
+    // so NPCs always accept — no bribe needed. NOTE: dialog-option clicks invoke the special-case
+    // HANDLERS directly (DoYouKnowThisPerson etc.), NOT this ExecuteDialog entry point (verified: the
+    // ExecuteDialog prefix never fires on a click), so the real cheat is the handler prefixes below;
+    // this stays as harmless belt-and-suspenders for any path that DOES route through ExecuteDialog.
+    // (There is no forceable "tell me your name" dialog — that identity is surfaced by the F8 HUD
+    // "TALKING TO" readout instead.)
     [HarmonyPatch(typeof(DialogController), nameof(DialogController.ExecuteDialog))]
     internal static class Patch_ForceKnowName
     {

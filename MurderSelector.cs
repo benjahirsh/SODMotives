@@ -16,6 +16,7 @@ namespace SODMotives
         internal static int MinSuspects = 3;            // PREFER victims with at least this many real suspects
         internal static int KillerPoolSize = 10;        // killer = uniform-random among the victim's top-N suspects
         internal static float WorkplaceCaseShare = 0.5f; // when NOT force-filtering (F6 off): target fraction of cases featuring a workplace motive, so affairs don't swamp workplace
+        internal static float PropertyCaseShare = 0.25f; // when F6 off: target fraction of cases featuring a landlord/property (Money) motive (affair = the remainder)
         internal static bool StripSignatures = true;    // remove serial-killer calling card/moniker/graffiti on motivated cases
         // Deterministic (V2 design): force a vanilla case every Nth handled case so the
         // classic serial-killer hunt never disappears. 0 (or less) = never force vanilla.
@@ -59,6 +60,9 @@ namespace SODMotives
         // Companies that already produced a workplace murder this game -> don't build new workplace
         // candidates for them (keeps EventStore bounded and avoids overlapping same-company cases).
         internal static readonly HashSet<int> UsedWorkplaceCompanies = new HashSet<int>();
+        // Buildings that already produced a property (eviction / rent-arrears) murder this game ->
+        // don't build new property candidates for them (keeps EventStore bounded, avoids overlap).
+        internal static readonly HashSet<int> UsedBuildings = new HashSet<int>();
 
         // Clear per-game selection state so a NEW sandbox in the same process doesn't misfire
         // signature-strip / clue injection / F9 against reused humanIDs. Called from SeedForNewGame.
@@ -70,6 +74,7 @@ namespace SODMotives
             AffairByVictim.Clear();
             EventByVictim.Clear();
             UsedWorkplaceCompanies.Clear();
+            UsedBuildings.Clear();
             _casesSinceForced = 0;
         }
 
@@ -83,7 +88,8 @@ namespace SODMotives
             Dictionary<int, List<SuspectEdge>> poolByVictim,
             Dictionary<int, SocialEvent> affairByVictim,
             Dictionary<int, SocialEvent> eventByVictim,
-            HashSet<int> usedCompanies)
+            HashSet<int> usedCompanies,
+            HashSet<int> usedBuildings)
         {
             OverriddenVictimIds.Clear();
             if (overridden != null) foreach (int v in overridden) OverriddenVictimIds.Add(v);
@@ -102,6 +108,9 @@ namespace SODMotives
 
             UsedWorkplaceCompanies.Clear();
             if (usedCompanies != null) foreach (int c in usedCompanies) UsedWorkplaceCompanies.Add(c);
+
+            UsedBuildings.Clear();
+            if (usedBuildings != null) foreach (int b in usedBuildings) UsedBuildings.Add(b);
         }
 
         private static bool IsValidActor(Human h)
@@ -129,8 +138,14 @@ namespace SODMotives
                 var cands = WorkplaceSim.CandidateEvents();
                 if (cands != null) { events.AddRange(cands); liveWorkplace = cands.Count; }
             }
+            int liveProperty = 0;
+            if (PropertySim.Enable)
+            {
+                var pcands = PropertySim.CandidateEvents();
+                if (pcands != null) { events.AddRange(pcands); liveProperty = pcands.Count; }
+            }
             if (events.Count == 0) return false;
-            MotivesPlugin.Log.LogInfo($"[SODMotives] pool sources: {(stored != null ? stored.Count : 0)} stored + {liveWorkplace} live workplace candidate event(s); ForceMotive={DebugTools.ForceMotiveType}.");
+            MotivesPlugin.Log.LogInfo($"[SODMotives] pool sources: {(stored != null ? stored.Count : 0)} stored + {liveWorkplace} live workplace + {liveProperty} live property candidate event(s); ForceMotive={DebugTools.ForceMotiveType}.");
 
             // 1) Gather every real (suspect -> victim) edge from all events.
             var tmp = new List<SuspectEdge>();
@@ -182,20 +197,31 @@ namespace SODMotives
             {
                 var workV = new List<int>();
                 var affairV = new List<int>();
+                var propV = new List<int>();
                 foreach (int vid in candVictims)
                 {
-                    bool hasWork = false, hasAffair = false;
+                    bool hasWork = false, hasAffair = false, hasProp = false;
                     foreach (var ed in byVictim[vid].Values)
                     {
-                        if (ed.type == MotiveType.Professional) hasWork = true;
-                        else if (ed.type == MotiveType.Infidelity) hasAffair = true;
+                        switch (ed.type)
+                        {
+                            case MotiveType.Professional: hasWork = true; break;
+                            case MotiveType.Infidelity: hasAffair = true; break;
+                            case MotiveType.Money: hasProp = true; break;   // landlord/property motive
+                        }
                     }
                     if (hasWork) workV.Add(vid);
                     if (hasAffair) affairV.Add(vid);
+                    if (hasProp) propV.Add(vid);
                 }
-                bool wantWork = _rng.NextDouble() < WorkplaceCaseShare;
-                bucket = wantWork ? workV : affairV;
-                if (bucket.Count == 0) bucket = wantWork ? affairV : workV;   // fall back to the other type
+                // Pick a case FAMILY by share (work + property; affair = the remainder), so the
+                // far-more-numerous seeded affairs don't swamp the on-demand workplace/property types.
+                float pWork = Math.Max(0f, WorkplaceCaseShare);
+                float pProp = Math.Max(0f, PropertyCaseShare);
+                if (pWork + pProp > 1f) { float s = pWork + pProp; pWork /= s; pProp /= s; }
+                double r = _rng.NextDouble();
+                bucket = (r < pWork) ? workV : (r < pWork + pProp) ? propV : affairV;
+                if (bucket.Count == 0) bucket = affairV.Count > 0 ? affairV : (workV.Count > 0 ? workV : propV);
                 if (bucket.Count == 0) bucket = candVictims;
             }
 
@@ -231,12 +257,14 @@ namespace SODMotives
             for (int i = 0; i < suspects.Count; i++)
             {
                 var ev = suspects[i].evt;
-                if (ev != null && ev.id == 0)   // a fresh workplace candidate not yet in the store
+                if (ev != null && ev.id == 0)   // a fresh on-demand candidate not yet in the store
                 {
-                    Gossip.Distribute(ev);      // fill knownBy (coworkers + partners) before indexing
+                    Gossip.Distribute(ev);      // fill knownBy (audience + partners) before indexing
                     EventStore.Add(ev);         // assigns id, indexes by knower
-                    if (ev.type != SocialEventType.Affair && ev.companyId >= 0)
+                    if (ev.companyId >= 0 && (ev.type == SocialEventType.Promotion || ev.type == SocialEventType.Layoffs))
                         UsedWorkplaceCompanies.Add(ev.companyId);
+                    else if (ev.buildingId >= 0 && (ev.type == SocialEventType.Eviction || ev.type == SocialEventType.RentArrears))
+                        UsedBuildings.Add(ev.buildingId);
                 }
             }
 

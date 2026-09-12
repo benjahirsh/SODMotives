@@ -66,6 +66,18 @@ namespace SODMotives
                 "When the F6 force is OFF: target fraction of mod cases that feature a landlord/property motive (affair = the remainder after workplace + property).").Value;
             PropertySim.EvictionShare = Config.Bind("Property", "EvictionShare", 0.6f,
                 "Of eligible buildings, the fraction whose case is an eviction (landlord victim, many tenant suspects); the rest are rent-arrears (a tenant victim, the landlord suspect).").Value;
+            // One-to-one personal motives (V2.4) — feuds + debts, fully SYNTHESIZED and SEEDED at
+            // new-game (like affairs), since the game models no grudges or money.
+            FeudSim.EnableFeuds = Config.Bind("Feud", "EnableFeuds", true,
+                "Seed personal-feud cases (bad blood between two citizens), synthesized from genuinely soured relationships. Bidirectional: either party can be killer or victim.").Value;
+            FeudSim.EnableDebts = Config.Bind("Feud", "EnableDebts", true,
+                "Seed debt cases (a creditor fed up with a debtor who stopped paying), synthesized over real acquaintance edges. A Money motive; the creditor is the lone suspect.").Value;
+            FeudSim.MaxFeuds = Config.Bind("Feud", "MaxFeuds", 40,
+                "Cap on synthesized feuds seeded per city (keeps the far-more-numerous affairs from being swamped).").Value;
+            FeudSim.MaxDebts = Config.Bind("Feud", "MaxDebts", 40,
+                "Cap on synthesized debts seeded per city.").Value;
+            MurderSelector.FeudCaseShare = Config.Bind("Feud", "FeudCaseShare", 0.15f,
+                "When the F6 force is OFF: target fraction of mod cases that feature a personal-feud motive (affair = the remainder after workplace + money + feud).").Value;
 
             ClueInjector.Enable = Config.Bind("Clues", "InjectClues", true,
                 "Inject deliberately-ambiguous physical notes per motivated case, hinting at motives.").Value;
@@ -78,10 +90,10 @@ namespace SODMotives
             ClueInjector.WorkplaceClueShare = Config.Bind("Clues", "WorkplaceClueShare", 0.5f,
                 "Chance (0..1) a given clue is placed at the victim's WORKPLACE rather than home. Motive-agnostic: any motive's clue can land at either, so location never betrays the motive.").Value;
 
-            // TESTING DEFAULT: force the first (and every) new murder to a landlord/property (eviction)
-            // case so V2.3 is fast to test. Cycle in-game with F6 (off / affair / professional / money).
-            // SET TO MotiveType.None FOR RELEASE.
-            DebugTools.ForceMotiveType = MotiveType.Money;
+            // TESTING DEFAULT: force the first (and every) new murder to a personal-FEUD case so V2.4 is
+            // fast to test. Cycle in-game with F6 (off / affair / professional / money / feud). Money also
+            // covers the new debts; feud is the new PersonalFeud type. SET TO MotiveType.None FOR RELEASE.
+            DebugTools.ForceMotiveType = MotiveType.PersonalFeud;
 
             _harmony = new Harmony(Guid);
             _harmony.PatchAll(typeof(MotivesPlugin).Assembly);

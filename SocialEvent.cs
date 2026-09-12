@@ -5,11 +5,15 @@ using UnityEngine;
 namespace SODMotives
 {
     // Generic social-event model (V2). Affairs first; Workplace (Promotion / Layoffs)
-    // added in 2.1; Feuds later. Each type only has to declare its own seeding, its
+    // added in 2.1; landlord/tenant (Eviction / RentArrears) in 2.3; one-to-one personal
+    // motives (Feud / Debt) in 2.4. Each type only has to declare its own seeding, its
     // (suspect -> victim) motive edges, its testimony phrasing, and its gossip audience.
     // Everything else (store, knowledge, gossip, interrogation, selection) is shared.
-    // Workplace events are built ON DEMAND from live rosters (WorkplaceSim), not pre-seeded.
-    internal enum SocialEventType { Affair, Promotion, Layoffs, Eviction, RentArrears }
+    // Workplace + property events are built ON DEMAND from live rosters/residency (WorkplaceSim /
+    // PropertySim); affairs, feuds and debts are SEEDED at new-game (persistent world texture).
+    // NOTE: persistence serializes the type by NAME (e.type.ToString / Enum.TryParse), so new
+    // members can be appended freely without breaking older sidecars.
+    internal enum SocialEventType { Affair, Promotion, Layoffs, Eviction, RentArrears, Feud, Debt }
 
     // A directed "X has a real, event-backed reason to harm Y" edge derived from an event.
     // The pool selector unions these across all events per victim. `score` only trims a
@@ -51,6 +55,8 @@ namespace SODMotives
                 case SocialEventType.Layoffs: CollectLayoffsEdges(outList); break;
                 case SocialEventType.Eviction: CollectEvictionEdges(outList); break;
                 case SocialEventType.RentArrears: CollectRentArrearsEdges(outList); break;
+                case SocialEventType.Feud: CollectFeudEdges(outList); break;
+                case SocialEventType.Debt: CollectDebtEdges(outList); break;
             }
         }
 
@@ -134,6 +140,23 @@ namespace SODMotives
         {
             string co = string.IsNullOrEmpty(placeName) ? "their building" : placeName;
             Emit(o, b, a, 70f, MotiveType.Money, $"their tenant at {co} owed them months of back rent");
+        }
+
+        // Feud: a and b have genuine bad blood (seeded from a soured relationship). Either could snap
+        // and kill the other, so the grudge is BIDIRECTIONAL — each is a suspect in the other's murder.
+        private void CollectFeudEdges(List<SuspectEdge> o)
+        {
+            string an = SafeName(a), bn = SafeName(b);
+            Emit(o, a, b, 55f, MotiveType.PersonalFeud, $"bad blood with {bn}");
+            Emit(o, b, a, 55f, MotiveType.PersonalFeud, $"bad blood with {an}");
+        }
+
+        // Debt: a = debtor (victim), b = creditor (the lone suspect). A creditor fed up with a debtor
+        // who stopped paying holds the grudge — the threat note is theirs (mirrors RentArrears; the
+        // "settle your debt" note reads the same for rent, a loan, or any money grievance).
+        private void CollectDebtEdges(List<SuspectEdge> o)
+        {
+            Emit(o, b, a, 60f, MotiveType.Money, $"{SafeName(a)} owed them money and had stopped paying it back");
         }
 
         private static Human SafePartner(Human h) { if (h == null) return null; try { return h.partner; } catch { return null; } }
@@ -227,6 +250,34 @@ namespace SODMotives
                         return Pick(seed,
                             "They're a landlord — had a tenant who just wouldn't pay up.",
                             "Word is they let places out; one of their tenants had stopped paying the rent.");
+                    return null;
+                }
+
+                case SocialEventType.Feud:
+                {
+                    // NAME the other party: a feud has no relationship anchor and no identity-carrying
+                    // clue (its threat note is anonymous handwriting), so this testimony IS the lead. Both
+                    // parties are treated identically, so naming reads no guiltier for the killer than a
+                    // herring. The subject stays "they/them" (the player just picked their photo).
+                    Human other = (a != null && a.humanID == sid) ? b : (b != null && b.humanID == sid) ? a : null;
+                    if (other == null) return null;
+                    return Pick(seed,
+                        $"Word is they'd had a serious falling-out with {SafeName(other)} — real bad blood there.",
+                        $"Heard they and {SafeName(other)} were at each other's throats. Nasty business.",
+                        $"They and {SafeName(other)} had fallen out badly, from what I gather.");
+                }
+
+                case SocialEventType.Debt:
+                {
+                    // Money sphere + the other party named (no residency/roster anchor to follow otherwise).
+                    if (a != null && a.humanID == sid)        // the subject IS the debtor (victim)
+                        return Pick(seed,
+                            $"Word is they owed {SafeName(b)} money — hadn't been paying it back.",
+                            $"Heard they were in debt to {SafeName(b)} and well behind on it.");
+                    if (b != null && b.humanID == sid)        // the subject IS the creditor (suspect)
+                        return Pick(seed,
+                            $"Word is {SafeName(a)} owed them money and had stopped paying up.",
+                            $"Heard they'd lent {SafeName(a)} money and weren't seeing it back.");
                     return null;
                 }
             }
@@ -381,6 +432,19 @@ namespace SODMotives
             Acquaintance.ConnectionType.landlord,
         };
 
+        // Feuds & debts are personal — noticed by the pair's shared social circle (friends,
+        // neighbours, coworkers) and vented to partners; that circle is how a knower can point the
+        // player at the other party (the testimony names them).
+        private static readonly Acquaintance.ConnectionType[] SocialAudience =
+        {
+            Acquaintance.ConnectionType.friend,
+            Acquaintance.ConnectionType.neighbor,
+            Acquaintance.ConnectionType.familiarResidence,
+            Acquaintance.ConnectionType.workTeam,
+            Acquaintance.ConnectionType.workOther,
+            Acquaintance.ConnectionType.familiarWork,
+        };
+
         private static Acquaintance.ConnectionType[] Audience(SocialEventType t)
         {
             switch (t)
@@ -390,6 +454,8 @@ namespace SODMotives
                 case SocialEventType.Layoffs: return WorkAudience;
                 case SocialEventType.Eviction:
                 case SocialEventType.RentArrears: return PropertyAudience;
+                case SocialEventType.Feud:
+                case SocialEventType.Debt: return SocialAudience;
                 default: return AffairAudience;
             }
         }
@@ -407,6 +473,8 @@ namespace SODMotives
                 case SocialEventType.Layoffs: return true;
                 case SocialEventType.Eviction:
                 case SocialEventType.RentArrears: return true;
+                case SocialEventType.Feud:
+                case SocialEventType.Debt: return true;
                 default: return false;
             }
         }

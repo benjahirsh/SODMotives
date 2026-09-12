@@ -49,7 +49,11 @@ namespace SODMotives
                     affairs++;
                 }
 
-                MotivesPlugin.Log.LogInfo($"[SODMotives][events] seeded {affairs} affairs; {EventStore.Count} events; knowledge distributed to neighbours/coworkers.");
+                // One-to-one personal motives (V2.4): synthesized feuds + debts, seeded like affairs.
+                // Appended to the same store the affair loop just filled (no clear — that's above).
+                FeudSim.Seed();
+
+                MotivesPlugin.Log.LogInfo($"[SODMotives][events] seeded {affairs} affairs; {EventStore.Count} events total; knowledge distributed to neighbours/coworkers.");
             }
             catch (Exception ex) { MotivesPlugin.Log.LogWarning($"[SODMotives][events] seed error: {ex}"); }
         }

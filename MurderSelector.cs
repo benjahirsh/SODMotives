@@ -16,7 +16,8 @@ namespace SODMotives
         internal static int MinSuspects = 3;            // PREFER victims with at least this many real suspects
         internal static int KillerPoolSize = 10;        // killer = uniform-random among the victim's top-N suspects
         internal static float WorkplaceCaseShare = 0.5f; // when NOT force-filtering (F6 off): target fraction of cases featuring a workplace motive, so affairs don't swamp workplace
-        internal static float PropertyCaseShare = 0.25f; // when F6 off: target fraction of cases featuring a landlord/property (Money) motive (affair = the remainder)
+        internal static float PropertyCaseShare = 0.25f; // when F6 off: target fraction of cases featuring a MONEY motive (landlord/property + seeded debts); affair = the remainder
+        internal static float FeudCaseShare = 0.15f;     // when F6 off: target fraction of cases featuring a personal-feud (PersonalFeud) motive
         internal static bool StripSignatures = true;    // remove serial-killer calling card/moniker/graffiti on motivated cases
         // Deterministic (V2 design): force a vanilla case every Nth handled case so the
         // classic serial-killer hunt never disappears. 0 (or less) = never force vanilla.
@@ -198,31 +199,41 @@ namespace SODMotives
             {
                 var workV = new List<int>();
                 var affairV = new List<int>();
-                var propV = new List<int>();
+                var moneyV = new List<int>();   // landlord/property + seeded debts (both MotiveType.Money)
+                var feudV = new List<int>();    // personal feuds (MotiveType.PersonalFeud)
                 foreach (int vid in candVictims)
                 {
-                    bool hasWork = false, hasAffair = false, hasProp = false;
+                    bool hasWork = false, hasAffair = false, hasMoney = false, hasFeud = false;
                     foreach (var ed in byVictim[vid].Values)
                     {
                         switch (ed.type)
                         {
                             case MotiveType.Professional: hasWork = true; break;
                             case MotiveType.Infidelity: hasAffair = true; break;
-                            case MotiveType.Money: hasProp = true; break;   // landlord/property motive
+                            case MotiveType.Money: hasMoney = true; break;         // landlord/property + debt
+                            case MotiveType.PersonalFeud: hasFeud = true; break;   // personal grudge
                         }
                     }
                     if (hasWork) workV.Add(vid);
                     if (hasAffair) affairV.Add(vid);
-                    if (hasProp) propV.Add(vid);
+                    if (hasMoney) moneyV.Add(vid);
+                    if (hasFeud) feudV.Add(vid);
                 }
-                // Pick a case FAMILY by share (work + property; affair = the remainder), so the
-                // far-more-numerous seeded affairs don't swamp the on-demand workplace/property types.
+                // Pick a case FAMILY by share (work + money + feud; affair = the remainder), so the
+                // far-more-numerous seeded affairs don't swamp the other motive types.
                 float pWork = Math.Max(0f, WorkplaceCaseShare);
-                float pProp = Math.Max(0f, PropertyCaseShare);
-                if (pWork + pProp > 1f) { float s = pWork + pProp; pWork /= s; pProp /= s; }
+                float pMoney = Math.Max(0f, PropertyCaseShare);
+                float pFeud = Math.Max(0f, FeudCaseShare);
+                if (pWork + pMoney + pFeud > 1f) { float s = pWork + pMoney + pFeud; pWork /= s; pMoney /= s; pFeud /= s; }
                 double r = _rng.NextDouble();
-                bucket = (r < pWork) ? workV : (r < pWork + pProp) ? propV : affairV;
-                if (bucket.Count == 0) bucket = affairV.Count > 0 ? affairV : (workV.Count > 0 ? workV : propV);
+                bucket = (r < pWork) ? workV
+                       : (r < pWork + pMoney) ? moneyV
+                       : (r < pWork + pMoney + pFeud) ? feudV
+                       : affairV;
+                if (bucket.Count == 0) bucket = affairV.Count > 0 ? affairV
+                                              : moneyV.Count > 0 ? moneyV
+                                              : feudV.Count > 0 ? feudV
+                                              : workV;
                 if (bucket.Count == 0) bucket = candVictims;
             }
 

@@ -48,7 +48,7 @@ namespace SODMotives
                 GameObject.DontDestroyOnLoad(go);
                 go.hideFlags = HideFlags.HideAndDontSave;
                 go.AddComponent<DebugHotkey>();
-                MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys: F4=spawn threatening test note in your apartment, F5=trigger next murder, F6=cycle FORCE MOTIVE (off/affair/professional/money-landlord), F7=ghost, F8=always-answer, F9=case solution, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower (affair/workplace).");
+                MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys: F4=spawn threatening test note in your apartment, F5=trigger next murder, F6=cycle FORCE MOTIVE (off/affair/professional/money/feud), F7=ghost, F8=always-answer, F9=case solution, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower.");
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] hotkey register failed: {e.Message}"); }
         }
@@ -144,6 +144,7 @@ namespace SODMotives
                 case MotiveType.None: ForceMotiveType = MotiveType.Infidelity; break;
                 case MotiveType.Infidelity: ForceMotiveType = MotiveType.Professional; break;
                 case MotiveType.Professional: ForceMotiveType = MotiveType.Money; break;
+                case MotiveType.Money: ForceMotiveType = MotiveType.PersonalFeud; break;
                 default: ForceMotiveType = MotiveType.None; break;
             }
             MotivesPlugin.Log.LogInfo($"[SODMotives] FORCE MOTIVE = {(ForceMotiveType == MotiveType.None ? "OFF (any motive)" : ForceMotiveType.ToString())} — applies to the NEXT new murder.");
@@ -502,7 +503,7 @@ namespace SODMotives
                 bool fm = DebugTools.ForceMotiveType != MotiveType.None;
                 _hudStyle.normal.textColor = fm ? Color.yellow : Color.gray;
                 GUI.Label(new Rect(x, y, w, 20),
-                    fm ? $"FORCE MOTIVE: {DebugTools.ForceMotiveType} (F6)" : "FORCE MOTIVE: OFF (F6 to force affair/professional/money)",
+                    fm ? $"FORCE MOTIVE: {DebugTools.ForceMotiveType} (F6)" : "FORCE MOTIVE: OFF (F6 to force affair/professional/money/feud)",
                     _hudStyle);
                 y += 20f;
 

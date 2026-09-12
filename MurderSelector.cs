@@ -116,7 +116,8 @@ namespace SODMotives
         private static bool IsValidActor(Human h)
         {
             if (h == null) return false;
-            try { if (h.isDead) return false; } catch { }   // never pick a dead person as victim/suspect
+            try { if (h.isDead) return false; } catch { }              // never pick a dead person as victim/suspect
+            try { if (h.removedFromWorld) return false; } catch { }    // nor one despawned/removed (e.g. an arrested murderer)
             try { int age = h.GetAge(); if (age > 0 && age < 16) return false; } catch { }
             return true;
         }

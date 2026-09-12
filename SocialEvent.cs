@@ -217,9 +217,12 @@ namespace SODMotives
                 case SocialEventType.RentArrears:
                 {
                     if (a != null && a.humanID == sid)        // the subject IS the tenant (victim)
+                        // Pointer only: names the MONEY sphere but stays deliberately vague — reads the
+                        // same for rent arrears now or a future money-feud/debt motive. The physical clue
+                        // (rent demand notice) carries the landlord/rent specifics.
                         return Pick(seed,
-                            "Word is they'd fallen well behind on their rent — their landlord was chasing hard.",
-                            "Heard they were months behind on the rent. Their landlord wasn't happy about it.");
+                            "Word is they'd been struggling with money lately.",
+                            "Heard they'd been having money trouble — behind on what they owed, apparently.");
                     if (b != null && b.humanID == sid)        // the subject IS the landlord (suspect)
                         return Pick(seed,
                             "They're a landlord — had a tenant who just wouldn't pay up.",

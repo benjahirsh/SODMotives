@@ -431,8 +431,11 @@ namespace SODMotives
             return 1;
         }
 
-        // RentArrears (tenant = victim): ONE landlord-authored final rent demand placed at the
-        // tenant-victim's HOME, naming + printing the landlord (the aggrieved party / suspect).
+        // RentArrears (tenant = victim): ONE unsigned, threatening DEBT note placed at the tenant-victim's
+        // HOME. It is HANDWRITTEN in the landlord's hand and carries the landlord's PRINT — two latent
+        // forensic leads (match the handwriting / dust the print), NOT a spelled-out sender. Generic debt
+        // wording so it reads like any money case (rent / loan / feud). The culprit is left for the player
+        // to deduce from the tenant's residency files, then confirm via handwriting + print.
         private static int InjectRentArrears(Human victim, SocialEvent ev, List<string> recList, int placed)
         {
             if (placed >= MaxClues || ev.a == null || ev.b == null) return 0;
@@ -441,18 +444,20 @@ namespace SODMotives
 
             int linkedBody;
             string treeId = BuildRentDemandDocTree(landlord, out linkedBody);
-            if (treeId == null) { LogFail("rent demand", landlord, tenant); return 0; }
+            if (treeId == null) { LogFail("threatening note", landlord, tenant); return 0; }
 
-            // Place at the tenant-victim's HOME; fall back to the generic home/work placement.
+            // Set the landlord as the note's WRITER (so its handwriting is theirs) via the placement param,
+            // but never call the explicit Evidence.SetWriter below — the raw writer field is a LATENT
+            // handwriting lead (analyse it to reveal them), not a spelled-out "from" connection.
             Interactable note = null;
             NewGameLocation home = null; try { home = tenant.home; } catch { }
             if (home != null) note = PlaceClueNote(home, tenant, landlord, tenant, treeId, null);
             if (note == null) note = PlaceClue(victim, landlord, tenant, treeId);
-            if (note == null) { LogFail("rent demand", landlord, tenant); return 0; }
+            if (note == null) { LogFail("threatening note", landlord, tenant); return 0; }
 
             var docEv = note.evidence;
-            try { note.SetWriter(landlord); } catch { }
-            try { if (docEv != null) docEv.SetWriter(landlord); } catch { }
+            // Deliberately NO Evidence.SetWriter — that was what surfaced the landlord as a discovered "from".
+            // Handwriting (writer field above) + the print (below) are the two latent leads to the landlord.
             try { note.SetDDSOverride(treeId); } catch { }
             if (docEv != null) { try { docEv.SetOverrideDDS(treeId); } catch { } }
             try { note.AddNewDynamicFingerprint(landlord, Interactable.PrintLife.manualRemoval); } catch { }
@@ -461,7 +466,7 @@ namespace SODMotives
             {
                 try
                 {
-                    docEv.AddOrSetCustomName(Evidence.DataKey.name, ObviousNames ? "MODCLUE Rent Demand Notice" : "Rent Demand Notice");
+                    docEv.AddOrSetCustomName(Evidence.DataKey.name, ObviousNames ? "MODCLUE Threatening Note" : "Threatening Note");
                     try { var tied = docEv.GetTiedKeys(Evidence.DataKey.name); if (tied != null) for (int i = 0; i < tied.Count; i++) { var k = tied[i]; if (k != Evidence.DataKey.name) { try { docEv.AddOrSetCustomName(k, ""); } catch { } } } } catch { }
                     try { docEv.AddOrSetCustomName(Evidence.DataKey.code, ""); } catch { }
                     try { docEv.UpdateName(); } catch { }
@@ -470,25 +475,79 @@ namespace SODMotives
                 catch { }
             }
 
+            // The writer "from" fact is created LAZILY (on first examine), so hiding it here would be too
+            // early (allFacts is empty now). Track this note id; the Harmony postfix on Evidence.AutoCreateFacts
+            // (Plugin.cs) hides the writer connection ONCE the fact exists — keeping the handwriting matchable.
+            try { int nid = note.id; if (nid >= 0) AnonWriterNoteIds.Add(nid); } catch { }
             int linked = 0;
-            var fp = ResolveConnectFactPreset(docEv);
-            if (AddCitizenConnection(docEv, landlord, fp)) linked++;
 
             string where = "?", locDesc = "?";
             try { var node = note.node; if (node != null) { var gl = node.gameLocation; string loc = gl != null ? gl.name : "?"; string room = ""; try { if (node.room != null) room = node.room.GetName(); } catch { } locDesc = string.IsNullOrEmpty(room) ? loc : $"{room}, {loc}"; where = ClassifyLocation(victim, loc); } } catch { }
             int itemId = -1; try { itemId = note.id; } catch { }
             try
             {
-                var pids = new List<int>(); if (landlord != null) pids.Add(landlord.humanID);
+                // pids empty (no board connections to rebuild on reload). authorId kept only so a reload
+                // could re-add the landlord's print if ever needed; the rebuild sets NO writer (anonymous).
+                var pids = new List<int>();
                 Persistence.RecordNote(itemId, treeId, "rentdemand", landlord != null ? landlord.humanID : -1, pids,
-                    ObviousNames ? "MODCLUE Rent Demand Notice" : "Rent Demand Notice");
+                    ObviousNames ? "MODCLUE Threatening Note" : "Threatening Note");
             }
             catch (Exception pe) { MotivesPlugin.Log.LogWarning($"[SODMotives] persist: record rent demand note: {pe.Message}"); }
-            string rec = $"rent demand [{where}: {locDesc}] itemId={itemId} landlord={MotivesPlugin.Name(landlord)} bodyLinks={linkedBody} connected={linked}";
+            string rec = $"threatening note [{where}: {locDesc}] itemId={itemId} landlord={MotivesPlugin.Name(landlord)} bodyLinks={linkedBody} connected={linked}";
             recList.Add(rec);
             MotivesPlugin.Log.LogInfo($"[SODMotives] clue: INJECTED {rec}");
-            try { DebugTools.AddClueHud($"rent demand — {where}: {locDesc}"); } catch { }
+            try { DebugTools.AddClueHud($"threatening note — {where}: {locDesc}"); } catch { }
             return 1;
+        }
+
+        // Anonymous-writer notes (rent-arrears threat notes): their writer "from" fact is created LAZILY on
+        // first examine, so it can only be hidden after the fact exists. Track their interactable ids here;
+        // a Harmony postfix on Evidence.AutoCreateFacts (Plugin.cs) calls HideWriterConnection once per note.
+        internal static readonly HashSet<int> AnonWriterNoteIds = new HashSet<int>();
+        internal static readonly HashSet<int> WriterHiddenIds = new HashSet<int>();   // hidden-once guard
+
+        // REMOVE a placed note's WRITER "From" connection to `person`. isSeen=false does NOT hide it from the
+        // Connections tab (proven: the From fact rendered with isSeen already false), so we drop the FactLink
+        // entirely via Evidence.RemoveFactLink. The note keeps its writer FIELD (=> the handwriting sample /
+        // DataKey stays, matchable) and its fingerprint — only the auto-created writer→name connection goes.
+        // Matches the fact by GetOther==person.evidenceEntry (the verified matchWriter test) or preset "From".
+        // Runs on every AutoCreateFacts pass (no hide-once) so a re-materialised From is re-removed; a genuine
+        // later handwriting match creates the connection through a different path and is left intact.
+        internal static int HideWriterConnection(Evidence docEv, Human person)
+        {
+            if (docEv == null || person == null) return 0;
+            int removed = 0;
+            try
+            {
+                Evidence pev = null;
+                try { pev = person.evidenceEntry; } catch { }
+                if (pev == null) { try { person.CreateEvidence(); pev = person.evidenceEntry; } catch { } }
+                var facts = docEv.allFacts;
+                int total = facts != null ? facts.Count : 0;
+                var toRemove = new List<Fact>();
+                if (facts != null)
+                    for (int i = 0; i < total; i++)
+                    {
+                        try
+                        {
+                            var fl = facts[i];
+                            if (fl == null) continue;
+                            var f = fl.fact;
+                            if (f == null) continue;
+                            bool isWriter = false;
+                            try { var other = f.GetOther(docEv); if (other != null && pev != null && other.Pointer == pev.Pointer) isWriter = true; } catch { }
+                            if (!isWriter) { try { if (f.preset != null && f.preset.name == "From") isWriter = true; } catch { } }
+                            if (isWriter) toRemove.Add(f);
+                        }
+                        catch { }
+                    }
+                for (int i = 0; i < toRemove.Count; i++) { try { docEv.RemoveFactLink(toRemove[i]); removed++; } catch (Exception re) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: RemoveFactLink: {re.Message}"); } }
+                // Belt-and-braces: drop the postedBy discovery too, in case the connection is discovery-gated.
+                try { var dp = docEv.discoveryProgress; if (dp != null) for (int i = dp.Count - 1; i >= 0; i--) { try { if (dp[i] == Evidence.Discovery.postedByDiscovery) dp.RemoveAt(i); } catch { } } } catch { }
+                if (removed > 0) MotivesPlugin.Log.LogInfo($"[SODMotives] clue: removed {removed} writer 'From' fact(s) of {total} on note (handwriting/print kept).");
+            }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: hide writer connection failed: {e.Message}"); }
+            return removed;
         }
 
         // Layoffs: ONE boss-authored "redundancy list". Preferred form = an EvidenceMultiPage whose
@@ -582,7 +641,7 @@ namespace SODMotives
         // pipeline the game + DDSLoader mods use). Returns the tree id, or null. On save/reload replay,
         // pass the surviving note's tree id as `fixedTreeId` (only the tree id must match; block/message
         // keys can be freshly minted). NOTE: these registrations + link ids are session-only.
-        private static string RegisterCustomDocTree(string body, string fixedTreeId = null)
+        private static string RegisterCustomDocTree(string body, string fixedTreeId = null, string font = "TruetypewriterPolyglott SDF", float fontSize = 14f, bool isHandwriting = false)
         {
             try
             {
@@ -641,8 +700,9 @@ namespace SODMotives
                     try { if (tree.messages != null && tree.messages.Count > 0) ms = tree.messages[0]; } catch { }
                     if (ms != null)
                     {
-                        try { ms.font = "TruetypewriterPolyglott SDF"; } catch { }   // the game's formal-document/typewriter body font
-                        try { ms.fontSize = 14f; } catch { }   // the game's standard dense-body size (default was 0 -> huge)
+                        try { ms.font = font; } catch { }         // caller's font (typewriter for formal docs; the writer's own hand for the threat note)
+                        try { ms.fontSize = fontSize; } catch { } // caller's size (default was 0 -> huge)
+                        try { ms.isHandwriting = isHandwriting; } catch { }   // mark as handwriting so the game treats the sample as a handwriting lead
                         try { ms.pos = new Vector2(1f, -15.5f); } catch { }
                         try { ms.size = new Vector2(316f, 397f); } catch { }
                         try { ms.lineSpace = 4f; } catch { }
@@ -706,18 +766,20 @@ namespace SODMotives
             return treeId;
         }
 
-        // RentArrears: a landlord's final rent demand. Names + links the landlord (the aggrieved party)
-        // as its author.
+        // RentArrears: an unsigned, HANDWRITTEN, threatening DEBT note — deliberately generic (no "rent"
+        // wording) so a rent-arrears case reads identically to a future loan / money-feud case. The body
+        // names nobody; the culprit is carried only by the note's handwriting (rendered in the landlord's
+        // OWN handwriting font so it matches their profile sample) + fingerprint.
         private static string BuildRentDemandDocTree(Human landlord, out int linked, string fixedTreeId = null)
         {
             linked = 0;
             var sb = new System.Text.StringBuilder();
-            sb.Append("FINAL RENT DEMAND\n\n");
-            sb.Append("Your rent is seriously overdue — you are now several months in arrears. Settle the outstanding balance IN FULL immediately, or eviction proceedings will begin and the debt will be handed to collection.\n\n");
-            sb.Append("This is your final notice.\n\n");
-            sb.Append("Issued by: ");
-            sb.Append(CitizenLink(landlord, ref linked));
-            string treeId = RegisterCustomDocTree(sb.ToString(), fixedTreeId);
+            sb.Append("Settle your debt. Consider this your final warning.");
+            // Render in the WRITER'S OWN handwriting font (Human.handwriting.fontAsset) so the note's hand
+            // genuinely matches the killer's profile sample — fall back to a generic script if unavailable.
+            string hwFont = "Pacific Beach Script Font SDF";
+            try { if (landlord != null && landlord.handwriting != null && landlord.handwriting.fontAsset != null) { var fn = landlord.handwriting.fontAsset.name; if (!string.IsNullOrEmpty(fn)) hwFont = fn; } } catch { }
+            string treeId = RegisterCustomDocTree(sb.ToString(), fixedTreeId, hwFont, 30f, true);
             if (treeId != null) MotivesPlugin.Log.LogInfo($"[SODMotives] clue: built rent demand tree '{treeId}' ({linked} clickable).");
             return treeId;
         }
@@ -739,13 +801,19 @@ namespace SODMotives
             if (built == null) { MotivesPlugin.Log.LogWarning($"[SODMotives] persist: rebuild tree failed for '{treeId}'."); return; }
 
             var docEv = note.evidence;
-            try { if (author != null) note.SetWriter(author); } catch { }
+            // Eviction/layoffs notes are SIGNED, so restore their visible writer. The rentdemand threat note
+            // keeps its native writer (handwriting) but its writer CONNECTION must stay hidden after reload.
+            bool setWriter = author != null && kind != "rentdemand";
+            try { if (setWriter) note.SetWriter(author); } catch { }
             try { note.SetDDSOverride(treeId); } catch { }
             if (docEv != null)
             {
                 try { docEv.SetOverrideDDS(treeId); } catch { }
-                try { if (author != null) docEv.SetWriter(author); } catch { }
+                try { if (setWriter) docEv.SetWriter(author); } catch { }
             }
+            // rentdemand: re-track the note so the AutoCreateFacts postfix re-hides its writer connection
+            // when the facts re-materialise after reload (WriterHiddenIds is cleared so it fires again).
+            if (kind == "rentdemand") { try { int nid = note.id; if (nid >= 0) { AnonWriterNoteIds.Add(nid); WriterHiddenIds.Remove(nid); } } catch { } }
 
             int reconnected = 0;
             var fp = ResolveConnectFactPreset(docEv);
@@ -874,6 +942,60 @@ namespace SODMotives
                 return true;
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][TEST] SpawnTestCustomNote: {e}"); return false; }
+        }
+
+        // DEBUG (F4): drop the THREATENING debt note into `loc` right now — the exact InjectRentArrears
+        // path (handwritten script; landlord = writer/handwriting + print; writer CONNECTION hidden) — so
+        // it can be iterated without waiting for a rent-arrears murder. `landlord` supplies handwriting+print.
+        internal static bool SpawnTestThreatNote(NewGameLocation loc, Human landlord)
+        {
+            try
+            {
+                if (loc == null || landlord == null) { MotivesPlugin.Log.LogWarning("[SODMotives][TEST] need a location + a landlord citizen."); return false; }
+                EnsureNotePreset();
+                if (_notePreset == null) { MotivesPlugin.Log.LogWarning("[SODMotives][TEST] no note preset."); return false; }
+                _placedRooms.Clear();   // allow repeated test placements in the same room
+
+                int linkedBody;
+                string treeId = BuildRentDemandDocTree(landlord, out linkedBody);
+                if (treeId == null) { MotivesPlugin.Log.LogWarning("[SODMotives][TEST] tree build failed."); return false; }
+
+                var note = PlaceClueNote(loc, landlord, landlord, null, treeId, null);
+                if (note == null) { MotivesPlugin.Log.LogWarning("[SODMotives][TEST] placement failed."); return false; }
+
+                var docEv = note.evidence;
+                // NO explicit Evidence.SetWriter (mirrors InjectRentArrears); the writer field is set via placement.
+                try { note.SetDDSOverride(treeId); } catch { }
+                if (docEv != null) { try { docEv.SetOverrideDDS(treeId); } catch { } }
+                try { note.AddNewDynamicFingerprint(landlord, Interactable.PrintLife.manualRemoval); } catch { }
+                if (docEv != null)
+                {
+                    try
+                    {
+                        docEv.AddOrSetCustomName(Evidence.DataKey.name, "MODCLUE Threatening Note");
+                        try { var tied = docEv.GetTiedKeys(Evidence.DataKey.name); if (tied != null) for (int i = 0; i < tied.Count; i++) { var k = tied[i]; if (k != Evidence.DataKey.name) { try { docEv.AddOrSetCustomName(k, ""); } catch { } } } } catch { }
+                        try { docEv.AddOrSetCustomName(Evidence.DataKey.code, ""); } catch { }
+                        try { docEv.UpdateName(); } catch { }
+                        try { note.UpdateName(true, Evidence.DataKey.name); } catch { note.UpdateName(); }
+                    }
+                    catch { }
+                }
+                try { int nid = note.id; if (nid >= 0) AnonWriterNoteIds.Add(nid); } catch { }   // AutoCreateFacts postfix hides the writer connection once its fact exists
+
+                string locDesc = "?";
+                try { var node = note.node; if (node != null) { var gl = node.gameLocation; string ln = gl != null ? gl.name : "?"; string room = ""; try { if (node.room != null) room = node.room.GetName(); } catch { } locDesc = string.IsNullOrEmpty(room) ? ln : $"{room}, {ln}"; } } catch { }
+                int itemId = -1; try { itemId = note.id; } catch { }
+                try
+                {
+                    var pids = new List<int>();
+                    Persistence.RecordNote(itemId, treeId, "rentdemand", landlord != null ? landlord.humanID : -1, pids, "MODCLUE Threatening Note");
+                }
+                catch (Exception pe) { MotivesPlugin.Log.LogWarning($"[SODMotives][TEST] persist: record note: {pe.Message}"); }
+                MotivesPlugin.Log.LogInfo($"[SODMotives][TEST] placed THREATENING note [{locDesc}] itemId={itemId} landlord={MotivesPlugin.Name(landlord)} (handwriting+print, writer connection hidden) tree={treeId}");
+                try { DebugTools.AddClueHud($"TEST threat note — {locDesc}"); } catch { }
+                return true;
+            }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][TEST] SpawnTestThreatNote: {e}"); return false; }
         }
 
         // Preferred: place a NATIVE multipage item (whose read interaction is wired for multipage at

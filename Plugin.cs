@@ -309,6 +309,59 @@ namespace SODMotives
 
     // ---- pipeline hooks (postfix = observe after the game runs its own logic) ----
 
+    // Hide the lazily-created writer "from" connection on the mod's anonymous rent-arrears threat notes,
+    // once the game auto-creates their facts (allFacts is empty at inject time, so it can't be done there).
+    // Keeps the note's handwriting a LATENT match (not a spoiler); hidden once per note, so a later player
+    // handwriting-match re-reveals the same fact through a different path.
+    [HarmonyPatch(typeof(Evidence), nameof(Evidence.AutoCreateFacts), new Type[] { typeof(bool) })]
+    internal static class Patch_Evidence_AutoCreateFacts
+    {
+        static void Postfix(Evidence __instance, bool discovery)
+        {
+            try
+            {
+                if (__instance == null) return;
+                int id = -1;
+                try { var it = __instance.interactable; if (it != null) id = it.id; } catch { }
+                if (id < 0 || !ClueInjector.AnonWriterNoteIds.Contains(id)) return;
+                Human w = null; try { w = __instance.writer; } catch { }
+                ClueInjector.HideWriterConnection(__instance, w);   // removes the auto-created writer "From" fact (logs only if it removed any)
+            }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] hook: AutoCreateFacts postfix: {e.Message}"); }
+        }
+    }
+
+    // The choke point every fact-link passes through as it is CREATED (fires whenever/however the writer
+    // link is added, unlike AutoCreateFacts which only ran once with no matching fact). For the mod's
+    // tracked threat notes: hide the writer link the instant it appears (by GetOther==writer, key==handwriting,
+    // or the fromEvidence flag) and LOG every link so we can see how the "from" is actually keyed.
+    [HarmonyPatch]
+    internal static class Patch_Evidence_AddFactLinkExe
+    {
+        static System.Reflection.MethodBase TargetMethod() =>
+            AccessTools.Method(typeof(Evidence), "AddFactLinkExe",
+                new Type[] { typeof(Fact), typeof(Evidence.DataKey), typeof(bool) });
+
+        static void Postfix(Evidence __instance, Fact newFact, Evidence.DataKey newKey, bool thisIsTheFromEvidence)
+        {
+            try
+            {
+                if (__instance == null || newFact == null) return;
+                int id = -1;
+                try { var it = __instance.interactable; if (it != null) id = it.id; } catch { }
+                if (id < 0 || !ClueInjector.AnonWriterNoteIds.Contains(id)) return;
+
+                Human w = null; try { w = __instance.writer; } catch { }
+                Evidence wev = null; if (w != null) { try { wev = w.evidenceEntry; } catch { } }
+                bool matchOther = false;
+                try { var o = newFact.GetOther(__instance); if (o != null && wev != null && o.Pointer == wev.Pointer) matchOther = true; } catch { }
+                string pn = "?"; try { if (newFact.preset != null) pn = newFact.preset.name; } catch { }
+                MotivesPlugin.Log.LogInfo($"[SODMotives] hook: AddFactLinkExe note={id} key={newKey} fromEv={thisIsTheFromEvidence} matchWriter={matchOther} preset='{pn}' (removal handled after AutoCreateFacts).");
+            }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] hook: AddFactLinkExe: {e.Message}"); }
+        }
+    }
+
     [HarmonyPatch(typeof(MurderController), nameof(MurderController.TriggerNextMurder))]
     internal static class Patch_TriggerNextMurder
     {

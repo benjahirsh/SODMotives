@@ -48,7 +48,7 @@ namespace SODMotives
                 GameObject.DontDestroyOnLoad(go);
                 go.hideFlags = HideFlags.HideAndDontSave;
                 go.AddComponent<DebugHotkey>();
-                MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys: F4=spawn custom-text test note in your apartment, F5=trigger next murder, F6=cycle FORCE MOTIVE (off/affair/professional/money-landlord), F7=ghost, F8=always-answer, F9=case solution, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower (affair/workplace).");
+                MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys: F4=spawn threatening test note in your apartment, F5=trigger next murder, F6=cycle FORCE MOTIVE (off/affair/professional/money-landlord), F7=ghost, F8=always-answer, F9=case solution, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower (affair/workplace).");
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] hotkey register failed: {e.Message}"); }
         }
@@ -76,8 +76,8 @@ namespace SODMotives
             try { var p = Player.Instance; if (p != null) { try { p.unreportable = false; } catch { } } } catch { }
         }
 
-        // F4: drop a custom-text test note into the player's apartment right now, listing a few live
-        // citizens as clickable links — verifies the custom DDS body renders, no murder needed.
+        // F4: drop the THREATENING debt note into the player's apartment right now (handwritten, landlord's
+        // hand + print, writer connection hidden) — iterate the real rent-arrears clue with no murder needed.
         internal static void SpawnTestNote()
         {
             var log = MotivesPlugin.Log;
@@ -89,35 +89,28 @@ namespace SODMotives
                 try { loc = player.home; } catch { }
                 if (loc == null) { log.LogInfo("[SODMotives][F4] No player home — enable 'start with apartment' in gameplay settings."); return; }
 
-                var people = new List<Human>();
+                // Pick any live citizen (not the player) to be the note's "landlord": its handwriting + print.
+                Human landlord = null;
                 try
                 {
                     var dir = CityData.Instance != null ? CityData.Instance.citizenDirectory : null;
                     if (dir != null)
-                    {
-                        for (int i = 0; i < dir.Count && people.Count < 5; i++)
+                        for (int i = 0; i < dir.Count; i++)
                         {
-                            var c = dir[i];
-                            if (c == null) continue;
+                            var c = dir[i]; if (c == null) continue;
                             Human h = null; try { h = c.TryCast<Human>(); } catch { }
                             if (h == null) continue;
                             try { if (h.humanID == player.humanID) continue; } catch { }
                             try { if (h.isDead) continue; } catch { }
-                            people.Add(h);
+                            landlord = h; break;
                         }
-                    }
                 }
                 catch (Exception e) { log.LogWarning($"[SODMotives][F4] citizen gather: {e.Message}"); }
 
-                if (people.Count == 0) { log.LogInfo("[SODMotives][F4] No citizens found to list."); return; }
-                // Writer (author) separate from the listed names — mirrors a real case (boss signs, suspects listed).
-                Human writer = people[0];
-                var list = new List<Human>();
-                for (int i = 1; i < people.Count; i++) list.Add(people[i]);
-                if (list.Count == 0) list.Add(writer);   // fallback: only one citizen found
-                log.LogInfo($"[SODMotives][F4] spawning test custom-text note at {loc.name} — {list.Count} names, author {MotivesPlugin.Name(writer)}...");
-                bool ok = ClueInjector.SpawnTestCustomNote(loc, list, writer);
-                log.LogInfo($"[SODMotives][F4] test note {(ok ? "placed — read it in your apartment" : "FAILED")} (see [TEST] lines).");
+                if (landlord == null) { log.LogInfo("[SODMotives][F4] No citizen found to use as the landlord."); return; }
+                log.LogInfo($"[SODMotives][F4] spawning THREATENING test note at {loc.name} — handwriting/print = {MotivesPlugin.Name(landlord)}...");
+                bool ok = ClueInjector.SpawnTestThreatNote(loc, landlord);
+                log.LogInfo($"[SODMotives][F4] test note {(ok ? "placed — read it; check it's handwritten, matches " + MotivesPlugin.Name(landlord) + "'s hand, and shows NO 'from' connection" : "FAILED")} (see [TEST] lines).");
             }
             catch (Exception e) { log.LogWarning($"[SODMotives][F4] error: {e}"); }
         }
@@ -140,7 +133,10 @@ namespace SODMotives
 
         // F6: cycle which motive type the NEXT murder is forced to. Only event-backed types
         // (Infidelity/Professional/Money-landlord) are useful; the filter is applied in TryPickVictimCentric.
-        // (Money reliably forces an EVICTION case; a lone rent-arrears tenant has too few suspects to win.)
+        // (Money forces a landlord/tenant case. With EvictionShare>0 that's usually an EVICTION — a lone
+        //  rent-arrears tenant has too few suspects to beat a multi-suspect eviction victim. With
+        //  EvictionShare=0 there are no evictions, the suspect floor degrades to 1, and a rent-arrears
+        //  tenant-victim wins instead — which is the standalone-arrears case under test.)
         internal static void CycleForceMotive()
         {
             switch (ForceMotiveType)

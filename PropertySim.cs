@@ -115,6 +115,7 @@ namespace SODMotives
         {
             if (h == null) return false;
             try { if (h.isDead) return false; } catch { }
+            try { if (h.removedFromWorld) return false; } catch { }   // arrested/despawned NPCs aren't valid landlords/tenants
             return true;
         }
 

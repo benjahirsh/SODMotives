@@ -205,24 +205,31 @@ namespace SODMotives
             // Stable per (npc, subject) so re-asking the same person gives the same lines.
             int seed = npc.humanID * 31 + subject.humanID;
 
-            // Gather the subject's affair partners (that this NPC knows, never the NPC's own
-            // affair) and workplace lines separately. Multiple affairs of the same subject
-            // COLLAPSE into ONE line naming each lover once — so affairs are a single bubble.
+            // Gather the subject's affair partners (that this NPC knows) and non-affair lines
+            // separately. Multiple affairs of the same subject COLLAPSE into ONE line naming each
+            // lover once — so affairs are a single bubble.
             var lovers = new List<Human>();
             var workLines = new List<string>();
             foreach (var e in EventStore.KnownBy(npc.humanID))
             {
+                // An NPC is NOT a knower of an event they are themselves a party to: they lived it,
+                // they don't relay it as gossip. For a one-to-one event (feud/debt/affair) the
+                // testimony names the OTHER party, so a party asked about the other would end up
+                // naming THEMSELVES — which is how the killer was heard narrating their own feud with
+                // the victim in the third person. (This also means an involved coworker/tenant no
+                // longer relays a workplace/property event they're in — only uninvolved observers do.)
+                if (e.InvolvesHuman(npc.humanID)) continue;
+
                 if (e.type == SocialEventType.Affair)
                 {
-                    if (!Involves(e, subject) || Involves(e, npc)) continue;
+                    if (!Involves(e, subject)) continue;   // npc-is-a-party already excluded above
                     Human other = Motive.Same(e.a, subject) ? e.b : e.a;
                     if (other != null && !ContainsHuman(lovers, other)) lovers.Add(other);
                 }
                 else
                 {
-                    // Workplace (Promotion / Layoffs): the subject's own role. Coworkers discuss
-                    // office drama freely even when involved themselves — resentment is applied
-                    // equally, so it's no tell. Null when the subject isn't in this event.
+                    // Non-affair (workplace / property / feud / debt): the SUBJECT's own role/relationship.
+                    // Null when the subject isn't in this event.
                     string wl = e.TestimonyAbout(subject, seed);
                     if (!string.IsNullOrEmpty(wl) && !workLines.Contains(wl)) workLines.Add(wl);
                 }

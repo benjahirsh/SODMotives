@@ -325,7 +325,7 @@ namespace SODMotives
                         var h = dir[i];
                         if (h == null) continue;
                         int id = h.humanID;
-                        if ((a != null && a.humanID == id) || (b != null && b.humanID == id)) continue;
+                        if (InvolvesHuman(id)) continue;   // a participant isn't a knower of their own event (a/b/group)
                         if (!knownBy.Contains(id)) continue;
                         // Only list knowers who can NAME the person being investigated — they're the ones
                         // who'll identify the photo (give a name) and volunteer gossip.
@@ -367,7 +367,7 @@ namespace SODMotives
                         var h = dir[i];
                         if (h == null) continue;
                         int id = h.humanID;
-                        if ((a != null && a.humanID == id) || (b != null && b.humanID == id)) continue;
+                        if (InvolvesHuman(id)) continue;   // a participant isn't a knower of their own event (a/b/group)
                         if (!knownBy.Contains(id)) continue;
                         if (mustKnow != null && !Motive.KnowsName(h, mustKnow)) continue;
                         NewAddress home = null; try { home = h.home; } catch { }

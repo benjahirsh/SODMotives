@@ -280,7 +280,10 @@ namespace SODMotives
                 if (!e.InvolvesHuman(vid)) continue;
                 foreach (var kid in e.knownBy)
                 {
-                    if (kid == vid) continue;
+                    // A participant of the event is not a "knower" of it — they lived it, they don't
+                    // gossip it (this drops the killer/other party from their own event, matching the
+                    // interrogation rule). Subsumes the old kid==vid guard (the victim is a participant).
+                    if (e.InvolvesHuman(kid)) continue;
                     if (!perKnower.TryGetValue(kid, out var m)) { m = new Dictionary<SocialEventType, int>(); perKnower[kid] = m; }
                     m.TryGetValue(e.type, out int c); m[e.type] = c + 1;
                 }
@@ -357,7 +360,7 @@ namespace SODMotives
                 if (!e.InvolvesHuman(subjectId)) continue;
                 foreach (var kid in e.knownBy)
                 {
-                    if (kid == subjectId) continue;
+                    if (e.InvolvesHuman(kid)) continue;   // participants aren't knowers (subsumes kid==subjectId)
                     perK.TryGetValue(kid, out int c); perK[kid] = c + 1;
                 }
             }

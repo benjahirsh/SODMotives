@@ -120,6 +120,14 @@ namespace SODMotives
             try { if (h.isDead) return false; } catch { }              // never pick a dead person as victim/suspect
             try { if (h.removedFromWorld) return false; } catch { }    // nor one despawned/removed (e.g. an arrested murderer)
             try { int age = h.GetAge(); if (age > 0 && age < 16) return false; } catch { }
+            // Must have a real home in a building. HOMELESS NPCs (home == null, salary 0) break the
+            // vanilla murder pipeline — it stalls forever at 'acquire equipment' (no money/place to get a
+            // weapon) — and give our clue engine nowhere to place notes (PlaceObject fails at a null home,
+            // so 0 clues land). Vanilla's own picker avoids them; our override must too. Gating here drops
+            // homeless people as BOTH killer/victim AND red-herring suspects (this method gates each edge's
+            // suspect and victim), so the whole materialized pool is housed. Making the homeless murder-
+            // capable is out of scope (would be its own mod).
+            try { var hm = h.home; if (hm == null || hm.building == null) return false; } catch { return false; }
             return true;
         }
 

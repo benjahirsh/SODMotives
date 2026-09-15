@@ -16,6 +16,7 @@ namespace SODMotives
                 EventStore.Clear();
                 MurderSelector.ResetForNewGame();   // clear stale per-case bookkeeping (reused humanIDs across sandboxes)
                 ClueInjector.ResetForNewGame();
+                MurderWatchdog.ResetForNewGame();    // clear stall-intervention bookkeeping (reused humanIDs across sandboxes)
                 Persistence.ResetForNewGame();       // clear note records so a fresh city can't carry a prior city's
                 var city = CityData.Instance;
                 if (city == null || city.citizenDirectory == null) return;
@@ -78,6 +79,14 @@ namespace SODMotives
     {
         static void Postfix()
         {
+            // The stall watchdog holds ONLY transient per-game guards (nothing persists or rehydrates
+            // them), so clear them on EVERY game start — new game AND load. This must run BEFORE the
+            // load-skip below: SeedForNewGame (the only other caller of the watchdog reset) is skipped on
+            // a load, so without this the watchdog's humanID-keyed guards would carry over from the
+            // previous game in the same process and could silently disable stall recovery for a reused
+            // victim id after a reload.
+            try { MurderWatchdog.ResetForNewGame(); } catch { }
+
             // OnStartGame fires on a LOAD as well as a new game (confirmed in-game 2026-09-08). On a
             // load we must NOT re-seed/reset — that would clobber the sidecar import (EventStore + the
             // per-case maps). Persistence raises a load flag in the LoadSaveState hook (which fires

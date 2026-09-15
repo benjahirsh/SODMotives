@@ -27,6 +27,10 @@ namespace SODMotives
             // Config (BepInEx/config/com.benhirsh.sodmotives.cfg)
             MurderSelector.EnableOverride = Config.Bind("General", "EnableOverride", true,
                 "Replace vanilla killer/victim selection with a motivated pair from the social graph.").Value;
+            MurderWatchdog.Enable = Config.Bind("General", "UnstickStalledMurders", true,
+                "Recover a mod motive-murder that soft-locks in the 'executing' state (killer never lands a lethal blow). ONLY acts on our overridden cases, and ONLY when the killer is co-located with the victim, so the crime scene stays coherent; touches no vanilla murder.").Value;
+            MurderWatchdog.StallGameHours = Config.Bind("General", "StallGameHours", 24f,
+                "In-game hours a mod murder may sit stalled in 'executing' before the watchdog force-finishes it (only if killer is present and no damage is landing).").Value;
             // V2.1 victim-centric selector knobs.
             MurderSelector.MinSuspects = Config.Bind("Selection", "MinSuspects", 3,
                 "PREFER victims with at least this many real event-backed suspects. If none qualify, degrade to the richest available victim (never vanilla for the floor).").Value;
@@ -90,10 +94,11 @@ namespace SODMotives
             ClueInjector.WorkplaceClueShare = Config.Bind("Clues", "WorkplaceClueShare", 0.5f,
                 "Chance (0..1) a given clue is placed at the victim's WORKPLACE rather than home. Motive-agnostic: any motive's clue can land at either, so location never betrays the motive.").Value;
 
-            // TESTING DEFAULT: force the first (and every) new murder to a personal-FEUD case so V2.4 is
-            // fast to test. Cycle in-game with F6 (off / affair / professional / money / feud). Money also
-            // covers the new debts; feud is the new PersonalFeud type. SET TO MotiveType.None FOR RELEASE.
-            DebugTools.ForceMotiveType = MotiveType.PersonalFeud;
+            // TESTING DEFAULT: force the first (and every) new murder to a MONEY case so V2.4 debts are
+            // fast to test (with [Property] EnableProperty = false the Money bucket is debt-only, so this
+            // yields a debtor victim + creditor suspect straight off F5 — no F6 presses). Cycle in-game with
+            // F6 (off / affair / professional / money / feud). SET TO MotiveType.None FOR RELEASE.
+            DebugTools.ForceMotiveType = MotiveType.Money;
 
             _harmony = new Harmony(Guid);
             _harmony.PatchAll(typeof(MotivesPlugin).Assembly);
@@ -520,6 +525,10 @@ namespace SODMotives
                 string mo = "?"; try { if (__instance.mo != null) mo = __instance.mo.name; } catch { }
                 string loc = "?"; try { loc = __instance.location != null ? __instance.location.name : "<null>"; } catch { }
                 MotivesPlugin.Log.LogInfo($"[SODMotives][trace] {MotivesPlugin.Name(__instance.murderer)} -> {MotivesPlugin.Name(__instance.victim)}  state=>{newState}  mo={mo}  loc={loc}");
+
+                // Track 'executing' entry/exit for the stall watchdog (recovers our overridden cases
+                // that soft-lock because the killer never lands a lethal blow — see MurderWatchdog).
+                MurderWatchdog.OnState(__instance.victim.humanID, newState);
 
                 // Inject clues only once the murder has actually happened.
                 if (newState == MurderController.MurderState.post)

@@ -383,11 +383,9 @@ namespace SODMotives
             string treeId = BuildEvictionDocTree(landlord, uniq, out linkedBody);
             if (treeId == null) { LogFail("eviction plan", landlord, victim); return 0; }
 
-            // Place at the landlord's HOME (their private plan); fall back to the generic home/work placement.
-            Interactable note = null;
-            NewGameLocation home = null; try { home = landlord.home; } catch { }
-            if (home != null) note = PlaceClueNote(home, landlord, landlord, null, treeId, null);
-            if (note == null) note = PlaceClue(victim, landlord, null, treeId);
+            // The landlord's own redevelopment plan — at their HOME or their WORKPLACE (like the other
+            // clues; landlord == victim here, so this is the victim's home/work per WorkplaceClueShare).
+            Interactable note = PlaceClue(landlord, landlord, null, treeId);
             if (note == null) { LogFail("eviction plan", landlord, victim); return 0; }
 
             var docEv = note.evidence;
@@ -433,21 +431,24 @@ namespace SODMotives
             return 1;
         }
 
-        // Money-motive threat clue — RentArrears (a=tenant/victim, b=landlord) AND generic Debt
-        // (a=debtor/victim, b=creditor). Both drop ONE unsigned, threatening DEBT note at the VICTIM's
-        // HOME, HANDWRITTEN in the suspect's own hand + carrying their PRINT (two latent forensic leads,
-        // NOT a spelled-out sender). The generic "settle your debt" wording reads the same for rent, a
-        // loan, or any money grievance. The culprit is deduced from the trail + confirmed via handwriting
-        // + print. (Was InjectRentArrears; generalized in V2.4 to also serve debts — identical clue.)
+        // Money-motive threat clue — RentArrears (a=tenant, b=landlord) AND generic Debt (a=debtor,
+        // b=creditor, BIDIRECTIONAL). ONE unsigned, threatening DEBT note HANDWRITTEN in the creditor's
+        // own hand + carrying their PRINT (two latent forensic leads, NOT a spelled-out sender), always
+        // anchored to the DEBTOR's HOME (ev.a) — the party who'd have received a demand. That's the
+        // victim's home when the creditor kills the debtor (and for rent arrears), and the KILLER's home
+        // when a debtor kills the creditor to escape the debt (a received note that ties the killer to
+        // the victim). The generic "settle your debt" wording reads the same for rent, a loan, or any
+        // money grievance; the culprit is deduced from the trail + confirmed via handwriting + print.
         private static int InjectMoneyThreat(Human victim, SocialEvent ev, List<string> recList, int placed)
         {
             if (placed >= MaxClues || ev.a == null || ev.b == null) return 0;
-            Human creditor = ev.b;   // suspect / author (landlord or lender)
+            Human debtor = ev.a;     // note owner / recipient (tenant, or the borrower)
+            Human creditor = ev.b;   // author (landlord or lender)
 
             int linkedBody;
-            string treeId = BuildRentDemandDocTree(creditor, out linkedBody);
+            string treeId = BuildRentDemandDocTree(creditor, debtor, out linkedBody);
             if (treeId == null) { LogFail("threatening note", creditor, victim); return 0; }
-            return InjectAnonThreatNote(victim, creditor, treeId, linkedBody, "rentdemand", recList);
+            return InjectAnonThreatNote(debtor, creditor, victim, treeId, linkedBody, "rentdemand", recList);
         }
 
         // Feud (bidirectional bad blood between ev.a and ev.b): ONE unsigned, HOSTILE threat note at the
@@ -462,9 +463,9 @@ namespace SODMotives
             if (aggressor == null) return 0;
 
             int linkedBody;
-            string treeId = BuildFeudThreatDocTree(aggressor, out linkedBody);
+            string treeId = BuildFeudThreatDocTree(aggressor, victim, out linkedBody);
             if (treeId == null) { LogFail("threatening note", aggressor, victim); return 0; }
-            return InjectAnonThreatNote(victim, aggressor, treeId, linkedBody, "feudthreat", recList);
+            return InjectAnonThreatNote(victim, aggressor, victim, treeId, linkedBody, "feudthreat", recList);
         }
 
         // Shared placement for an anonymous, handwritten threat note (money OR feud): place at the
@@ -474,15 +475,33 @@ namespace SODMotives
         // so the Evidence.AutoCreateFacts postfix (Plugin.cs) removes the lazily-created writer "From" fact
         // once it materialises — keeping the handwriting matchable. `kind` ("rentdemand"|"feudthreat") is
         // recorded so the save/reload rebuild re-registers the right body + re-hides the writer connection.
-        private static int InjectAnonThreatNote(Human victim, Human writer, string treeId, int linkedBody, string kind, List<string> recList)
+        // `noteOwner` is whose HOME the note sits in and who "received" it (the debtor/tenant for money
+        // notes, the victim for feud notes); `murderVictim` is the actual case victim, used only for the
+        // location classification/HUD (so a note at the killer's home in the debt-reversal reads as
+        // "elsewhere", not "victim home").
+        private static int InjectAnonThreatNote(Human noteOwner, Human writer, Human murderVictim, string treeId, int linkedBody, string kind, List<string> recList)
         {
             const string label = "Threatening Note";
 
+            // A note the VICTIM received can sit at their home OR their workplace (like the other clues).
+            // A note the SUSPECT received (the debt reversal, where the debtor is the killer) stays in
+            // their HOME — it's personal correspondence they'd keep at home, not on their desk at work.
+            // receiver = null: an ANONYMOUS threat note carries no "To" connection (we also hide the "From"
+            // below). Passing a receiver created a stray, sometimes-mismatched "To" link (it once resolved
+            // to an unrelated citizen the victim knew via another event) — the note is meant to be
+            // unsigned and unaddressed, deduced from handwriting + fingerprint + where it was found.
+            bool allowWork = Motive.Same(noteOwner, murderVictim);
             Interactable note = null;
-            NewGameLocation home = null; try { home = victim.home; } catch { }
-            if (home != null) note = PlaceClueNote(home, victim, writer, victim, treeId, null);
-            if (note == null) note = PlaceClue(victim, writer, victim, treeId);
-            if (note == null) { LogFail("threatening note", writer, victim); return 0; }
+            if (allowWork)
+            {
+                note = PlaceClue(noteOwner, writer, null, treeId);   // home OR work per WorkplaceClueShare
+            }
+            else
+            {
+                NewGameLocation home = null; try { home = noteOwner.home; } catch { }
+                if (home != null) note = PlaceClueNote(home, noteOwner, writer, null, treeId, null);
+            }
+            if (note == null) { LogFail("threatening note", writer, murderVictim); return 0; }
 
             var docEv = note.evidence;
             // Deliberately NO Evidence.SetWriter — that was what surfaced the suspect as a discovered "from".
@@ -509,15 +528,23 @@ namespace SODMotives
             // (Plugin.cs) hides the writer connection ONCE the fact exists — keeping the handwriting matchable.
             try { int nid = note.id; if (nid >= 0) AnonWriterNoteIds.Add(nid); } catch { }
 
+            // Draw the "To" connection EXPLICITLY to the RECIPIENT (note-owner). We placed with receiver=null
+            // to suppress the game's auto-created "To" (which misresolved to an unrelated citizen the victim
+            // knew via another event); this controlled link points at exactly the right person. The writer
+            // "From" is still hidden by the AutoCreateFacts postfix, so the note stays anonymous as to sender.
+            try { var fp = ResolveConnectFactPreset(docEv); if (fp != null) AddCitizenConnection(docEv, noteOwner, fp); } catch (Exception ce) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: threat-note To link: {ce.Message}"); }
+
             string where = "?", locDesc = "?";
-            try { var node = note.node; if (node != null) { var gl = node.gameLocation; string loc = gl != null ? gl.name : "?"; string room = ""; try { if (node.room != null) room = node.room.GetName(); } catch { } locDesc = string.IsNullOrEmpty(room) ? loc : $"{room}, {loc}"; where = ClassifyLocation(victim, loc); } } catch { }
+            try { var node = note.node; if (node != null) { var gl = node.gameLocation; string loc = gl != null ? gl.name : "?"; string room = ""; try { if (node.room != null) room = node.room.GetName(); } catch { } locDesc = string.IsNullOrEmpty(room) ? loc : $"{room}, {loc}"; where = ClassifyLocation(murderVictim, loc); } } catch { }
             int itemId = -1; try { itemId = note.id; } catch { }
             try
             {
-                // pids empty (no board connections to rebuild on reload). authorId kept so the reload
-                // rebuild can re-register the note in the suspect's handwriting; the rebuild sets NO
-                // visible writer (anonymous) and re-hides the writer connection.
+                // Persist the RECIPIENT (note-owner) as the single "citizen" — used ONLY to rebuild the
+                // addressee salutation on reload, never as a board connection (RebuildCustomNote skips
+                // connections for anon threat notes). authorId is kept so the reload rebuild re-registers
+                // the note in the suspect's handwriting, sets NO visible writer, and re-hides the "From".
                 var pids = new List<int>();
+                try { if (noteOwner != null && noteOwner.humanID >= 0) pids.Add(noteOwner.humanID); } catch { }
                 Persistence.RecordNote(itemId, treeId, kind, writer != null ? writer.humanID : -1, pids,
                     ObviousNames ? "MODCLUE " + label : label);
             }
@@ -799,10 +826,15 @@ namespace SODMotives
         // wording) so a rent-arrears case reads identically to a future loan / money-feud case. The body
         // names nobody; the culprit is carried only by the note's handwriting (rendered in the landlord's
         // OWN handwriting font so it matches their profile sample) + fingerprint.
-        private static string BuildRentDemandDocTree(Human landlord, out int linked, string fixedTreeId = null)
+        private static string BuildRentDemandDocTree(Human landlord, Human addressee, out int linked, string fixedTreeId = null)
         {
             linked = 0;
             var sb = new System.Text.StringBuilder();
+            // Address it to the recipient by name (a CLICKABLE citizen link) so it's clear who it threatens
+            // even when found in a shared space (e.g. a workplace break room). The link is navigation only
+            // (opens/pins that citizen); the board "To" connection is drawn separately, and the writer stays
+            // hidden so the sender is anonymous. Rich-text <link> renders fine under the handwriting font.
+            if (addressee != null) sb.Append(CitizenLink(addressee, ref linked) + ",\n\n");
             sb.Append("Settle your debt. Consider this your final warning.");
             // Render in the WRITER'S OWN handwriting font (Human.handwriting.fontAsset) so the note's hand
             // genuinely matches the killer's profile sample — fall back to a generic script if unavailable.
@@ -817,11 +849,12 @@ namespace SODMotives
         // body names nobody; the culprit is carried only by the note's handwriting (rendered in the
         // aggressor's OWN handwriting font so it matches their profile sample) + fingerprint. The
         // identity lead comes from a knower's testimony (which names the other feuding party).
-        private static string BuildFeudThreatDocTree(Human aggressor, out int linked, string fixedTreeId = null)
+        private static string BuildFeudThreatDocTree(Human aggressor, Human addressee, out int linked, string fixedTreeId = null)
         {
             linked = 0;
             var sb = new System.Text.StringBuilder();
-            sb.Append("You've had your last warning. Stay out of my way — or you'll regret it.");
+            if (addressee != null) sb.Append(CitizenLink(addressee, ref linked) + ",\n\n");
+            sb.Append("You've had your last warning. Stay out of my way, or you'll regret it.");
             string hwFont = "Pacific Beach Script Font SDF";
             try { if (aggressor != null && aggressor.handwriting != null && aggressor.handwriting.fontAsset != null) { var fn = aggressor.handwriting.fontAsset.name; if (!string.IsNullOrEmpty(fn)) hwFont = fn; } } catch { }
             string treeId = RegisterCustomDocTree(sb.ToString(), fixedTreeId, hwFont, 30f, true);
@@ -837,12 +870,16 @@ namespace SODMotives
         {
             if (note == null || string.IsNullOrEmpty(treeId)) return;
             int linked;
+            bool anonThreat0 = kind == "rentdemand" || kind == "feudthreat";
+            // For anon threat notes the persisted citizen (if any) is the RECIPIENT — the note's addressee
+            // (rebuilt as a clickable salutation) AND the "To" connection target (redrawn below).
+            Human addressee = (anonThreat0 && citizens != null && citizens.Count > 0) ? citizens[0] : null;
             // Rebuild the SAME body the note was placed with — a kind-agnostic rebuild would re-render an
             // eviction plan as a redundancy list, or a rent demand as "...termination: <landlord>".
             string built =
                 kind == "eviction"   ? BuildEvictionDocTree(author, citizens, out linked, treeId) :
-                kind == "rentdemand" ? BuildRentDemandDocTree(author, out linked, treeId) :
-                kind == "feudthreat" ? BuildFeudThreatDocTree(author, out linked, treeId) :
+                kind == "rentdemand" ? BuildRentDemandDocTree(author, addressee, out linked, treeId) :
+                kind == "feudthreat" ? BuildFeudThreatDocTree(author, addressee, out linked, treeId) :
                                        BuildRedundancyDocTree(citizens, author, out linked, treeId);
             if (built == null) { MotivesPlugin.Log.LogWarning($"[SODMotives] persist: rebuild tree failed for '{treeId}'."); return; }
 
@@ -865,10 +902,11 @@ namespace SODMotives
 
             int reconnected = 0;
             var fp = ResolveConnectFactPreset(docEv);
+            // Redraw connections: eviction -> property ADDRESSES; anon threat notes -> the RECIPIENT (their
+            // single persisted citizen) as the "To" link; layoffs -> each laid-off citizen.
             if (citizens != null)
                 for (int i = 0; i < citizens.Count; i++)
                 {
-                    // Eviction connects to the property ADDRESSES (each tenant's home); others to the citizen.
                     bool ok = (kind == "eviction") ? AddLocationConnection(docEv, SafeHome(citizens[i]), fp)
                                                    : AddCitizenConnection(docEv, citizens[i], fp);
                     if (ok) reconnected++;
@@ -1005,7 +1043,7 @@ namespace SODMotives
                 _placedRooms.Clear();   // allow repeated test placements in the same room
 
                 int linkedBody;
-                string treeId = BuildRentDemandDocTree(landlord, out linkedBody);
+                string treeId = BuildRentDemandDocTree(landlord, null, out linkedBody);
                 if (treeId == null) { MotivesPlugin.Log.LogWarning("[SODMotives][TEST] tree build failed."); return false; }
 
                 var note = PlaceClueNote(loc, landlord, landlord, null, treeId, null);

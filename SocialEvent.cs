@@ -151,12 +151,14 @@ namespace SODMotives
             Emit(o, b, a, 55f, MotiveType.PersonalFeud, $"bad blood with {an}");
         }
 
-        // Debt: a = debtor (victim), b = creditor (the lone suspect). A creditor fed up with a debtor
-        // who stopped paying holds the grudge — the threat note is theirs (mirrors RentArrears; the
-        // "settle your debt" note reads the same for rent, a loan, or any money grievance).
+        // Debt (BIDIRECTIONAL, like feuds): a = debtor, b = creditor. Either can kill — a creditor fed
+        // up with a debtor who stopped paying, OR a debtor who kills the creditor to be rid of the debt.
+        // The "settle your debt" clue note is always the creditor's (see ClueInjector.InjectMoneyThreat),
+        // anchored to the DEBTOR's home whichever of them is the victim.
         private void CollectDebtEdges(List<SuspectEdge> o)
         {
-            Emit(o, b, a, 60f, MotiveType.Money, $"{SafeName(a)} owed them money and had stopped paying it back");
+            Emit(o, b, a, 60f, MotiveType.Money, $"{SafeName(a)} owed them money and had stopped paying it back");   // creditor kills debtor
+            Emit(o, a, b, 58f, MotiveType.Money, $"owed {SafeName(b)} money and wanted to be rid of the debt");      // debtor kills creditor
         }
 
         private static Human SafePartner(Human h) { if (h == null) return null; try { return h.partner; } catch { return null; } }
@@ -184,27 +186,32 @@ namespace SODMotives
             if (subject == null) return null;
             int sid;
             try { sid = subject.humanID; } catch { return null; }
-            string co = string.IsNullOrEmpty(placeName) ? "work" : placeName;
 
             switch (type)
             {
                 case SocialEventType.Promotion:
                 {
-                    string pn = SafeName(a);                   // promotee (anchor; never the subject in these branches)
+                    // Pointer only (V2.2): name no company or person — the promotion-letter clue carries the
+                    // promotee's identity; gossip just flags a promotion in the subject's orbit. No jealousy
+                    // / "passed over" framing — the player infers the rivalry from the pool.
                     if (a != null && a.humanID == sid)        // the subject IS the promotee
                         return Pick(seed,
-                            $"Word is they just landed the big promotion at {co} — the one the whole team was after.",
-                            $"They're the one who got bumped up at {co} not long ago. Not everyone was pleased about it.",
-                            $"Heard they got promoted over the rest of the floor at {co} recently.");
+                            "Word is they just got a promotion.",
+                            "Heard they were promoted recently.",
+                            "They landed a promotion at work, from what I hear.",
+                            "Word is they moved up at work not long ago.");
                     if (b != null && b.humanID == sid)        // the subject IS the boss / decider
                         return Pick(seed,
-                            $"They run {co} — word is they just handed {pn} that promotion over everyone else.",
-                            $"That's the boss at {co}; they picked {pn} for the promotion and passed the whole team over.");
-                    if (InGroup(sid))                         // a passed-over rival (equal resentment)
+                            "Word is they're the boss and made a promotion recently.",
+                            "Heard they run the place and just promoted one of their staff.",
+                            "They're the one in charge, and word is they handed out a promotion lately.",
+                            "Word is they're the boss where someone was just promoted.");
+                    if (InGroup(sid))                         // a rival who was up for the same promotion
                         return Pick(seed,
-                            $"They were up for that promotion at {co} — the one {pn} got instead. Took it hard, I heard.",
-                            $"One of the ones passed over when {pn} got bumped up at {co}. Weren't best pleased.",
-                            $"They reckoned that promotion at {co} had their name on it. {pn} got it instead.");
+                            "Word is they were up for a promotion recently.",
+                            "Heard they'd been in the running for a promotion at work.",
+                            "Word is they were up for a promotion that went to a colleague.",
+                            "They'd been after a promotion at work, from what I hear.");
                     return null;
                 }
 
@@ -212,44 +219,52 @@ namespace SODMotives
                 {
                     if (a != null && a.humanID == sid)        // the subject IS the boss (victim)
                         return Pick(seed,
-                            $"They run {co}. Word is the place has been losing money and they had to make a round of cuts.",
-                            $"Things have been tight at {co} lately — from what I hear they've had to let a few people go.");
-                    if (InGroup(sid))                         // someone let go in the cuts (equal resentment)
+                            "Word is they're the boss and have been letting people go.",
+                            "Heard they run the place and had to make some layoffs.",
+                            "Word is they've been cutting staff at work.",
+                            "They're in charge at work, and word is they've been laying people off.");
+                    if (InGroup(sid))                         // someone let go in the cuts (equal treatment)
                         return Pick(seed,
-                            $"Rough patch at {co} — the company's been bleeding money and the boss had to let people go. They were one of them.",
-                            $"They lost their job at {co} when the cuts came round; place has been losing money, I hear.",
-                            $"Heard {co} let them go when money got tight. Didn't see it coming, poor sod.");
+                            "Heard they were let go from work.",
+                            "Word is they lost their job recently.",
+                            "They got laid off, from what I hear.",
+                            "Word is they'd been let go from their job.");
                     return null;
                 }
 
                 case SocialEventType.Eviction:
                 {
-                    // A landlord runs several places, so gossip stays generic — never a specific flat
+                    // A landlord runs several places, so gossip stays generic, never a specific flat
                     // (the specific address could be the killer's own home). Pointer, not detail.
                     if (a != null && a.humanID == sid)        // the subject IS the landlord (victim)
                         return Pick(seed,
-                            "They're a landlord — word is they're clearing one of their buildings out for a redevelopment.",
-                            "Heard they let places out; turfing the tenants out of one of their properties to redevelop it.");
+                            "They're a landlord. Word is they're clearing tenants out of one of their buildings.",
+                            "Heard they let places out and they're evicting the tenants from one of them.",
+                            "Word is they're a landlord, turfing tenants out of a building they own.",
+                            "They own property. Word is they're clearing a building of its tenants.");
                     if (InGroup(sid))                         // a tenant being evicted (equal grievance)
                         return Pick(seed,
-                            "Poor sod's being turfed out of their place — the landlord's clearing the whole building for a redevelopment.",
-                            "They're losing their home — their landlord's clearing the building out to redevelop it.");
+                            "Heard their landlord's evicting them.",
+                            "Word is they're being turfed out of their place.",
+                            "They're losing their home, from what I hear.",
+                            "Word is their landlord's kicking them out.");
                     return null;
                 }
 
                 case SocialEventType.RentArrears:
                 {
                     if (a != null && a.humanID == sid)        // the subject IS the tenant (victim)
-                        // Pointer only: names the MONEY sphere but stays deliberately vague — reads the
-                        // same for rent arrears now or a future money-feud/debt motive. The physical clue
-                        // (rent demand notice) carries the landlord/rent specifics.
                         return Pick(seed,
                             "Word is they'd been struggling with money lately.",
-                            "Heard they'd been having money trouble — behind on what they owed, apparently.");
+                            "Heard they'd been having money trouble.",
+                            "They'd fallen behind on their rent, from what I hear.",
+                            "Word is money had been tight for them.");
                     if (b != null && b.humanID == sid)        // the subject IS the landlord (suspect)
                         return Pick(seed,
-                            "They're a landlord — had a tenant who just wouldn't pay up.",
-                            "Word is they let places out; one of their tenants had stopped paying the rent.");
+                            "They're a landlord. Word is they had a tenant who wouldn't pay up.",
+                            "Heard they let places out and one of their tenants stopped paying rent.",
+                            "Word is they're a landlord chasing a tenant for unpaid rent.",
+                            "They own property, and one of their tenants had stopped paying, from what I hear.");
                     return null;
                 }
 
@@ -262,22 +277,31 @@ namespace SODMotives
                     Human other = (a != null && a.humanID == sid) ? b : (b != null && b.humanID == sid) ? a : null;
                     if (other == null) return null;
                     return Pick(seed,
-                        $"Word is they'd had a serious falling-out with {SafeName(other)} — real bad blood there.",
-                        $"Heard they and {SafeName(other)} were at each other's throats. Nasty business.",
-                        $"They and {SafeName(other)} had fallen out badly, from what I gather.");
+                        $"Word is they'd had a falling-out with {SafeName(other)}.",
+                        $"Heard they and {SafeName(other)} had a serious falling-out.",
+                        $"They and {SafeName(other)} had fallen out, from what I hear.",
+                        $"Word is there's bad blood between them and {SafeName(other)}.",
+                        $"Heard they'd been at odds with {SafeName(other)}.",
+                        $"Word is they and {SafeName(other)} weren't on speaking terms.");
                 }
 
                 case SocialEventType.Debt:
                 {
                     // Money sphere + the other party named (no residency/roster anchor to follow otherwise).
-                    if (a != null && a.humanID == sid)        // the subject IS the debtor (victim)
+                    if (a != null && a.humanID == sid)        // the subject IS the debtor
                         return Pick(seed,
-                            $"Word is they owed {SafeName(b)} money — hadn't been paying it back.",
-                            $"Heard they were in debt to {SafeName(b)} and well behind on it.");
-                    if (b != null && b.humanID == sid)        // the subject IS the creditor (suspect)
+                            $"Word is they owed {SafeName(b)} money.",
+                            $"Heard they were in debt to {SafeName(b)}.",
+                            $"They owed {SafeName(b)} money and hadn't paid it back, from what I hear.",
+                            $"Word is they'd borrowed money off {SafeName(b)} and never repaid it.",
+                            $"Heard they were behind on money they owed {SafeName(b)}.");
+                    if (b != null && b.humanID == sid)        // the subject IS the creditor
                         return Pick(seed,
-                            $"Word is {SafeName(a)} owed them money and had stopped paying up.",
-                            $"Heard they'd lent {SafeName(a)} money and weren't seeing it back.");
+                            $"Word is {SafeName(a)} owed them money.",
+                            $"Heard {SafeName(a)} was in debt to them.",
+                            $"{SafeName(a)} owed them money and hadn't paid it back, from what I hear.",
+                            $"Word is they'd lent {SafeName(a)} money that was never repaid.",
+                            $"Heard {SafeName(a)} still owed them a fair bit.");
                     return null;
                 }
             }

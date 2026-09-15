@@ -42,9 +42,29 @@ namespace SODMotives
                 int playerId = -1;
                 try { if (Player.Instance != null) playerId = Player.Instance.humanID; } catch { }
 
-                var usedPairs = new HashSet<long>();   // pairs already carrying a seeded feud/debt
+                var usedPairs = new HashSet<long>();   // pairs already carrying a seeded motive
                 var feudCands = new List<(Human a, Human b)>();
                 var debtCands = new List<(Human a, Human b)>();
+
+                // Never stack a synthesized feud/debt on a pair that ALREADY carries a seeded motive.
+                // At this point in new-game startup that's the affairs AffairSim just seeded (workplace/
+                // property are built on-demand at murder time, so they aren't in the store yet), so this
+                // stops the "the victim was having an affair with the killer AND owed them money" overlap:
+                // two independent motives converging on one suspect makes that suspect read guiltier than
+                // the red herrings, breaking the locked design rule. Affairs seed first, so they stay the
+                // priority thread; feuds/debts fill the remaining pairs. One motive thread per pair.
+                try
+                {
+                    var existing = EventStore.All;
+                    if (existing != null)
+                        for (int k = 0; k < existing.Count; k++)
+                        {
+                            var ev = existing[k];
+                            if (ev == null || ev.a == null || ev.b == null) continue;
+                            try { usedPairs.Add(PairKey(ev.a.humanID, ev.b.humanID)); } catch { }
+                        }
+                }
+                catch { }
 
                 for (int i = 0; i < n; i++)
                 {

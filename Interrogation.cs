@@ -208,7 +208,14 @@ namespace SODMotives
             // Gather the subject's affair partners (that this NPC knows) and non-affair lines
             // separately. Multiple affairs of the same subject COLLAPSE into ONE line naming each
             // lover once — so affairs are a single bubble.
+            // Collapse the one-to-one money/affair relations into single list bubbles (like affairs):
+            //   lovers  -> "having an affair with X, Y and Z"
+            //   owedTo  -> creditors the subject owes  ("they owed X and Y money")
+            //   owedBy  -> debtors who owe the subject  ("X and Y owed them money")
+            // Everything else (workplace / property / feud) stays one bubble per event line.
             var lovers = new List<Human>();
+            var owedTo = new List<Human>();   // subject is the debtor; these are their creditors
+            var owedBy = new List<Human>();   // subject is the creditor; these are their debtors
             var workLines = new List<string>();
             foreach (var e in EventStore.KnownBy(npc.humanID))
             {
@@ -226,32 +233,84 @@ namespace SODMotives
                     Human other = Motive.Same(e.a, subject) ? e.b : e.a;
                     if (other != null && !ContainsHuman(lovers, other)) lovers.Add(other);
                 }
+                else if (e.type == SocialEventType.Debt)
+                {
+                    // e.a = debtor, e.b = creditor. Collapse both directions into the two lists.
+                    if (e.a != null && Motive.Same(e.a, subject)) { if (e.b != null && !ContainsHuman(owedTo, e.b)) owedTo.Add(e.b); }
+                    else if (e.b != null && Motive.Same(e.b, subject)) { if (e.a != null && !ContainsHuman(owedBy, e.a)) owedBy.Add(e.a); }
+                }
                 else
                 {
-                    // Non-affair (workplace / property / feud / debt): the SUBJECT's own role/relationship.
+                    // Non-affair, non-debt (workplace / property / feud): the SUBJECT's own role.
+                    // Bump the seed per line so multiple events of one type don't pick the same variant.
                     // Null when the subject isn't in this event.
-                    string wl = e.TestimonyAbout(subject, seed);
+                    string wl = e.TestimonyAbout(subject, seed + workLines.Count);
                     if (!string.IsNullOrEmpty(wl) && !workLines.Contains(wl)) workLines.Add(wl);
                 }
             }
 
-            // One affair bubble (if any) + one bubble per non-affair event line, capped only by
-            // the safety backstop (so future feud/theft motives surface alongside these).
-            if (lovers.Count > 0) lines.Add(AffairLine(subject, lovers));
+            // One affair bubble + up to two debt bubbles (owed-to / owed-by) + one per other event line,
+            // capped only by the safety backstop (so future motive types still surface alongside these).
+            // Distinct seed offsets so back-to-back bubbles don't land on the identically-shaped variant.
+            if (lovers.Count > 0) lines.Add(AffairLine(subject, lovers, seed));
+            if (owedTo.Count > 0) lines.Add(DebtOwedLine(owedTo, seed));
+            if (owedBy.Count > 0) lines.Add(DebtOwedToThemLine(owedBy, seed + 1));
             for (int i = 0; i < workLines.Count && lines.Count < MaxGossipBubbles; i++) lines.Add(workLines[i]);
+
+            // A hearsay tail like ", from what I hear." reads oddly repeated across bubbles in one answer.
+            // Keep it on the first line that uses it and trim it from the rest (the sentence still reads
+            // fine without it), so the same framing is never echoed back-to-back.
+            DedupeHearsayTail(lines);
             return lines;
         }
 
-        // Affair gossip about the subject (subject = "they"), naming each distinct lover once and
-        // the betrayed partner once. Opener avoids "Word is" so it doesn't echo the workplace
-        // bubble's phrasing when both appear.
-        private static string AffairLine(Human subject, List<Human> lovers)
+        // Affair gossip about the subject (subject = "they"), naming each distinct lover once. The
+        // betrayed-partner clause is appended ONLY when the subject actually has a partner (the
+        // variants themselves never assume one, so they read correctly for a single subject too).
+        private static string AffairLine(Human subject, List<Human> lovers, int seed)
         {
             Human sp = SafePartner(subject);
-            var sb = new System.Text.StringBuilder();
-            sb.Append($"Between you and me — they've been carrying on with {JoinNames(lovers)} behind their partner's back.");
-            if (sp != null) sb.Append($" Can't imagine {Name(sp)} took that well.");
-            return sb.ToString();
+            string ln = Pick(seed,
+                $"Word is they've been having an affair with {JoinNames(lovers)}.",
+                $"They've been sleeping with {JoinNames(lovers)}, from what I hear.",
+                $"Word is there's something going on between them and {JoinNames(lovers)}.");
+            if (sp != null) ln += $" Can't imagine {Name(sp)} took that well.";
+            return ln;
+        }
+
+        // Debt gossip, collapsed like affairs. Subject = "they". Variants read correctly for one name or
+        // a "X, Y and Z" list (no singular/plural verb agreement on the list).
+        private static string DebtOwedLine(List<Human> creditors, int seed)   // subject OWES these people
+            => Pick(seed,
+                $"Word is they owed {JoinNames(creditors)} money.",
+                $"Heard they were in debt to {JoinNames(creditors)}.",
+                $"They owed {JoinNames(creditors)} money and hadn't paid it back, from what I hear.",
+                $"Word is they'd borrowed money off {JoinNames(creditors)} and never repaid it.");
+
+        private static string DebtOwedToThemLine(List<Human> debtors, int seed)   // these people OWE the subject
+            => Pick(seed,
+                $"Word is {JoinNames(debtors)} owed them money.",
+                $"Heard {JoinNames(debtors)} still owed them money.",
+                $"{JoinNames(debtors)} owed them money and hadn't paid it back, from what I hear.",
+                $"Word is they'd lent {JoinNames(debtors)} money that was never repaid.");
+
+        // Deterministic variant pick (stable per seed; never negative-indexes).
+        private static string Pick(int seed, params string[] variants)
+            => variants[((seed % variants.Length) + variants.Length) % variants.Length];
+
+        // Keep a repeated hearsay tail on only the FIRST bubble that uses it; trim it from later ones so
+        // the same "…, from what I hear." framing is never echoed twice in one interrogation answer.
+        private static void DedupeHearsayTail(List<string> lines)
+        {
+            const string tail = ", from what I hear.";
+            bool used = false;
+            for (int i = 0; i < lines.Count; i++)
+            {
+                var s = lines[i];
+                if (string.IsNullOrEmpty(s) || !s.EndsWith(tail)) continue;
+                if (used) lines[i] = s.Substring(0, s.Length - tail.Length) + ".";
+                else used = true;
+            }
         }
 
         private static bool ContainsHuman(List<Human> list, Human h)

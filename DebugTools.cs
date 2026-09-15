@@ -484,6 +484,10 @@ namespace SODMotives
                     MotivesPlugin.Log.LogInfo($"[SODMotives] GHOST MODE {(DebugTools.Ghost ? "ON" : "OFF")}");
                 }
                 if (DebugTools.Ghost) DebugTools.ApplyGhost();
+
+                // Recover a mod motive-murder stuck in 'executing' (killer whiffing forever). Scoped to
+                // our overridden cases + co-located killer only; no-op otherwise. See MurderWatchdog.
+                MurderWatchdog.Tick();
             }
             catch { }
         }

@@ -48,7 +48,7 @@ namespace SODMotives
                 GameObject.DontDestroyOnLoad(go);
                 go.hideFlags = HideFlags.HideAndDontSave;
                 go.AddComponent<DebugHotkey>();
-                MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys: F4=spawn threatening test note in your apartment, F5=trigger next murder, F6=cycle FORCE MOTIVE (off/affair/professional/money/feud), F7=ghost, F8=always-answer, F9=case solution, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower.");
+                MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys: F3=inject test EMAIL (read on a citizen's home computer), F4=spawn threatening test note in your apartment, F5=trigger next murder, F6=cycle FORCE MOTIVE (off/affair/professional/money/feud), F7=ghost, F8=always-answer, F9=case solution, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower.");
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] hotkey register failed: {e.Message}"); }
         }
@@ -74,6 +74,20 @@ namespace SODMotives
         internal static void ClearGhost()
         {
             try { var p = Player.Instance; if (p != null) { try { p.unreportable = false; } catch { } } } catch { }
+        }
+
+        // F3: inject a test EMAIL (vmail) between two live citizens so inbox rendering + clickable links can
+        // be verified without a murder (V2.6 email-clue recon). Read it on either participant's home computer.
+        internal static void SpawnTestEmail()
+        {
+            var log = MotivesPlugin.Log;
+            try
+            {
+                log.LogInfo("[SODMotives][F3] injecting a test email between two housed citizens...");
+                bool ok = ClueInjector.SpawnTestEmail();
+                log.LogInfo($"[SODMotives][F3] test email {(ok ? "injected — see the [F3] line for whose home computer to read it on (Messenger/vmail app)" : "FAILED")}.");
+            }
+            catch (Exception e) { log.LogWarning($"[SODMotives][F3] error: {e}"); }
         }
 
         // F4: drop the THREATENING debt note into the player's apartment right now (handwritten, landlord's
@@ -466,6 +480,7 @@ namespace SODMotives
                     if (DebugTools.Show) { DebugTools.Show = false; }
                     else { DebugTools.BuildSolution(); DebugTools.Show = true; }
                 }
+                if (Input.GetKeyDown(KeyCode.F3)) DebugTools.SpawnTestEmail();
                 if (Input.GetKeyDown(KeyCode.F4)) DebugTools.SpawnTestNote();
                 if (Input.GetKeyDown(KeyCode.F5)) DebugTools.TriggerMurder();
                 if (Input.GetKeyDown(KeyCode.F6)) DebugTools.CycleForceMotive();

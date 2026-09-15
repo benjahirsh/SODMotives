@@ -697,7 +697,28 @@ namespace SODMotives
         // pipeline the game + DDSLoader mods use). Returns the tree id, or null. On save/reload replay,
         // pass the surviving note's tree id as `fixedTreeId` (only the tree id must match; block/message
         // keys can be freshly minted). NOTE: these registrations + link ids are session-only.
-        private static string RegisterCustomDocTree(string body, string fixedTreeId = null, string font = "TruetypewriterPolyglott SDF", float fontSize = 14f, bool isHandwriting = false)
+        // A known-good vanilla vmail tree (Work_Dinner) we copy tree-level fields + participants from so our
+        // custom vmail renders its inbox list From:/To: subtitle like a real one.
+        private const string VmailTemplateTreeId = "8332e932-c0f2-4512-8de9-e3d7d8dbf36a";
+
+        // A permissive vmail participant definition (no job/trait/connection gating) so the delivery walk +
+        // inbox renderer have real participant objects to read. We pass explicit Humans to NewVmailThread, so
+        // the connection type is only metadata; the empty lists mirror the game's own vmail trees.
+        private static DDSSaveClasses.DDSParticipant MakeVmailParticipant(bool required)
+        {
+            var p = new DDSSaveClasses.DDSParticipant();
+            try { p.required = required; } catch { }
+            try { p.connection = (Acquaintance.ConnectionType)15; } catch { }
+            try { p.useJobs = false; } catch { }
+            try { p.disableInbox = false; } catch { }
+            try { p.useTraits = false; } catch { }
+            try { p.jobs = new Il2CppSystem.Collections.Generic.List<string>(); } catch { }
+            try { p.traits = new Il2CppSystem.Collections.Generic.List<string>(); } catch { }
+            try { p.triggers = new Il2CppSystem.Collections.Generic.List<DDSSaveClasses.TreeTriggers>(); } catch { }
+            return p;
+        }
+
+        private static string RegisterCustomDocTree(string body, string fixedTreeId = null, string font = "TruetypewriterPolyglott SDF", float fontSize = 14f, bool isHandwriting = false, bool asVmail = false)
         {
             try
             {
@@ -708,44 +729,92 @@ namespace SODMotives
                 string messageKey = "sodmotives.doc.msg." + uid;
                 string treeId = !string.IsNullOrEmpty(fixedTreeId) ? fixedTreeId : ("sodmotives.doc.tree." + uid);
 
-                // 1) Register the block's TEXT into the "dds.blocks" string table (proven DDSLoader path).
-                int lineNo = 1;
-                try { var st = Strings.stringTable; if (st != null && st.ContainsKey("dds.blocks")) lineNo = st["dds.blocks"].Count + 1; } catch { }
-                Strings.LoadIntoDictionary("dds.blocks", lineNo, blockKey, body, "", 0, false, true);
+                // 1-3) Register the message's BLOCK(S) + the message. For a VMAIL, the inbox list-row preview =
+                // ParseDDSMessage's FIRST block only, and the row splits "preview\nFrom: X" on the first newline
+                // to place the From:/To: caption in the subtitle. So a single multi-line block pushes the caption
+                // out of the subtitle slot (it renders blank). FIX: split the vmail body into block0 = the first
+                // line (a clean, newline-free preview/subject) + block1 = the remaining body. Documents (no list
+                // preview) stay single-block.
+                var blockBodies = new List<string>();
+                if (asVmail)
+                {
+                    int nl = body != null ? body.IndexOf('\n') : -1;
+                    if (nl >= 0) { blockBodies.Add(body.Substring(0, nl)); blockBodies.Add(body.Substring(nl + 1)); }
+                    else blockBodies.Add(body ?? "");
+                }
+                else blockBodies.Add(body ?? "");
 
-                // 2) Block object (holds no text — the text lives in the string table above).
-                var block = new DDSSaveClasses.DDSBlockSave();
-                block.name = blockKey; block.id = blockKey;
-                try { block.replacements = new Il2CppSystem.Collections.Generic.List<DDSSaveClasses.DDSReplacement>(); } catch { }
-                tb.allDDSBlocks[blockKey] = block;
-
-                // 3) Message referencing that block, always shown.
                 var msg = new DDSSaveClasses.DDSMessageSave();
                 msg.name = messageKey; msg.id = messageKey;
                 msg.blocks = new Il2CppSystem.Collections.Generic.List<DDSSaveClasses.DDSBlockCondition>();
-                msg.AddBlock(blockKey);
-                try
+                for (int bi = 0; bi < blockBodies.Count; bi++)
                 {
-                    if (msg.blocks.Count > 0)
+                    string bkey = blockKey + "." + bi;
+                    int lineNo = 1;
+                    try { var st = Strings.stringTable; if (st != null && st.ContainsKey("dds.blocks")) lineNo = st["dds.blocks"].Count + 1; } catch { }
+                    Strings.LoadIntoDictionary("dds.blocks", lineNo, bkey, blockBodies[bi], "", 0, false, true);
+                    var block = new DDSSaveClasses.DDSBlockSave();
+                    block.name = bkey; block.id = bkey;
+                    try { block.replacements = new Il2CppSystem.Collections.Generic.List<DDSSaveClasses.DDSReplacement>(); } catch { }
+                    tb.allDDSBlocks[bkey] = block;
+                    msg.AddBlock(bkey);
+                    try
                     {
-                        var c0 = msg.blocks[0];
-                        c0.alwaysDisplay = true; c0.group = 0;
-                        try { c0.useTraits = false; } catch { }
-                        try { c0.traits = new Il2CppSystem.Collections.Generic.List<string>(); } catch { }
+                        var c = msg.blocks[bi];
+                        c.alwaysDisplay = true; c.group = 0;
+                        try { c.useTraits = false; } catch { }
+                        try { c.traits = new Il2CppSystem.Collections.Generic.List<string>(); } catch { }
                     }
+                    catch { }
                 }
-                catch { }
                 tb.allDDSMessages[messageKey] = msg;
 
                 // 4) Document tree pointing at that message.
                 var tree = new DDSSaveClasses.DDSTreeSave();
                 tree.name = treeId; tree.id = treeId;
-                tree.treeType = DDSSaveClasses.TreeType.document;
+                tree.treeType = asVmail ? DDSSaveClasses.TreeType.vmail : DDSSaveClasses.TreeType.document;
                 tree.messages = new Il2CppSystem.Collections.Generic.List<DDSSaveClasses.DDSMessageSettings>();
                 tree.messageRef = new Il2CppSystem.Collections.Generic.Dictionary<string, DDSSaveClasses.DDSMessageSettings>();
                 try { tree.document = new DDSSaveClasses.DDSDocument(); } catch { }
                 string inst = tree.AddMessage(messageKey);
                 tree.startingMessage = inst;
+
+                // A vmail tree needs the vmail structure the game's delivery walk + inbox renderer expect:
+                // TriggerPoint.vmail (a document-triggerPoint tree delivers 0 messages), non-null participant
+                // definitions (the renderer reads them — a null participant is what blanked/locked the app),
+                // and a repeat interval. treeChance stays 0 so the auto-vmail generator never picks our tree.
+                if (asVmail)
+                {
+                    try { tree.triggerPoint = DDSSaveClasses.TriggerPoint.vmail; } catch { }
+                    try { tree.repeat = DDSSaveClasses.RepeatSetting.sixHours; } catch { }
+                    // The inbox list row's From:/To: subtitle renders for a real vmail tree but not our from-
+                    // scratch one, even with matching thread data — so copy the tree-level fields + the real
+                    // participant objects from a known-good vmail tree (Work_Dinner) that we haven't been setting.
+                    DDSSaveClasses.DDSTreeSave tmpl = null;
+                    try { tmpl = tb.allDDSTrees[VmailTemplateTreeId]; } catch { }
+                    if (tmpl != null)
+                    {
+                        try { tree.participantA = tmpl.participantA; } catch { }
+                        try { tree.participantB = tmpl.participantB; } catch { }
+                        try { tree.participantC = tmpl.participantC; } catch { }
+                        try { tree.participantD = tmpl.participantD; } catch { }
+                        try { tree.stopMovement = tmpl.stopMovement; } catch { }
+                        try { tree.ignoreGlobalRepeat = tmpl.ignoreGlobalRepeat; } catch { }
+                        try { tree.priority = tmpl.priority; } catch { }
+                        try { tree.newspaperCategory = tmpl.newspaperCategory; } catch { }
+                        try { tree.newspaperContext = tmpl.newspaperContext; } catch { }
+                        // treeChance stays 0 so the auto-vmail generator never picks our tree.
+                        MotivesPlugin.Log.LogInfo("[SODMotives] email: copied vmail tree-level fields + participants from Work_Dinner template.");
+                    }
+                    else
+                    {
+                        try { tree.participantA = MakeVmailParticipant(true); } catch { }
+                        try { tree.participantB = MakeVmailParticipant(true); } catch { }
+                        try { tree.participantC = MakeVmailParticipant(false); } catch { }
+                        try { tree.participantD = MakeVmailParticipant(false); } catch { }
+                        MotivesPlugin.Log.LogWarning("[SODMotives] email: Work_Dinner template not found; used generic participants.");
+                    }
+                }
 
                 // Layout: a freshly-added message defaults to fontSize 0 (renders huge and overflows).
                 // Copy the game's own document body layout (Probation_Notice): small typewriter font in a
@@ -759,12 +828,33 @@ namespace SODMotives
                         try { ms.font = font; } catch { }         // caller's font (typewriter for formal docs; the writer's own hand for the threat note)
                         try { ms.fontSize = fontSize; } catch { } // caller's size (default was 0 -> huge)
                         try { ms.isHandwriting = isHandwriting; } catch { }   // mark as handwriting so the game treats the sample as a handwriting lead
-                        try { ms.pos = new Vector2(1f, -15.5f); } catch { }
-                        try { ms.size = new Vector2(316f, 397f); } catch { }
-                        try { ms.lineSpace = 4f; } catch { }
+                        if (asVmail)
+                        {
+                            // Message runs participantA(from) -> participantB(to). (The inbox list From:/To:
+                            // subtitle does NOT render for a runtime-registered custom tree regardless of this —
+                            // it's gated on ParseDDSMessage handling of boot-loaded StreamingAssets trees; see
+                            // docs/v2.6-email-recon.md. The opened mail, print, and clickable links all work.)
+                            try { ms.saidBy = 0; } catch { }
+                            try { ms.saidTo = 1; } catch { }
+                            try { ms.pos = new Vector2(0f, -64f); } catch { }
+                            try { ms.size = new Vector2(320f, 300f); } catch { }
+                            try { ms.lineSpace = 16f; } catch { }
+                            try { ms.col = new Color(0f, 0f, 0f, 1f); } catch { }
+                            try { ms.usePages = false; } catch { }
+                        }
+                        else
+                        {
+                            try { ms.pos = new Vector2(1f, -15.5f); } catch { }
+                            try { ms.size = new Vector2(316f, 397f); } catch { }
+                            try { ms.lineSpace = 4f; } catch { }
+                            try { ms.usePages = true; } catch { }   // paginate long bodies instead of overflowing
+                        }
                         try { ms.alignH = 0; } catch { }
                         try { ms.alignV = 0; } catch { }
-                        try { ms.usePages = true; } catch { }   // paginate long bodies instead of overflowing
+                        // The game builds messageRef (instanceID -> settings) when loading a tree from JSON;
+                        // our runtime AddMessage leaves it empty, so the vmail delivery walk can't resolve the
+                        // starting message. Populate it so delivery + render can look the message up by id.
+                        try { if (tree.messageRef != null && !string.IsNullOrEmpty(inst)) tree.messageRef[inst] = ms; } catch { }
                     }
                 }
                 catch { }
@@ -772,7 +862,10 @@ namespace SODMotives
                 {
                     if (tree.document != null)
                     {
-                        try { tree.document.background = "CrumpledPaper"; } catch { }
+                        // vmail renders in the messaging app's own text box (no paper page), so drop the
+                        // CrumpledPaper background and use fill (matches the game's own vmail trees).
+                        try { tree.document.background = asVmail ? "" : "CrumpledPaper"; } catch { }
+                        try { if (asVmail) tree.document.fill = (UnityEngine.UI.Image.Type)1; } catch { }
                         try { tree.document.size = new Vector2(342f, 482f); } catch { }
                     }
                 }
@@ -860,6 +953,126 @@ namespace SODMotives
             string treeId = RegisterCustomDocTree(sb.ToString(), fixedTreeId, hwFont, 30f, true);
             if (treeId != null) MotivesPlugin.Log.LogInfo($"[SODMotives] clue: built feud threat tree '{treeId}'.");
             return treeId;
+        }
+
+        // ---- EMAIL (vmail) clue path (V2.6) ----
+        // Build a vmail body tree the same way as a document, but as TreeType.vmail so it renders in the
+        // messaging app's inbox. Body text + clickable <link> names go through the same Strings pipeline.
+        private static string BuildEmailBody(string body, string fixedTreeId = null)
+            => RegisterCustomDocTree(body, fixedTreeId, "Halogen", 22f, false, asVmail: true);
+
+        // Inject an email into the participants' inboxes via the game's own factory (Toolbox.NewVmailThread),
+        // which wires the thread, resolves saidBy/saidTo -> from/to, and files it under each participant's
+        // inbox + GameplayController.messageThreads. `treeId` must be a TreeType.vmail tree (BuildEmailBody).
+        // The thread persists NATIVELY (StateSaveData.messageThreads) — only the custom DDS tree it points at
+        // is runtime-only and must be re-registered on reload. Returns the new thread's id, or -1 on failure.
+        private static bool ThreadInList(Il2CppSystem.Collections.Generic.List<StateSaveData.MessageThreadSave> list, int tid)
+        {
+            try { if (list == null) return false; for (int i = 0; i < list.Count; i++) { var e = list[i]; if (e != null && e.threadID == tid) return true; } } catch { }
+            return false;
+        }
+        private static int InjectEmail(Human from, Human to, string treeId)
+        {
+            try
+            {
+                if (from == null || to == null || string.IsNullOrEmpty(treeId)) return -1;
+                var tb = Toolbox.Instance;
+                if (tb == null) { MotivesPlugin.Log.LogWarning("[SODMotives] email: Toolbox not ready."); return -1; }
+                // Timestamp a day in the past so the mail reads as already-received, not future-dated.
+                float t = 0f;
+                try { var s = SessionData.Instance; if (s != null) t = s.gameTime - 24f; } catch { }
+                var cc = new Il2CppSystem.Collections.Generic.List<Human>();
+                // dataSource=sender, dataSourceID=-1 — matches vanilla vmail threads (Work_Dinner is ds=sender/-1).
+                var thread = tb.NewVmailThread(from, to, null, null, cc, treeId, t, 999, StateSaveData.CustomDataSource.sender, -1);
+                if (thread == null) { MotivesPlugin.Log.LogWarning("[SODMotives] email: NewVmailThread returned null."); return -1; }
+                int tid = -1; try { tid = thread.threadID; } catch { }
+
+                // NewVmailThread delivers the message + files the thread into the participants' inboxes on
+                // creation (verified). The guarded blocks below are safety nets for any future tree that fails
+                // to deliver — all no-ops on the normal path. Hand-populating with a raw instance id is avoided
+                // unless nothing was delivered (a bare thread would otherwise crash the inbox renderer).
+                try
+                {
+                    int mcNow = -1; try { mcNow = thread.messages != null ? thread.messages.Count : -1; } catch { }
+                    if (mcNow <= 0) { try { tb.ProgressVmailThread(thread, 999); } catch (Exception pe) { MotivesPlugin.Log.LogWarning($"[SODMotives] email: ProgressVmailThread: {pe.Message}"); } }
+                    mcNow = -1; try { mcNow = thread.messages != null ? thread.messages.Count : -1; } catch { }
+                    if (mcNow <= 0)
+                    {
+                        string startInst = null;
+                        try { var tr = tb.allDDSTrees[treeId]; if (tr != null) startInst = tr.startingMessage; } catch { }
+                        if (!string.IsNullOrEmpty(startInst))
+                        {
+                            if (thread.messages == null) thread.messages = new Il2CppSystem.Collections.Generic.List<string>();
+                            if (thread.senders == null) thread.senders = new Il2CppSystem.Collections.Generic.List<int>();
+                            if (thread.recievers == null) thread.recievers = new Il2CppSystem.Collections.Generic.List<int>();
+                            if (thread.timestamps == null) thread.timestamps = new Il2CppSystem.Collections.Generic.List<float>();
+                            thread.messages.Add(startInst); thread.senders.Add(from.humanID); thread.recievers.Add(to.humanID); thread.timestamps.Add(t);
+                            MotivesPlugin.Log.LogInfo("[SODMotives] email: delivery empty; hand-populated one message (fallback).");
+                        }
+                    }
+                    // Ensure inbox membership + central-dict registration (guarded so we never dupe).
+                    var tf = to.messageThreadFeatures; if (tf != null && !ThreadInList(tf, tid)) tf.Add(thread);
+                    var fs = from.messageThreadsStarted; if (fs != null && !ThreadInList(fs, tid)) fs.Add(thread);
+                    var gc = GameplayController.Instance; if (gc != null && gc.messageThreads != null && !gc.messageThreads.ContainsKey(tid)) gc.messageThreads[tid] = thread;
+                }
+                catch (Exception fe) { MotivesPlugin.Log.LogWarning($"[SODMotives] email: delivery/filing fallback: {fe.Message}"); }
+
+                MotivesPlugin.Log.LogInfo($"[SODMotives] email: injected vmail thread id={tid} from={MotivesPlugin.Name(from)} to={MotivesPlugin.Name(to)}.");
+                return tid;
+            }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] email: InjectEmail failed: {e.Message}"); return -1; }
+        }
+
+        // DEBUG (F3): inject a test EMAIL between two live, housed citizens so vmail rendering + inbox access +
+        // clickable citizen links can be verified without waiting for a murder. Logs whose home computer to
+        // read it on. This is the first-increment de-risk for the whole email feature (see docs/v2.6-email-recon.md).
+        internal static bool SpawnTestEmail()
+        {
+            try
+            {
+                var dir = CityData.Instance != null ? CityData.Instance.citizenDirectory : null;
+                if (dir == null || dir.Count < 3) { MotivesPlugin.Log.LogWarning("[SODMotives][F3] no citizens yet."); return false; }
+
+                Human from = null, to = null;
+                var others = new List<Human>();
+                for (int i = 0; i < dir.Count; i++)
+                {
+                    var c = dir[i]; if (c == null) continue;
+                    Human h = null; try { h = c.TryCast<Human>(); } catch { }
+                    if (h == null) continue;
+                    try { if (h.isDead) continue; } catch { }
+                    NewAddress home = null; try { home = h.home; } catch { }
+                    if (home == null || home.building == null) continue;   // needs a home computer to read on
+                    if (from == null) { from = h; continue; }
+                    if (to == null) { to = h; continue; }
+                    if (others.Count < 3) others.Add(h);
+                }
+                if (from == null || to == null) { MotivesPlugin.Log.LogWarning("[SODMotives][F3] need two housed citizens."); return false; }
+
+                int linked = 0;
+                var sb = new System.Text.StringBuilder();
+                // Realistic MULTI-LINE body: first line becomes the clean list preview/subject (block0), the rest
+                // is the full body (block1) with clickable names — verifies real content + the From:/To: caption.
+                sb.Append("Motive mailer test\n\n");
+                sb.Append("This names a few people to confirm clickable links render in the inbox:\n\n");
+                for (int i = 0; i < others.Count; i++) { sb.Append("- "); sb.Append(CitizenLink(others[i], ref linked)); sb.Append('\n'); }
+                sb.Append("\nRegards,\n");
+                sb.Append(CitizenLink(from, ref linked));
+
+                string treeId = BuildEmailBody(sb.ToString());
+                if (treeId == null) { MotivesPlugin.Log.LogWarning("[SODMotives][F3] vmail tree build failed."); return false; }
+
+                int tid = InjectEmail(from, to, treeId);
+                if (tid < 0) return false;
+
+                string fromHome = "?", toHome = "?";
+                try { if (from.home != null) fromHome = from.home.name; } catch { }
+                try { if (to.home != null) toHome = to.home.name; } catch { }
+                MotivesPlugin.Log.LogInfo($"[SODMotives][F3] test email in the inboxes of {MotivesPlugin.Name(from)} (@ {fromHome}) and {MotivesPlugin.Name(to)} (@ {toHome}); bodyLinks={linked}. Read it on either one's HOME COMPUTER (Messenger/vmail app).");
+                try { DebugTools.AddClueHud($"test email -> {MotivesPlugin.Name(to)} @ {toHome}"); } catch { }
+                return true;
+            }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][F3] error: {e}"); return false; }
         }
 
         // Save/reload replay (Persistence): the note OBJECT survived (its int id, its `dds` tree-id override,

@@ -26,8 +26,14 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
   - **Not done (not needed):** a line-by-line rewrite of the individual variant strings — they already
     read naturally. Revisit only if playtesting shows a specific phrasing grating.
 
-- [ ] **A2 — Non-killer-knower guarantee** (M) *(robustness; open task-chip since v2.3.1; A4-playtest
-  findings + decision recorded 2026-09-16 — familiarity symmetry considered and DECLINED)*
+- [~] **A2 — Non-killer-knower guarantee** — **DEFERRED 2026-09-16 (build-if-needed).** Lowering
+  `NameKnownThreshold` 0.35 → 0.2 (see below) makes independent name-knowers the norm, so the "killer is
+  the only lead" case shrinks to a rare, isolated-victim edge case. **Detection:** on a Feud/Debt case,
+  F9's **VICTIM KNOWERS** list is exactly "non-participant NPCs who can name the victim + know a motive
+  event" — if it's ever EMPTY, that's a leadless case. Only then build the fix (branch 2 below). The
+  playtested feud case already produced a real independent knower who named the killer, so this is not
+  expected to be common.
+  *(robustness; open task-chip since v2.3.1; familiarity symmetry considered and DECLINED)*
   **Original scope:** a socially-isolated lone Debt/Feud/RentArrears victim can leave the **killer as
   the only person who both knows the victim's name AND the motive event** → no honest independent lead.
   Guarantee an independent name-knower at event materialization (or selection). Anchor: the knower
@@ -72,6 +78,15 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
     case rather than inventing one.
   - Optional: a temporary `ComposeLines` diagnostic (log *why* a line was suppressed — gate-1 vs gate-2
     vs no-event) to confirm behavior per-interview; strip in Phase D.
+  - **`NameKnownThreshold` 0.35 → 0.2 (2026-09-16, live cfg + code default, built, committed).** Widens
+    gossip/knower coverage (more interactions). **Vanilla-recognition recon (Cpp2IL):** the "do you know
+    this person?" recognition path (`PhotoSelectButtonController.OnLeftClick`) gates purely on
+    **acquaintance-edge EXISTENCE** (`Human.FindAcquaintanceExists`) with **NO `known` threshold** (the
+    type has zero `Acquaintance.known` references); the dialog `success` flag is only the willingness/
+    bribe roll, computed before the subject is even picked. Our `KnowsName` = `FindAcquaintanceExists &&
+    known ≥ threshold`, so it is ALWAYS a subset of vanilla recognition → **lowering the threshold can
+    never contradict a vanilla "I don't know them"; it's purely a taste dial** ("how faint an
+    acquaintance may gossip"). Safe to go lower (≈0.10 ≈ vanilla) for even more chatter. Tune in Phase C.
 
 - [ ] **A3 — In-game menu config** (L) *(new work package; needs recon first)*
   Today config is BepInEx `.cfg` only (`Config.Bind` in `Plugin.cs`). The project references **no**
@@ -215,7 +230,15 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
 - 2026-09-16 — **A1 + A5 DONE** (builds clean, NOT yet playtested): A5 collapses a subject's feuds into
   one bubble (`FeudLine` in `Interrogation.ComposeLines`); A1 adds `DedupeOpeners` (repeated "Word is …"
   → conversational follow-on). Finding: gossip strings had NO em-dashes (only comments did), so the
-  writing pass was lighter than expected.
+  writing pass was lighter than expected. A1 wording later revised to the user's exact copy (widened
+  framings) + committed (`ffc21e1`).
+- 2026-09-16 — **`NameKnownThreshold` 0.35 → 0.2** (live cfg + code default + committed). Cpp2IL recon:
+  vanilla "do you know this person" recognizes by acquaintance-edge EXISTENCE, no `known` threshold — so
+  our threshold is a subset of vanilla, no contradiction risk, purely a taste dial. See A2 entry.
+- 2026-09-16 — **A2 DEFERRED (build-if-needed):** 0.2 makes independent knowers the norm; only build the
+  `MarkKnown` rescue if a Feud/Debt case ever shows an empty F9 VICTIM KNOWERS list.
+- 2026-09-16 — **NEXT: A3 (in-game menu config)** — recon-first; see the A3 entry + the /clear resume
+  prompt handed to the user.
 - 2026-09-16 — **A2 decision:** accept clue-led eviction; do NOT modify acquaintance `known` weights
   (killer-silence tell + thin eviction suspect interrogation accepted). Original independent-knower
   guarantee stays in scope but must be met without weight edits (`MarkKnown` an existing name-knower /

@@ -18,6 +18,7 @@ namespace SODMotives
         internal static bool UseMultiPageList = false;     // false = reliable DDS note (names in title + connections tab); true = experimental multipage (placeable multipage items only dump profile tiles — no readable clue, no connections tab)
         internal static float FingerprintChance = 0.7f;   // chance a note carries its author's prints
         internal static float WorkplaceClueShare = 0.5f;  // chance a given clue is placed at the workplace vs home
+        internal static float EmailClueShare = 0.5f;       // chance an eligible clue (Affair/Layoffs/Eviction) arrives as an EMAIL instead of a physical note (never both). Promotion is exempt — it always uses BOTH channels (physical rival threats + an email letter).
 
         private static readonly System.Random _rng = new System.Random();
 
@@ -126,9 +127,6 @@ namespace SODMotives
             ("e6cfbb79-cc0b-4848-b699-280cbe261c3e", "Cheaters_Love_Poem"),
             ("7b3abe1a-30dd-41b1-b0ec-8fe6e739d2a2", "Flower_Note_Affair"),
         };
-        // Workplace DDS document trees (verified treeType==document, loose, writer/receiver tokens).
-        private const string PromotionLetterTreeId = "e8ad7cb2-0671-438e-93de-78af4e405307"; // Employment Contract
-        private const string PromotionLetterTreeName = "Employment Contract";
         // Layoffs render EVERY notice as Probation_Notice, but each gets its OWN tree id (the real
         // tree + runtime clones) so no two same-sender notices share a (writer, tree) pair — the pair
         // the case board collapses recipient-links on. Clones reuse Probation_Notice's messages, so
@@ -152,8 +150,6 @@ namespace SODMotives
         // murders whose notes still lie in the world — so every layoff notice gets a GLOBALLY-UNIQUE
         // clone id. Monotonic, never reset within a process (allDDSTrees is rebuilt on restart).
         private static int _cloneSeq;
-        private const string ThreatTreeId = "0b32451b-a6d3-40a3-ba1d-5b645e251bdd";          // Dodgy_NoteRat (static threat)
-        private const string ThreatTreeName = "Dodgy_NoteRat";
 
         // ---- preset selection: a clean, placeable, single-page readable note ----
         // The physical placement is decided by the PRESET, not by any where-hint: retail/
@@ -327,6 +323,14 @@ namespace SODMotives
         private static int InjectAffair(Human victim, SocialEvent ev, List<string> recList, int placed)
         {
             if (placed >= MaxClues || ev.a == null || ev.b == null) return 0;
+            // Physical-OR-email fork: the love letter A->B can instead arrive as an email in the lovers'
+            // inboxes (never both). Affair identity is redundant (gossip also names the lovers), so this is
+            // low-stakes; a failed email delivery falls back to the physical note below.
+            if (RollEmail())
+            {
+                int lb; string treeId = BuildAffairEmailTree(ev.a, ev.b, out lb);
+                if (treeId != null && InjectEmailClue(ev.a, ev.b, treeId, "affair", "affair love-letter email", lb, null, recList) > 0) return 1;
+            }
             var pick = InfidelityTrees[_rng.Next(InfidelityTrees.Length)];
             var note = PlaceClue(victim, ev.a, ev.b, pick.id);
             if (note == null) { LogFail("affair", ev.a, ev.b); return 0; }
@@ -334,27 +338,35 @@ namespace SODMotives
             return 1;
         }
 
-        // Promotion: a promotion letter (boss -> promotee) + one threat note per passed-over rival
-        // (rival -> victim, carrying the rival's own prints).
+        // Promotion: BOTH channels, always (not a coin flip) — physical rival threats + an email promotion
+        // letter. (1) One anonymous, HANDWRITTEN threat per passed-over rival, addressed TO the victim with
+        // the FROM hidden, carrying the rival's own handwriting + print (the feud/debt anon-note engine) —
+        // this replaces the old vanilla Dodgy_NoteRat tree, which rendered generic "rat" text and drew a
+        // stray To (to a coworker, not the victim) + a visible From. (2) The promotion LETTER as an EMAIL
+        // boss -> promotee, so it lands in BOTH the boss's and the promotee's inboxes — found regardless of
+        // which of them is the killer or the victim.
         private static int InjectPromotion(Human victim, SocialEvent ev, List<string> recList, int placed)
         {
             int n = 0;
-            // Threat notes (rival -> victim), KILLER FIRST so a placement miss can't drop the killer's.
+            // The promotion LETTER as an EMAIL boss -> promotee, FIRST and unconditionally (not gated by
+            // MaxClues): it's the guaranteed both-inboxes identity clue, so the rival threats below must never
+            // starve it out of the per-case budget. It's one vmail (no physical footprint), so it can't flood
+            // the scene. It lands in BOTH inboxes, so it's found whether the killer/victim is boss or promotee.
+            if (ev.a != null && ev.b != null)
+            {
+                int lb; string treeId = BuildPromotionEmailTree(ev.b, ev.a, out lb);   // boss -> promotee
+                if (treeId != null) n += InjectEmailClue(ev.b, ev.a, treeId, "promotion", "promotion letter email", lb, null, recList);
+                else LogFail("promotion letter email", ev.b, ev.a);
+            }
+            // Anonymous rival threats (rival -> victim). KILLER FIRST so a placement miss can't drop the killer's.
             var rivals = KillerFirst(ev.group);
             for (int i = 0; i < rivals.Count && placed + n < MaxClues; i++)
             {
                 Human rival = rivals[i];
                 if (rival == null) continue;
-                var note = PlaceClue(victim, rival, victim, ThreatTreeId);
-                if (note != null) { Finish(note, victim, rival, victim, ThreatTreeId, ThreatTreeName, $"threat from {MotivesPlugin.Name(rival)}", recList); n++; }
-                else LogFail("threat", rival, victim);
-            }
-            // Promotion letter (context) after the threats: boss -> promotee.
-            if (placed + n < MaxClues && ev.a != null && ev.b != null)
-            {
-                var note = PlaceClue(victim, ev.b, ev.a, PromotionLetterTreeId);
-                if (note != null) { Finish(note, victim, ev.b, ev.a, PromotionLetterTreeId, PromotionLetterTreeName, $"promotion letter for {MotivesPlugin.Name(ev.a)}", recList, unsentDoc: true); n++; }
-                else LogFail("promotion letter", ev.b, ev.a);
+                int lb; string treeId = BuildPromotionThreatDocTree(rival, victim, out lb);
+                if (treeId == null) { LogFail("promotion threat", rival, victim); continue; }
+                n += InjectAnonThreatNote(victim, rival, victim, treeId, lb, "promothreat", recList);
             }
             return n;
         }
@@ -375,6 +387,17 @@ namespace SODMotives
                 { var e = pool[i]; if (e.evt == ev && e.suspect != null && seen.Add(e.suspect.humanID)) uniq.Add(e.suspect); }
             if (uniq.Count == 0)
                 for (int i = 0; i < ev.group.Count; i++) { var h = ev.group[i]; if (h != null && seen.Add(h.humanID)) uniq.Add(h); }
+
+            // Physical-OR-email fork: the confidential redevelopment plan can instead arrive as an email
+            // (never both). The landlord IS the victim (eviction edges point every tenant at the landlord),
+            // so it's a self-draft the landlord kept — findable in the victim's own inbox. It names the
+            // cleared PROPERTY ADDRESSES either way (the trail to the tenant suspects). Failed delivery
+            // falls back to the physical plan below.
+            if (RollEmail())
+            {
+                int lbE; string treeIdE = BuildEvictionDocTree(landlord, uniq, out lbE, null, true);
+                if (treeIdE != null && InjectEmailClue(landlord, landlord, treeIdE, "eviction", "redevelopment plan email", lbE, uniq, recList) > 0) return 1;
+            }
 
             // Always list the tenants: the game exposes NO landlord->tenant trail the player can follow
             // (no per-tenancy agreements in the landlord's filebox/computer, no owner->buildings lookup,
@@ -627,6 +650,17 @@ namespace SODMotives
                 for (int i = 0; i < ev.group.Count; i++) { var h = ev.group[i]; if (h != null && seen.Add(h.humanID)) uniq.Add(h); }
             if (uniq.Count == 0) return 0;
 
+            // Physical-OR-email fork: the redundancy list can instead arrive as an email (never both). The
+            // boss IS the victim (layoffs edges point every laid-off employee at the boss), so it's a
+            // confidential self-draft the boss kept — findable in the victim's own inbox. It names all the
+            // laid-off staff either way (the suspect identities the case relies on). Failed delivery falls
+            // back to the physical note below.
+            if (RollEmail())
+            {
+                int lb; string treeId = BuildRedundancyDocTree(uniq, boss, out lb, null, true);
+                if (treeId != null && InjectEmailClue(boss, boss, treeId, "layoffs", "redundancy list email", lb, uniq, recList) > 0) return 1;
+            }
+
             // PRIMARY: a custom DDS document whose BODY is a readable list of the laid-off staff as
             // clickable citizen links (built by registering our own tree/message/block + text). The
             // multipage route is a dead end (placeable multipage items just dump tiles); the DDS
@@ -690,6 +724,11 @@ namespace SODMotives
         }
 
         private static NewAddress SafeHome(Human h) { try { return h != null ? h.home : null; } catch { return null; } }
+
+        // Deterministic variant pick (stable per seed; never negative-indexes) — mirrors SocialEvent.Pick.
+        // Used for clue-body variety where the SAME seed must reproduce the SAME text on save/reload rebuild.
+        private static string PickVariant(int seed, params string[] variants)
+            => variants[((seed % variants.Length) + variants.Length) % variants.Length];
 
         // Register a custom DDS *document* tree whose single always-display block renders `body`
         // (arbitrary readable text; TMP <link> markup preserved). Registers block/message/tree into
@@ -880,7 +919,7 @@ namespace SODMotives
         // Layoffs: a boss-authored redundancy list — heading + one clickable citizen link per laid-off
         // suspect, signed by the boss. (Body building split from tree registration in V2.3; the rendered
         // document is identical to before.)
-        private static string BuildRedundancyDocTree(List<Human> uniq, Human author, out int linked, string fixedTreeId = null)
+        private static string BuildRedundancyDocTree(List<Human> uniq, Human author, out int linked, string fixedTreeId = null, bool asVmail = false)
         {
             linked = 0;
             var sb = new System.Text.StringBuilder();
@@ -889,8 +928,9 @@ namespace SODMotives
             if (uniq != null)
                 for (int i = 0; i < uniq.Count; i++) { sb.Append("- "); sb.Append(CitizenLink(uniq[i], ref linked)); sb.Append('\n'); }
             if (author != null) { sb.Append("\n\nIssued by: "); sb.Append(CitizenLink(author, ref linked)); }
-            string treeId = RegisterCustomDocTree(sb.ToString(), fixedTreeId);
-            if (treeId != null) MotivesPlugin.Log.LogInfo($"[SODMotives] clue: built custom redundancy tree '{treeId}' ({(uniq != null ? uniq.Count : 0)} names, {linked} clickable).");
+            string body = sb.ToString();
+            string treeId = asVmail ? BuildEmailBody(body, fixedTreeId) : RegisterCustomDocTree(body, fixedTreeId);
+            if (treeId != null) MotivesPlugin.Log.LogInfo($"[SODMotives] clue: built custom redundancy {(asVmail ? "email" : "doc")} tree '{treeId}' ({(uniq != null ? uniq.Count : 0)} names, {linked} clickable).");
             return treeId;
         }
 
@@ -898,7 +938,7 @@ namespace SODMotives
         // cleared (each aggrieved tenant's unit) as clickable location links — the trail the player
         // follows to the buildings, then to the residents. Signed by the landlord. `tenants` supplies
         // the affected units (via each tenant's home).
-        private static string BuildEvictionDocTree(Human landlord, List<Human> tenants, out int linked, string fixedTreeId = null)
+        private static string BuildEvictionDocTree(Human landlord, List<Human> tenants, out int linked, string fixedTreeId = null, bool asVmail = false)
         {
             linked = 0;
             var sb = new System.Text.StringBuilder();
@@ -910,8 +950,9 @@ namespace SODMotives
                 for (int i = 0; i < tenants.Count; i++) { sb.Append("- "); sb.Append(AddressLink(tenants[i], ref linked)); sb.Append('\n'); }
             }
             if (landlord != null) { sb.Append("\n\nIssued by: "); sb.Append(CitizenLink(landlord, ref linked)); }
-            string treeId = RegisterCustomDocTree(sb.ToString(), fixedTreeId);
-            if (treeId != null) MotivesPlugin.Log.LogInfo($"[SODMotives] clue: built eviction plan tree '{treeId}' (addresses={(tenants != null ? tenants.Count : 0)}, {linked} clickable).");
+            string body = sb.ToString();
+            string treeId = asVmail ? BuildEmailBody(body, fixedTreeId) : RegisterCustomDocTree(body, fixedTreeId);
+            if (treeId != null) MotivesPlugin.Log.LogInfo($"[SODMotives] clue: built eviction plan {(asVmail ? "email" : "doc")} tree '{treeId}' (addresses={(tenants != null ? tenants.Count : 0)}, {linked} clickable).");
             return treeId;
         }
 
@@ -955,11 +996,93 @@ namespace SODMotives
             return treeId;
         }
 
+        // Promotion rival threat: an unsigned, HANDWRITTEN note from a passed-over rival to the person who
+        // got the promotion (or the boss who handed it out) — addressed TO the victim (clickable salutation),
+        // FROM hidden. The culprit is carried by the rival's OWN handwriting + fingerprint (the same anon-note
+        // engine as feud/debt). Each rival drops one; every one is identical in tone, so the killer reads no
+        // guiltier than a red herring. Promotion-flavoured body (not the generic feud line).
+        private static string BuildPromotionThreatDocTree(Human aggressor, Human addressee, out int linked, string fixedTreeId = null)
+        {
+            linked = 0;
+            var sb = new System.Text.StringBuilder();
+            if (addressee != null) sb.Append(CitizenLink(addressee, ref linked) + ",\n\n");
+            // Vary the body per rival so multiple threats in one promotion case don't read identically.
+            // Seeded by the aggressor's humanID (DETERMINISTIC) so the save/reload rebuild reproduces the
+            // SAME line for the same rival. Hostile, promotion-flavoured, no em-dashes (gossip-style tone).
+            int seed = 0; try { if (aggressor != null) seed = aggressor.humanID; } catch { }
+            sb.Append(PickVariant(seed,
+                "That promotion should have been mine. Enjoy it while it lasts. You'll regret taking what I earned.",
+                "You think you deserved that job? You took what was mine, and I won't forget it.",
+                "I was next in line and you know it. Don't get too comfortable in that new office.",
+                "Congratulations on the promotion. Shame it won't do you much good. Watch yourself.",
+                "You stepped over me to get that job. People who do that don't stay on top for long.",
+                "So you got the promotion. Make the most of it while you still can."));
+            string hwFont = "Pacific Beach Script Font SDF";
+            try { if (aggressor != null && aggressor.handwriting != null && aggressor.handwriting.fontAsset != null) { var fn = aggressor.handwriting.fontAsset.name; if (!string.IsNullOrEmpty(fn)) hwFont = fn; } } catch { }
+            string treeId = RegisterCustomDocTree(sb.ToString(), fixedTreeId, hwFont, 30f, true);
+            if (treeId != null) MotivesPlugin.Log.LogInfo($"[SODMotives] clue: built promotion threat tree '{treeId}'.");
+            return treeId;
+        }
+
         // ---- EMAIL (vmail) clue path (V2.6) ----
         // Build a vmail body tree the same way as a document, but as TreeType.vmail so it renders in the
         // messaging app's inbox. Body text + clickable <link> names go through the same Strings pipeline.
         private static string BuildEmailBody(string body, string fixedTreeId = null)
             => RegisterCustomDocTree(body, fixedTreeId, "Halogen", 22f, false, asVmail: true);
+
+        // Coin flip: should THIS eligible clue arrive as an email instead of a physical note?
+        private static bool RollEmail() => _rng.NextDouble() < EmailClueShare;
+
+        // Affair love letter (lover A -> lover B) as an email body. The physical affair clue reuses a
+        // vanilla Infidelity DOCUMENT tree (which we can't retarget to vmail), so the email version is a
+        // fresh custom body. Names both lovers as clickable links (identity is redundant — gossip also
+        // names them — so this is low-stakes). First line = a short subject (the inbox-list preview).
+        private static string BuildAffairEmailTree(Human from, Human to, out int linked, string fixedTreeId = null)
+        {
+            linked = 0;
+            var sb = new System.Text.StringBuilder();
+            sb.Append("Thinking of you\n\n");
+            if (to != null) sb.Append(CitizenLink(to, ref linked) + ",\n\n");
+            sb.Append("I can't stop thinking about you. Being apart like this is unbearable. Let's find a way to see each other soon, somewhere quiet where no one we know will see us.\n\n");
+            sb.Append("Always yours,\n");
+            if (from != null) sb.Append(CitizenLink(from, ref linked));
+            string treeId = BuildEmailBody(sb.ToString(), fixedTreeId);
+            if (treeId != null) MotivesPlugin.Log.LogInfo($"[SODMotives] clue: built affair email tree '{treeId}' ({linked} clickable).");
+            return treeId;
+        }
+
+        // Promotion letter (boss -> promotee) as an email body. Names the promotee (the identity the case
+        // relies on) + the boss as clickable links. First line = a short subject.
+        private static string BuildPromotionEmailTree(Human boss, Human promotee, out int linked, string fixedTreeId = null)
+        {
+            linked = 0;
+            var sb = new System.Text.StringBuilder();
+            sb.Append("Your promotion\n\n");
+            if (promotee != null) sb.Append(CitizenLink(promotee, ref linked) + ",\n\n");
+            sb.Append("I'm pleased to confirm your promotion. You've earned it, and I'm confident you'll rise to the new responsibilities. We'll announce it to the rest of the team shortly.\n\n");
+            sb.Append("Regards,\n");
+            if (boss != null) sb.Append(CitizenLink(boss, ref linked));
+            string treeId = BuildEmailBody(sb.ToString(), fixedTreeId);
+            if (treeId != null) MotivesPlugin.Log.LogInfo($"[SODMotives] clue: built promotion email tree '{treeId}' ({linked} clickable).");
+            return treeId;
+        }
+
+        // F3 test email body (also used by the reload rebuild so the F3 email is itself a persistence
+        // test harness): names a few citizens as clickable links, signed by `from`.
+        private static string TestEmailBody(Human from, List<Human> others, out int linked)
+        {
+            linked = 0;
+            var sb = new System.Text.StringBuilder();
+            // First line = the clean single-line inbox-list preview/subject; the rest is the body.
+            sb.Append("Motive mailer test\n\n");
+            sb.Append("This names a few people to confirm clickable links render in the inbox:\n\n");
+            if (others != null) for (int i = 0; i < others.Count; i++) { sb.Append("- "); sb.Append(CitizenLink(others[i], ref linked)); sb.Append('\n'); }
+            sb.Append("\nRegards,\n");
+            sb.Append(CitizenLink(from, ref linked));
+            return sb.ToString();
+        }
+        private static string BuildTestEmailTree(Human from, List<Human> others, out int linked, string fixedTreeId = null)
+            => BuildEmailBody(TestEmailBody(from, others, out linked), fixedTreeId);
 
         // Inject an email into the participants' inboxes via the game's own factory (Toolbox.NewVmailThread),
         // which wires the thread, resolves saidBy/saidTo -> from/to, and files it under each participant's
@@ -978,9 +1101,23 @@ namespace SODMotives
                 if (from == null || to == null || string.IsNullOrEmpty(treeId)) return -1;
                 var tb = Toolbox.Instance;
                 if (tb == null) { MotivesPlugin.Log.LogWarning("[SODMotives] email: Toolbox not ready."); return -1; }
-                // Timestamp a day in the past so the mail reads as already-received, not future-dated.
+                // Timestamp each mail a RANDOM span in the past so injected emails don't all share one
+                // timestamp (they read as separate, already-received messages, not a future-dated batch).
+                // 6..120 in-game hours back; clamp to >=0 (never before game start), and in the early game
+                // (when little time has elapsed) spread within the elapsed time instead.
                 float t = 0f;
-                try { var s = SessionData.Instance; if (s != null) t = s.gameTime - 24f; } catch { }
+                try
+                {
+                    var s = SessionData.Instance;
+                    if (s != null)
+                    {
+                        float gt = s.gameTime;
+                        float back = 6f + (float)_rng.NextDouble() * 114f;
+                        t = gt - back;
+                        if (t < 0f) t = gt * (float)_rng.NextDouble();
+                    }
+                }
+                catch { }
                 var cc = new Il2CppSystem.Collections.Generic.List<Human>();
                 // dataSource=sender, dataSourceID=-1 — matches vanilla vmail threads (Work_Dinner is ds=sender/-1).
                 var thread = tb.NewVmailThread(from, to, null, null, cc, treeId, t, 999, StateSaveData.CustomDataSource.sender, -1);
@@ -1023,6 +1160,117 @@ namespace SODMotives
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] email: InjectEmail failed: {e.Message}"); return -1; }
         }
 
+        // Shared email-clue injection: deliver the vmail, record it for reload persistence, and log/HUD it.
+        // Returns 1 if the email was DELIVERED (so the caller must NOT also place a physical copy), else 0
+        // (so the caller can fall back to a physical note). `namedCitizens` are the people/addresses the
+        // body names (layoffs list / eviction tenants) — persisted so the body can be rebuilt on reload;
+        // empty for affair/promotion (their bodies name only `from`/`to`).
+        private static int InjectEmailClue(Human from, Human to, string treeId, string kind, string label, int linkedBody, List<Human> namedCitizens, List<string> recList)
+        {
+            int tid = InjectEmail(from, to, treeId);
+            if (tid < 0) { LogFail(label, from, to); return 0; }
+
+            // Persist so the runtime-only custom vmail tree can be re-registered on reload (the thread
+            // itself round-trips natively; only the DDS tree its treeID points at is rebuilt-at-boot).
+            try
+            {
+                var pids = new List<int>();
+                if (namedCitizens != null) for (int i = 0; i < namedCitizens.Count; i++) if (namedCitizens[i] != null) pids.Add(namedCitizens[i].humanID);
+                Persistence.RecordEmail(treeId, kind, from != null ? from.humanID : -1, to != null ? to.humanID : -1, pids);
+            }
+            catch (Exception pe) { MotivesPlugin.Log.LogWarning($"[SODMotives] persist: record email ({kind}): {pe.Message}"); }
+
+            string toHome = "?";
+            try { if (to != null && to.home != null) toHome = to.home.name; } catch { }
+            bool self = from != null && to != null && from.humanID == to.humanID;
+            string rec = self
+                ? $"{label} [inbox: {MotivesPlugin.Name(to)} @ {toHome} (self-draft)] threadId={tid} bodyLinks={linkedBody}"
+                : $"{label} [inbox: {MotivesPlugin.Name(to)} @ {toHome}] threadId={tid} from={MotivesPlugin.Name(from)} bodyLinks={linkedBody}";
+            recList.Add(rec);
+            MotivesPlugin.Log.LogInfo($"[SODMotives] clue: INJECTED {rec} (read on {MotivesPlugin.Name(to)}'s home computer{(self ? "" : " or " + MotivesPlugin.Name(from) + "'s")})");
+            try { DebugTools.AddClueHud($"{label} — inbox {MotivesPlugin.Name(to)} @ {toHome}"); } catch { }
+            return 1;
+        }
+
+        // Save/reload replay (Persistence, V2.6): a vmail thread persists natively (StateSaveData.messageThreads),
+        // but the custom DDS tree its treeID points at is runtime-only and gone after a reload — so the body would
+        // render blank. Re-register the tree under the SAME treeID (rebuilding the same body), then RE-POINT the
+        // persisted thread's message-instance id at the freshly-minted starting message. The resync is ESSENTIAL,
+        // not belt-and-braces: VMailApp.OnSetup renders each row via Human.ParseDDSMessage(thread.messages[i], ...)
+        // (Cpp2IL-confirmed), so it resolves the body from the THREAD's stored message-instance id — and that id
+        // (stored by NewVmailThread = the tree's pre-reload startingMessage) no longer exists after the rebuild.
+        // Places nothing and never re-delivers (the thread already exists in the save).
+        // Returns: >0 = threads re-pointed; 0 = tree registered but the thread wasn't restored yet (retry the
+        // resync via ResyncEmailThread); -1 = terminal build failure (do NOT retry — it can never resync).
+        internal static int RebuildEmailTree(string treeId, string kind, Human from, Human to, List<Human> citizens)
+        {
+            if (string.IsNullOrEmpty(treeId)) return -1;
+            int linked = 0;
+            string built =
+                kind == "layoffs"   ? BuildRedundancyDocTree(citizens, from, out linked, treeId, true) :
+                kind == "eviction"  ? BuildEvictionDocTree(from, citizens, out linked, treeId, true) :
+                kind == "affair"    ? BuildAffairEmailTree(from, to, out linked, treeId) :
+                kind == "promotion" ? BuildPromotionEmailTree(from, to, out linked, treeId) :
+                kind == "testmail"  ? BuildTestEmailTree(from, citizens, out linked, treeId) :
+                                      null;
+            if (built == null) { MotivesPlugin.Log.LogWarning($"[SODMotives] persist: rebuild email tree '{treeId}' kind={kind} FAILED (terminal)."); return -1; }
+
+            string inst = TreeStartInst(treeId);
+            int synced = ResyncThreadsForTree(treeId, inst, from, to);
+            MotivesPlugin.Log.LogInfo($"[SODMotives] persist: re-registered email tree '{treeId}' kind={kind} bodyLinks={linked} startInst={(inst ?? "?")} threadsSynced={synced}.");
+            return synced;
+        }
+
+        // Resync-only retry entry point (the tree is already registered): re-read the live tree's starting
+        // message instance and re-point any persisted thread on this treeId at it. Used when the thread
+        // wasn't restored yet on the first RebuildEmailTree pass. Returns threads synced.
+        internal static int ResyncEmailThread(string treeId)
+            => ResyncThreadsForTree(treeId, TreeStartInst(treeId), null, null);
+
+        private static string TreeStartInst(string treeId)
+        {
+            try { var tr = Toolbox.Instance != null ? Toolbox.Instance.allDDSTrees[treeId] : null; if (tr != null) return tr.startingMessage; }
+            catch { }
+            return null;
+        }
+
+        // Re-point every persisted thread on `treeId` at the freshly-registered tree's starting message
+        // instance. Only messages[0] (the stale instance ref) is overwritten; senders/recievers/timestamps
+        // are left as saved (still correct) and only backfilled if empty.
+        private static int ResyncThreadsForTree(string treeId, string inst, Human from, Human to)
+        {
+            if (string.IsNullOrEmpty(treeId) || string.IsNullOrEmpty(inst)) return 0;
+            int n = 0;
+            try
+            {
+                var gc = GameplayController.Instance;
+                if (gc == null || gc.messageThreads == null) return 0;
+                var en = gc.messageThreads.GetEnumerator();
+                while (en.MoveNext())
+                {
+                    var th = en.Current.Value;
+                    if (th == null) continue;
+                    string tt = null; try { tt = th.treeID; } catch { }
+                    if (tt != treeId) continue;
+                    try
+                    {
+                        if (th.messages == null) th.messages = new Il2CppSystem.Collections.Generic.List<string>();
+                        if (th.messages.Count == 0) th.messages.Add(inst); else th.messages[0] = inst;
+                        if (th.senders == null) th.senders = new Il2CppSystem.Collections.Generic.List<int>();
+                        if (th.senders.Count == 0) th.senders.Add(from != null ? from.humanID : -1);
+                        if (th.recievers == null) th.recievers = new Il2CppSystem.Collections.Generic.List<int>();
+                        if (th.recievers.Count == 0) th.recievers.Add(to != null ? to.humanID : -1);
+                        if (th.timestamps == null) th.timestamps = new Il2CppSystem.Collections.Generic.List<float>();
+                        if (th.timestamps.Count == 0) th.timestamps.Add(0f);
+                        n++;
+                    }
+                    catch (Exception te) { MotivesPlugin.Log.LogWarning($"[SODMotives] persist: resync thread on '{treeId}': {te.Message}"); }
+                }
+            }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] persist: ResyncThreadsForTree('{treeId}'): {e.Message}"); }
+            return n;
+        }
+
         // DEBUG (F3): inject a test EMAIL between two live, housed citizens so vmail rendering + inbox access +
         // clickable citizen links can be verified without waiting for a murder. Logs whose home computer to
         // read it on. This is the first-increment de-risk for the whole email feature (see docs/v2.6-email-recon.md).
@@ -1050,20 +1298,23 @@ namespace SODMotives
                 if (from == null || to == null) { MotivesPlugin.Log.LogWarning("[SODMotives][F3] need two housed citizens."); return false; }
 
                 int linked = 0;
-                var sb = new System.Text.StringBuilder();
                 // Realistic MULTI-LINE body: first line becomes the clean list preview/subject (block0), the rest
                 // is the full body (block1) with clickable names — verifies real content + the From:/To: caption.
-                sb.Append("Motive mailer test\n\n");
-                sb.Append("This names a few people to confirm clickable links render in the inbox:\n\n");
-                for (int i = 0; i < others.Count; i++) { sb.Append("- "); sb.Append(CitizenLink(others[i], ref linked)); sb.Append('\n'); }
-                sb.Append("\nRegards,\n");
-                sb.Append(CitizenLink(from, ref linked));
-
-                string treeId = BuildEmailBody(sb.ToString());
+                string treeId = BuildTestEmailTree(from, others, out linked);
                 if (treeId == null) { MotivesPlugin.Log.LogWarning("[SODMotives][F3] vmail tree build failed."); return false; }
 
                 int tid = InjectEmail(from, to, treeId);
                 if (tid < 0) return false;
+
+                // Persist so a save/reload re-registers this test email's tree — F3 doubles as the email
+                // persistence test harness (like F4 for physical notes).
+                try
+                {
+                    var pids = new List<int>();
+                    for (int i = 0; i < others.Count; i++) if (others[i] != null) pids.Add(others[i].humanID);
+                    Persistence.RecordEmail(treeId, "testmail", from.humanID, to.humanID, pids);
+                }
+                catch (Exception pe) { MotivesPlugin.Log.LogWarning($"[SODMotives][F3] persist: record test email: {pe.Message}"); }
 
                 string fromHome = "?", toHome = "?";
                 try { if (from.home != null) fromHome = from.home.name; } catch { }
@@ -1083,24 +1334,25 @@ namespace SODMotives
         {
             if (note == null || string.IsNullOrEmpty(treeId)) return;
             int linked;
-            bool anonThreat0 = kind == "rentdemand" || kind == "feudthreat";
+            bool anonThreat0 = kind == "rentdemand" || kind == "feudthreat" || kind == "promothreat";
             // For anon threat notes the persisted citizen (if any) is the RECIPIENT — the note's addressee
             // (rebuilt as a clickable salutation) AND the "To" connection target (redrawn below).
             Human addressee = (anonThreat0 && citizens != null && citizens.Count > 0) ? citizens[0] : null;
             // Rebuild the SAME body the note was placed with — a kind-agnostic rebuild would re-render an
             // eviction plan as a redundancy list, or a rent demand as "...termination: <landlord>".
             string built =
-                kind == "eviction"   ? BuildEvictionDocTree(author, citizens, out linked, treeId) :
-                kind == "rentdemand" ? BuildRentDemandDocTree(author, addressee, out linked, treeId) :
-                kind == "feudthreat" ? BuildFeudThreatDocTree(author, addressee, out linked, treeId) :
-                                       BuildRedundancyDocTree(citizens, author, out linked, treeId);
+                kind == "eviction"    ? BuildEvictionDocTree(author, citizens, out linked, treeId) :
+                kind == "rentdemand"  ? BuildRentDemandDocTree(author, addressee, out linked, treeId) :
+                kind == "feudthreat"  ? BuildFeudThreatDocTree(author, addressee, out linked, treeId) :
+                kind == "promothreat" ? BuildPromotionThreatDocTree(author, addressee, out linked, treeId) :
+                                        BuildRedundancyDocTree(citizens, author, out linked, treeId);
             if (built == null) { MotivesPlugin.Log.LogWarning($"[SODMotives] persist: rebuild tree failed for '{treeId}'."); return; }
 
             var docEv = note.evidence;
             // Eviction/layoffs notes are SIGNED, so restore their visible writer. The anonymous threat notes
-            // (rentdemand/debt + feudthreat) keep their native writer (handwriting) but the writer CONNECTION
-            // must stay hidden after reload.
-            bool anonThreat = kind == "rentdemand" || kind == "feudthreat";
+            // (rentdemand/debt + feudthreat + promothreat) keep their native writer (handwriting) but the
+            // writer CONNECTION must stay hidden after reload.
+            bool anonThreat = anonThreat0;
             bool setWriter = author != null && !anonThreat;
             try { if (setWriter) note.SetWriter(author); } catch { }
             try { note.SetDDSOverride(treeId); } catch { }

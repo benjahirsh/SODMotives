@@ -155,7 +155,7 @@ namespace SODMotives
                 if (pcands != null) { events.AddRange(pcands); liveProperty = pcands.Count; }
             }
             if (events.Count == 0) return false;
-            MotivesPlugin.Log.LogInfo($"[SODMotives] pool sources: {(stored != null ? stored.Count : 0)} stored + {liveWorkplace} live workplace + {liveProperty} live property candidate event(s); ForceMotive={DebugTools.ForceMotiveType}.");
+            MotivesPlugin.Log.LogInfo($"[SODMotives] pool sources: {(stored != null ? stored.Count : 0)} stored + {liveWorkplace} live workplace + {liveProperty} live property candidate event(s); Force={DebugTools.ForceLabel()}.");
 
             // 1) Gather every real (suspect -> victim) edge from all events.
             var tmp = new List<SuspectEdge>();
@@ -171,8 +171,11 @@ namespace SODMotives
                 {
                     var ed = tmp[j];
                     if (!IsValidActor(ed.suspect) || !IsValidActor(ed.victim) || Motive.Same(ed.suspect, ed.victim)) continue;
-                    // Testing (F6): force the whole case to one motive type by dropping other-type edges.
+                    // Testing (F6): force the whole case to one motive type by dropping other-type edges,
+                    // and (finer) to one SPECIFIC event type when ForceEventType is set (e.g. Layoffs but
+                    // not Promotion, both Professional) by dropping edges from other event types.
                     if (DebugTools.ForceMotiveType != MotiveType.None && ed.type != DebugTools.ForceMotiveType) continue;
+                    if (DebugTools.ForceEventType.HasValue && (ed.evt == null || ed.evt.type != DebugTools.ForceEventType.Value)) continue;
                     int vid = ed.victim.humanID, sid = ed.suspect.humanID;
                     if (!byVictim.TryGetValue(vid, out var perSuspect))
                     {

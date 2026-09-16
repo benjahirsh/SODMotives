@@ -93,6 +93,8 @@ namespace SODMotives
                 "Chance (0..1) a note carries the author's fingerprints. Below that, it's traceable only by handwriting.").Value;
             ClueInjector.WorkplaceClueShare = Config.Bind("Clues", "WorkplaceClueShare", 0.5f,
                 "Chance (0..1) a given clue is placed at the victim's WORKPLACE rather than home. Motive-agnostic: any motive's clue can land at either, so location never betrays the motive.").Value;
+            ClueInjector.EmailClueShare = Config.Bind("Clues", "EmailClueShare", 0.5f,
+                "Chance (0..1) an eligible clue (affair love-letter, redundancy list, redevelopment plan) arrives as an EMAIL in an NPC's inbox instead of a physical note — never both. The player checks computers when the physical clue is absent. Promotion is exempt: it always uses BOTH channels (physical anonymous rival threats + an email promotion letter boss->promotee, which lands in both inboxes). RentArrears/Feud/Debt are always physical (their leads are handwriting + fingerprint, which email can't carry).").Value;
 
             // TESTING DEFAULT: force the first (and every) new murder to a MONEY case so V2.4 debts are
             // fast to test (with [Property] EnableProperty = false the Money bucket is debt-only, so this
@@ -486,8 +488,8 @@ namespace SODMotives
                 }
                 else
                 {
-                    string filt = DebugTools.ForceMotiveType != MotiveType.None
-                        ? $" (FORCE MOTIVE={DebugTools.ForceMotiveType} active — no victim has enough suspects of that type; F6 to clear)"
+                    string filt = (DebugTools.ForceEventType.HasValue || DebugTools.ForceMotiveType != MotiveType.None)
+                        ? $" (FORCE={DebugTools.ForceLabel()} active — no victim has enough suspects of that type; F6 to cycle/clear)"
                         : "";
                     MotivesPlugin.Log.LogInfo($"[SODMotives] override: no event-backed suspect pool available; leaving vanilla pick untouched.{filt}");
                 }

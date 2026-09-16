@@ -37,7 +37,35 @@ namespace SODMotives
             }
             catch { }
         }
-        internal static MotiveType ForceMotiveType = MotiveType.None;  // F6: restrict the NEXT murder's suspect pool to one motive type
+        internal static MotiveType ForceMotiveType = MotiveType.None;  // F6: restrict the NEXT murder's suspect pool to one motive type (kept in sync with ForceEventType; drives the selector's bucketing skip)
+        // F6 (finer, V2.6.3): restrict to a specific SocialEventType (e.g. Layoffs vs Promotion, both Professional).
+        // null = don't refine by event type (fall back to the ForceMotiveType filter only). When set, F6 also sets
+        // ForceMotiveType to the mapped motive so the selector's existing motive filter + bucketing-skip still fire.
+        internal static SocialEventType? ForceEventType = null;
+
+        // Each SocialEventType maps to exactly one MotiveType — used to keep ForceMotiveType in sync with F6.
+        internal static MotiveType MotiveOf(SocialEventType t)
+        {
+            switch (t)
+            {
+                case SocialEventType.Affair: return MotiveType.Infidelity;
+                case SocialEventType.Promotion:
+                case SocialEventType.Layoffs: return MotiveType.Professional;
+                case SocialEventType.Eviction:
+                case SocialEventType.RentArrears:
+                case SocialEventType.Debt: return MotiveType.Money;
+                case SocialEventType.Feud: return MotiveType.PersonalFeud;
+                default: return MotiveType.None;
+            }
+        }
+
+        // Short label for the current F6 force (event type if set, else motive type, else OFF).
+        internal static string ForceLabel()
+        {
+            if (ForceEventType.HasValue) return ForceEventType.Value.ToString();
+            if (ForceMotiveType != MotiveType.None) return ForceMotiveType.ToString();
+            return "OFF";
+        }
 
         internal static void Register()
         {
@@ -48,7 +76,7 @@ namespace SODMotives
                 GameObject.DontDestroyOnLoad(go);
                 go.hideFlags = HideFlags.HideAndDontSave;
                 go.AddComponent<DebugHotkey>();
-                MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys: F3=inject test EMAIL (read on a citizen's home computer), F4=spawn threatening test note in your apartment, F5=trigger next murder, F6=cycle FORCE MOTIVE (off/affair/professional/money/feud), F7=ghost, F8=always-answer, F9=case solution, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower.");
+                MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys: F3=inject test EMAIL (read on a citizen's home computer), F4=spawn threatening test note in your apartment, F5=trigger next murder, F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=ghost, F8=always-answer, F9=case solution, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower.");
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] hotkey register failed: {e.Message}"); }
         }
@@ -139,29 +167,33 @@ namespace SODMotives
             {
                 var mc = MurderController.Instance;
                 if (mc == null) { log.LogInfo("[SODMotives][F5] no MurderController."); return; }
-                log.LogInfo($"[SODMotives][F5] triggering next murder (ForceMotive={ForceMotiveType})...");
+                log.LogInfo($"[SODMotives][F5] triggering next murder (Force={ForceLabel()})...");
                 mc.TriggerNextMurder();
             }
             catch (Exception e) { log.LogWarning($"[SODMotives][F5] trigger error: {e.Message}"); }
         }
 
-        // F6: cycle which motive type the NEXT murder is forced to. Only event-backed types
-        // (Infidelity/Professional/Money-landlord) are useful; the filter is applied in TryPickVictimCentric.
-        // (Money forces a landlord/tenant case. With EvictionShare>0 that's usually an EVICTION — a lone
-        //  rent-arrears tenant has too few suspects to beat a multi-suspect eviction victim. With
-        //  EvictionShare=0 there are no evictions, the suspect floor degrades to 1, and a rent-arrears
-        //  tenant-victim wins instead — which is the standalone-arrears case under test.)
+        // F6: cycle which SPECIFIC event type the NEXT murder is forced to (finer than the old motive-type
+        // cycle — Layoffs vs Promotion, Eviction vs RentArrears vs Debt are now separable). The filter is
+        // applied in TryPickVictimCentric (which also narrows by the mapped motive + skips case-type
+        // balancing while a force is active). Order: OFF -> Affair -> Promotion -> Layoffs -> Eviction ->
+        // RentArrears -> Feud -> Debt -> OFF. Setting an event type also sets ForceMotiveType to its motive.
+        private static readonly SocialEventType[] _forceCycle =
+        {
+            SocialEventType.Affair, SocialEventType.Promotion, SocialEventType.Layoffs,
+            SocialEventType.Eviction, SocialEventType.RentArrears, SocialEventType.Feud, SocialEventType.Debt,
+        };
         internal static void CycleForceMotive()
         {
-            switch (ForceMotiveType)
+            // Advance to the next entry; wrap past the end back to OFF (null).
+            if (!ForceEventType.HasValue) ForceEventType = _forceCycle[0];
+            else
             {
-                case MotiveType.None: ForceMotiveType = MotiveType.Infidelity; break;
-                case MotiveType.Infidelity: ForceMotiveType = MotiveType.Professional; break;
-                case MotiveType.Professional: ForceMotiveType = MotiveType.Money; break;
-                case MotiveType.Money: ForceMotiveType = MotiveType.PersonalFeud; break;
-                default: ForceMotiveType = MotiveType.None; break;
+                int idx = Array.IndexOf(_forceCycle, ForceEventType.Value);
+                ForceEventType = (idx < 0 || idx + 1 >= _forceCycle.Length) ? (SocialEventType?)null : _forceCycle[idx + 1];
             }
-            MotivesPlugin.Log.LogInfo($"[SODMotives] FORCE MOTIVE = {(ForceMotiveType == MotiveType.None ? "OFF (any motive)" : ForceMotiveType.ToString())} — applies to the NEXT new murder.");
+            ForceMotiveType = ForceEventType.HasValue ? MotiveOf(ForceEventType.Value) : MotiveType.None;
+            MotivesPlugin.Log.LogInfo($"[SODMotives] FORCE EVENT = {(ForceEventType.HasValue ? ForceEventType.Value.ToString() + " (motive " + ForceMotiveType + ")" : "OFF (any motive)")} — applies to the NEXT new murder.");
         }
 
         internal static void TeleportToWork()
@@ -522,10 +554,10 @@ namespace SODMotives
 
                 // Force-motive (F6) — ALWAYS visible (incl. OFF); the persistent F6 state survives
                 // sandbox re-rolls within one game, so it should never be a surprise.
-                bool fm = DebugTools.ForceMotiveType != MotiveType.None;
+                bool fm = DebugTools.ForceEventType.HasValue || DebugTools.ForceMotiveType != MotiveType.None;
                 _hudStyle.normal.textColor = fm ? Color.yellow : Color.gray;
                 GUI.Label(new Rect(x, y, w, 20),
-                    fm ? $"FORCE MOTIVE: {DebugTools.ForceMotiveType} (F6)" : "FORCE MOTIVE: OFF (F6 to force affair/professional/money/feud)",
+                    fm ? $"FORCE: {DebugTools.ForceLabel()} (F6)" : "FORCE: OFF (F6 = affair/promotion/layoffs/eviction/rentarrears/feud/debt)",
                     _hudStyle);
                 y += 20f;
 

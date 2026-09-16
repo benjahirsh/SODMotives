@@ -50,6 +50,21 @@ namespace SODMotives
         // Every custom note placed this session, or loaded from a sidecar. Serialized on save.
         internal static readonly List<NoteRecord> Records = new List<NoteRecord>();
 
+        // ---------- V2.6: injected email (vmail) tree records ----------
+        // A vmail THREAD persists natively (StateSaveData.messageThreads), but the custom DDS tree its
+        // treeID points at is runtime-only and rebuilt-from-scratch at boot — so after a reload the body
+        // renders blank. We record just enough to re-register that tree (rebuild the same body) on load;
+        // there's no Interactable to find (the email lives in an inbox, not the world).
+        internal struct EmailRecord
+        {
+            public string treeId;
+            public string kind;               // "layoffs" | "eviction" | "affair" | "promotion" | "testmail"
+            public int fromHumanId;           // sender / body author
+            public int toHumanId;             // recipient (== sender for layoffs/eviction self-drafts)
+            public List<int> citizenHumanIds; // people/addresses the body names (layoffs list / eviction tenants); empty for affair/promotion
+        }
+        internal static readonly List<EmailRecord> Emails = new List<EmailRecord>();
+
         // ---------- save-path tracking ----------
         // CaptureSaveStateAsync hands us the path on save; the load menu hands us the clicked slot's
         // path. On load we prefer the explicit menu choice, else the last save this session (covers
@@ -73,6 +88,12 @@ namespace SODMotives
         private static bool _sideRead;                       // sidecar parsed from disk once
         private static Sidecar _loadedSide;                  // parsed sidecar (null = no file)
 
+        // V2.6: email (vmail) tree ids whose custom tree was re-registered but whose natively-persisted
+        // thread wasn't restored yet when we tried to resync it (VMailApp resolves the body from the
+        // thread's stored message-instance ids, so the resync must land). Retried each tick until the
+        // thread appears; replay isn't "complete" until this is empty (or the whole replay times out).
+        private static readonly List<string> _pendingEmailResync = new List<string>();
+
         private const string Header = "SODMOTIVES_SIDECAR\tv2";
 
         // Cleared on a genuinely NEW game (SeedForNewGame, gated to new-game only), so a fresh city
@@ -81,6 +102,7 @@ namespace SODMotives
         internal static void ResetForNewGame()
         {
             Records.Clear();
+            Emails.Clear();
             _replayedIds.Clear();
         }
 
@@ -120,6 +142,24 @@ namespace SODMotives
             for (int i = 0; i < Records.Count; i++)
                 if (Records[i].interactableId == interactableId) { Records[i] = rec; return; }
             Records.Add(rec);
+        }
+
+        // Called by ClueInjector the moment it injects a custom email (vmail). Deduped by treeId (each
+        // injected email has its own unique custom tree).
+        internal static void RecordEmail(string treeId, string kind, int fromHumanId, int toHumanId, List<int> citizenHumanIds)
+        {
+            if (!Enable || string.IsNullOrEmpty(treeId)) return;
+            var rec = new EmailRecord
+            {
+                treeId = treeId,
+                kind = kind ?? "email",
+                fromHumanId = fromHumanId,
+                toHumanId = toHumanId,
+                citizenHumanIds = citizenHumanIds ?? new List<int>(),
+            };
+            for (int i = 0; i < Emails.Count; i++)
+                if (Emails[i].treeId == treeId) { Emails[i] = rec; return; }
+            Emails.Add(rec);
         }
 
         // ---- sidecar path: <dir>\<saveNameWithoutExt>.sodmotives.dat, next to the .sodb ----
@@ -162,6 +202,15 @@ namespace SODMotives
                     sb.Append("N\t").Append(r.interactableId).Append('\t').Append(r.treeId ?? "").Append('\t')
                       .Append(r.kind ?? "note").Append('\t').Append(r.authorHumanId).Append('\t')
                       .Append(IntsCsv(r.citizenHumanIds)).Append('\t').Append(San(r.title)).Append('\n');
+                }
+
+                // --- emails / vmail trees (V2.6): EM treeId kind fromId toId citizenIdsCsv ---
+                for (int i = 0; i < Emails.Count; i++)
+                {
+                    var r = Emails[i];
+                    sb.Append("EM\t").Append(San(r.treeId)).Append('\t').Append(r.kind ?? "email").Append('\t')
+                      .Append(r.fromHumanId).Append('\t').Append(r.toHumanId).Append('\t')
+                      .Append(IntsCsv(r.citizenHumanIds)).Append('\n');
                 }
 
                 // --- events (pass 2) ---
@@ -214,7 +263,7 @@ namespace SODMotives
                 sb.Append("IJ\t").Append(IntsCsv(ClueInjector.GetInjectedVictimIds())).Append('\n');
 
                 File.WriteAllText(side, sb.ToString());
-                MotivesPlugin.Log.LogInfo($"[SODMotives] persist: wrote sidecar ({Records.Count} note(s), {evCount} event(s), {MurderSelector.OverriddenVictimIds.Count} overridden victim(s)) -> {side}");
+                MotivesPlugin.Log.LogInfo($"[SODMotives] persist: wrote sidecar ({Records.Count} note(s), {Emails.Count} email(s), {evCount} event(s), {MurderSelector.OverriddenVictimIds.Count} overridden victim(s)) -> {side}");
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] persist: sidecar write failed: {e.Message}"); }
         }
@@ -265,6 +314,7 @@ namespace SODMotives
             public List<int[]> affairBy = new List<int[]>();   // [victimId, eventId]
             public List<int[]> eventBy = new List<int[]>();     // [victimId, eventId]
             public List<int> injected = new List<int>();        // victim ids whose clue-set was injected
+            public List<EmailRecord> emails = new List<EmailRecord>();   // V2.6 injected vmail trees
         }
         private struct EventRec
         {
@@ -337,6 +387,18 @@ namespace SODMotives
                             if (p.Length >= 3 && int.TryParse(p[1], out int ev)) s.eventBy.Add(new[] { ev, ParseInt(p[2], -1) });
                             break;
                         case "IJ": if (p.Length >= 2) s.injected = ParseIntCsv(p[1]); break;
+                        case "EM":
+                            if (p.Length < 5) break;
+                            {
+                                int.TryParse(p[3], out int fr);
+                                int.TryParse(p[4], out int to);
+                                s.emails.Add(new EmailRecord
+                                {
+                                    treeId = p[1], kind = p[2], fromHumanId = fr, toHumanId = to,
+                                    citizenHumanIds = p.Length >= 6 ? ParseIntCsv(p[5]) : new List<int>(),
+                                });
+                            }
+                            break;
                     }
                 }
             }
@@ -363,6 +425,7 @@ namespace SODMotives
             _replayPending = true;
             _replayAttempts = 0;
             _replayedIds.Clear();
+            _pendingEmailResync.Clear();
             _loadInProgress = true;     // gate: OnStartGame will skip its re-seed for this load
             _eventsImported = false;
             _sideRead = false;
@@ -423,15 +486,38 @@ namespace SODMotives
                 // contamination when switching/reloading saves in one process).
                 Records.Clear();
                 if (_loadedSide != null) for (int i = 0; i < _loadedSide.notes.Count; i++) Records.Add(_loadedSide.notes[i]);
+
+                // Emails (V2.6): same treatment — rebuild the process-lifetime list from THIS save, then
+                // re-register each recorded vmail tree so the natively-persisted thread renders its body.
+                Emails.Clear();
+                if (_loadedSide != null)
+                {
+                    for (int i = 0; i < _loadedSide.emails.Count; i++) Emails.Add(_loadedSide.emails[i]);
+                    RebuildEmails(map);
+                }
                 _eventsImported = true;
             }
 
-            // (2) NOTES — nothing to restore if the save has none.
+            // (1b) EMAIL THREAD RESYNC RETRY — the custom vmail trees were re-registered above, but a
+            // thread may not have been restored into GameplayController.messageThreads yet. Retry the
+            // resync (re-point the thread's stale message-instance id at the rebuilt tree) each tick until
+            // the thread appears. Threads are simple data restored early, so this usually clears at once.
+            if (_pendingEmailResync.Count > 0)
+                for (int i = _pendingEmailResync.Count - 1; i >= 0; i--)
+                {
+                    int s = 0; try { s = ClueInjector.ResyncEmailThread(_pendingEmailResync[i]); } catch { }
+                    if (s > 0) { MotivesPlugin.Log.LogInfo($"[SODMotives] persist: email thread for tree '{_pendingEmailResync[i]}' synced on retry."); _pendingEmailResync.RemoveAt(i); }
+                }
+
+            // (2) NOTES — nothing to restore if the save has none. Don't finish until email resync is done.
             if (_loadedSide == null || _loadedSide.notes.Count == 0)
             {
-                _replayPending = false;
-                MotivesPlugin.Log.LogInfo("[SODMotives] persist: replay complete (events+maps; no note records).");
-                return;
+                if (_pendingEmailResync.Count == 0)
+                {
+                    _replayPending = false;
+                    MotivesPlugin.Log.LogInfo("[SODMotives] persist: replay complete (events+maps+emails; no note records).");
+                }
+                return;   // else keep pending: an email thread is still streaming in — retry next frame
             }
 
             var savable = city.savableInteractableDictionary;
@@ -460,12 +546,12 @@ namespace SODMotives
                 done++;
             }
 
-            if (missing == 0)
+            if (missing == 0 && _pendingEmailResync.Count == 0)
             {
                 _replayPending = false;
-                MotivesPlugin.Log.LogInfo($"[SODMotives] persist: replay complete — {done} note(s) restored (+ events+maps).");
+                MotivesPlugin.Log.LogInfo($"[SODMotives] persist: replay complete — {done} note(s) restored (+ events+maps+emails).");
             }
-            // else keep pending: interactables still streaming in — retry next frame (until timeout).
+            // else keep pending: interactables / email threads still streaming in — retry next frame (until timeout).
         }
 
         // Rebuild the EventStore + all MurderSelector maps from a parsed sidecar, resolving Humans
@@ -544,6 +630,37 @@ namespace SODMotives
             // will inject normally when it reaches 'post').
             ClueInjector.RestoreInjectedOnLoad(side.injected);
             MotivesPlugin.Log.LogInfo($"[SODMotives] persist2: imported {rebuilt.Count} event(s) + maps ({ov.Count} overridden victim(s), {pb.Count} pool(s), {side.injected.Count} injected).");
+        }
+
+        // Re-register each recorded email's custom vmail DDS tree (runtime-only; gone after a reload) so the
+        // natively-persisted thread renders its body again. Needs only the citizen map (no interactables),
+        // so it runs in the same once-per-load block as the event/map import.
+        private static void RebuildEmails(Dictionary<int, Human> map)
+        {
+            _pendingEmailResync.Clear();
+            if (_loadedSide == null || _loadedSide.emails.Count == 0) return;
+            int done = 0, synced = 0;
+            for (int i = 0; i < _loadedSide.emails.Count; i++)
+            {
+                var r = _loadedSide.emails[i];
+                Human from = null, to = null;
+                map.TryGetValue(r.fromHumanId, out from);
+                map.TryGetValue(r.toHumanId, out to);
+                var people = new List<Human>();
+                if (r.citizenHumanIds != null)
+                    for (int j = 0; j < r.citizenHumanIds.Count; j++)
+                    { Human h; if (map.TryGetValue(r.citizenHumanIds[j], out h) && h != null) people.Add(h); }
+                try
+                {
+                    int s = ClueInjector.RebuildEmailTree(r.treeId, r.kind, from, to, people);
+                    done++;
+                    if (s > 0) synced++;
+                    else if (s == 0) _pendingEmailResync.Add(r.treeId);   // tree built but thread not restored yet — retry per tick
+                    // s < 0: terminal build failure (can never resync) — don't enqueue, or it'd hold replay open to timeout
+                }
+                catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] persist: rebuild email '{r.treeId}' failed: {e.Message}"); }
+            }
+            MotivesPlugin.Log.LogInfo($"[SODMotives] persist2: re-registered {done} email vmail tree(s); {synced} thread(s) synced, {_pendingEmailResync.Count} awaiting thread restore.");
         }
 
         private static Human ResolveHuman(Dictionary<int, Human> map, int id)

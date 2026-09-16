@@ -43,6 +43,19 @@ namespace SODMotives
         // ForceMotiveType to the mapped motive so the selector's existing motive filter + bucketing-skip still fire.
         internal static SocialEventType? ForceEventType = null;
 
+        // Configurable debug hotkeys — bound to the [Debug Keys] config section in Plugin.Load and
+        // re-applied live from the in-game overlay (which renders KeyCode as a key-binder). Defaults are
+        // the original F-keys (F5 left free for the game's quicksave + the config-menu toggle).
+        internal static KeyCode KeyCaseSolution   = KeyCode.F9;
+        internal static KeyCode KeyTestEmail      = KeyCode.F3;
+        internal static KeyCode KeyTestNote       = KeyCode.F4;
+        internal static KeyCode KeyCycleForce     = KeyCode.F6;
+        internal static KeyCode KeyGhost          = KeyCode.F7;
+        internal static KeyCode KeyAlwaysAnswer   = KeyCode.F8;
+        internal static KeyCode KeyTeleportScene  = KeyCode.F10;
+        internal static KeyCode KeyTeleportWork   = KeyCode.F11;
+        internal static KeyCode KeyTeleportKnower = KeyCode.F12;
+
         // Each SocialEventType maps to exactly one MotiveType — used to keep ForceMotiveType in sync with F6.
         internal static MotiveType MotiveOf(SocialEventType t)
         {
@@ -76,7 +89,7 @@ namespace SODMotives
                 GameObject.DontDestroyOnLoad(go);
                 go.hideFlags = HideFlags.HideAndDontSave;
                 go.AddComponent<DebugHotkey>();
-                MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys: F3=inject test EMAIL (read on a citizen's home computer), F4=spawn threatening test note in your apartment, F5=trigger next murder, F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=ghost, F8=always-answer, F9=case solution, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower.");
+                MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys (defaults; all rebindable in the config menu -> SOD Motives / Debug Keys): F3=inject test EMAIL (read on a citizen's home computer), F4=spawn threatening test note in your apartment, F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=ghost, F8=always-answer, F9=case solution, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower. (F5 left free for the game's quicksave + the config-menu toggle.)");
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] hotkey register failed: {e.Message}"); }
         }
@@ -507,24 +520,24 @@ namespace SODMotives
         {
             try
             {
-                if (Input.GetKeyDown(KeyCode.F9))
+                // Debug hotkeys are configurable (DebugTools.Key* — bound to [Debug Keys], live from the overlay).
+                if (Input.GetKeyDown(DebugTools.KeyCaseSolution))
                 {
                     if (DebugTools.Show) { DebugTools.Show = false; }
                     else { DebugTools.BuildSolution(); DebugTools.Show = true; }
                 }
-                if (Input.GetKeyDown(KeyCode.F3)) DebugTools.SpawnTestEmail();
-                if (Input.GetKeyDown(KeyCode.F4)) DebugTools.SpawnTestNote();
-                if (Input.GetKeyDown(KeyCode.F5)) DebugTools.TriggerMurder();
-                if (Input.GetKeyDown(KeyCode.F6)) DebugTools.CycleForceMotive();
-                if (Input.GetKeyDown(KeyCode.F10)) DebugTools.TeleportToScene();
-                if (Input.GetKeyDown(KeyCode.F11)) DebugTools.TeleportToWork();
-                if (Input.GetKeyDown(KeyCode.F12)) DebugTools.TeleportToNearestKnower();
-                if (Input.GetKeyDown(KeyCode.F8))
+                if (Input.GetKeyDown(DebugTools.KeyTestEmail)) DebugTools.SpawnTestEmail();
+                if (Input.GetKeyDown(DebugTools.KeyTestNote)) DebugTools.SpawnTestNote();
+                if (Input.GetKeyDown(DebugTools.KeyCycleForce)) DebugTools.CycleForceMotive();
+                if (Input.GetKeyDown(DebugTools.KeyTeleportScene)) DebugTools.TeleportToScene();
+                if (Input.GetKeyDown(DebugTools.KeyTeleportWork)) DebugTools.TeleportToWork();
+                if (Input.GetKeyDown(DebugTools.KeyTeleportKnower)) DebugTools.TeleportToNearestKnower();
+                if (Input.GetKeyDown(DebugTools.KeyAlwaysAnswer))
                 {
                     DebugTools.AlwaysAnswer = !DebugTools.AlwaysAnswer;
                     MotivesPlugin.Log.LogInfo($"[SODMotives] ALWAYS-ANSWER (no bribe) {(DebugTools.AlwaysAnswer ? "ON" : "OFF")} — while ON, the top-right HUD shows who you're talking to.");
                 }
-                if (Input.GetKeyDown(KeyCode.F7))
+                if (Input.GetKeyDown(DebugTools.KeyGhost))
                 {
                     DebugTools.Ghost = !DebugTools.Ghost;
                     if (!DebugTools.Ghost) DebugTools.ClearGhost();

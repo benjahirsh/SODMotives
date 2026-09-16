@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using BepInEx;
+using BepInEx.Configuration;
 using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP;
 using HarmonyLib;
@@ -19,82 +20,172 @@ namespace SODMotives
         internal static new ManualLogSource Log;
         private Harmony _harmony;
 
+        // A3: every knob maps to a re-apply action, run at load AND whenever the value changes (in-game
+        // ConfigurationManager overlay, a .cfg reload, or our own writes). This is what makes edits
+        // actually take effect — previously values were copied into static fields once and never re-read.
+        private readonly Dictionary<ConfigEntryBase, Action> _applyByEntry = new Dictionary<ConfigEntryBase, Action>();
+
         public override void Load()
         {
             Log = base.Log;
             Banner();
 
-            // Config (BepInEx/config/com.benhirsh.sodmotives.cfg)
-            MurderSelector.EnableOverride = Config.Bind("General", "EnableOverride", true,
-                "Replace vanilla killer/victim selection with a motivated pair from the social graph.").Value;
-            MurderWatchdog.Enable = Config.Bind("General", "UnstickStalledMurders", true,
-                "Recover a mod motive-murder that soft-locks in the 'executing' state (killer never lands a lethal blow). ONLY acts on our overridden cases, and ONLY when the killer is co-located with the victim, so the crime scene stays coherent; touches no vanilla murder.").Value;
-            MurderWatchdog.StallGameHours = Config.Bind("General", "StallGameHours", 24f,
-                "In-game hours a mod murder may sit stalled in 'executing' before the watchdog force-finishes it (only if killer is present and no damage is landing).").Value;
-            // V2.1 victim-centric selector knobs.
-            MurderSelector.MinSuspects = Config.Bind("Selection", "MinSuspects", 3,
-                "PREFER victims with at least this many real event-backed suspects. If none qualify, degrade to the richest available victim (never vanilla for the floor).").Value;
-            MurderSelector.KillerPoolSize = Config.Bind("Selection", "KillerPoolSize", 10,
-                "The real killer is picked uniformly at random from the victim's top-N strongest suspects.").Value;
-            MurderSelector.WorkplaceCaseShare = Config.Bind("Selection", "WorkplaceCaseShare", 0.5f,
-                "When the F6 force is OFF: target fraction of mod cases that feature a workplace motive, so the far-more-numerous affairs don't swamp workplace. 0 = affairs only, 1 = workplace only.").Value;
-            Motive.NameKnownThreshold = Config.Bind("Selection", "NameKnownThreshold", 0.2f,
-                "Minimum directed familiarity (Acquaintance.known, 0..1) for an NPC to count as knowing a person's NAME (able to identify their photo). Gates interrogation gossip + the F9 knower list. Real relationships sit ~0.6-0.9; casual acquaintances ~0.1-0.2. Lowered to 0.2 to widen gossip coverage (more interactions); tune vs the vanilla 'do you know this person' threshold.").Value;
-            // Legacy V1/V2.0 knobs — kept bound so existing .cfg files don't break; no longer
-            // consulted by the victim-centric selector. Pruned in release cleanup.
-            MurderSelector.TopPoolSize = Config.Bind("Selection", "TopPoolSize", 40,
-                "(Legacy, unused) Weighted-random pick was drawn from this many of the strongest feuds.").Value;
-            MurderSelector.RedHerringBonusPer = Config.Bind("Selection", "RedHerringBonusPer", 0.4f,
-                "(Legacy, unused) Selection weight bonus per EXTRA motivated enemy the victim has.").Value;
-            MurderSelector.WeightExponent = Config.Bind("Selection", "WeightExponent", 0.6f,
-                "(Legacy, unused) Below 1.0 compressed score gaps so weaker motives surfaced.").Value;
-            MurderSelector.SameTypePenalty = Config.Bind("Selection", "SameTypePenalty", 0.4f,
-                "(Legacy, unused) Weight multiplier for a motive type used in the previous murder.").Value;
-            MurderSelector.StripSignatures = Config.Bind("Flavour", "StripSignatures", true,
-                "Remove serial-killer calling card/moniker/graffiti from motivated cases so they read as personal crimes.").Value;
-            MurderSelector.VanillaCaseEvery = Config.Bind("Flavour", "VanillaCaseEvery", 0,
-                "Force a full vanilla serial-killer case every Nth case (deterministic). 0 = never force vanilla (testing: every case is a mod case). Production suggestion: 3-4.").Value;
-            // Workplace-rivalry cases (V2.1) — built on-demand from live company rosters at murder time.
-            WorkplaceSim.Enable = Config.Bind("Workplace", "EnableWorkplace", true,
-                "Add workplace-rivalry cases (promotions + layoffs) as murder-motive sources, derived on-demand from real company rosters.").Value;
-            WorkplaceSim.MaxSuspects = Config.Bind("Workplace", "MaxSuspects", 5,
-                "Maximum suspects per workplace case (passed-over rivals / employees on the layoff list).").Value;
-            WorkplaceSim.PromotionShare = Config.Bind("Workplace", "PromotionShare", 0.4f,
-                "Of workplace cases where both are possible, the fraction that are promotions; the rest are layoffs (a boss-victim, most reliably multi-suspect).").Value;
-            // Landlord/tenant (property) cases (V2.3) — built on-demand from the live residency graph.
-            PropertySim.Enable = Config.Bind("Property", "EnableProperty", true,
-                "Add landlord/tenant cases (eviction/redevelopment + rent arrears) as murder-motive sources, derived on-demand from real landlord/tenant relationships.").Value;
-            PropertySim.MaxTenantSuspects = Config.Bind("Property", "MaxTenantSuspects", 6,
-                "Maximum tenant suspects per eviction case (the aggrieved tenants being cleared out for redevelopment).").Value;
-            MurderSelector.PropertyCaseShare = Config.Bind("Property", "PropertyCaseShare", 0.25f,
-                "When the F6 force is OFF: target fraction of mod cases that feature a landlord/property motive (affair = the remainder after workplace + property).").Value;
-            PropertySim.EvictionShare = Config.Bind("Property", "EvictionShare", 0.6f,
-                "Of eligible buildings, the fraction whose case is an eviction (landlord victim, many tenant suspects); the rest are rent-arrears (a tenant victim, the landlord suspect).").Value;
-            // One-to-one personal motives (V2.4) — feuds + debts, fully SYNTHESIZED and SEEDED at
-            // new-game (like affairs), since the game models no grudges or money.
-            FeudSim.EnableFeuds = Config.Bind("Feud", "EnableFeuds", true,
-                "Seed personal-feud cases (bad blood between two citizens), synthesized from genuinely soured relationships. Bidirectional: either party can be killer or victim.").Value;
-            FeudSim.EnableDebts = Config.Bind("Feud", "EnableDebts", true,
-                "Seed debt cases (a creditor fed up with a debtor who stopped paying), synthesized over real acquaintance edges. A Money motive; the creditor is the lone suspect.").Value;
-            FeudSim.MaxFeuds = Config.Bind("Feud", "MaxFeuds", 40,
-                "Cap on synthesized feuds seeded per city (keeps the far-more-numerous affairs from being swamped).").Value;
-            FeudSim.MaxDebts = Config.Bind("Feud", "MaxDebts", 40,
-                "Cap on synthesized debts seeded per city.").Value;
-            MurderSelector.FeudCaseShare = Config.Bind("Feud", "FeudCaseShare", 0.15f,
-                "When the F6 force is OFF: target fraction of mod cases that feature a personal-feud motive (affair = the remainder after workplace + money + feud).").Value;
+            // Config (BepInEx/config/com.benhirsh.sodmotives.cfg). Every knob is bound via BindApply so it
+            // stays LIVE — re-applied into its static field on any change (in-game overlay / .cfg reload).
+            // An edit takes effect on the NEXT case; the [Feud] seeding caps take effect on the next NEW GAME.
 
-            ClueInjector.Enable = Config.Bind("Clues", "InjectClues", true,
-                "Inject deliberately-ambiguous physical notes per motivated case, hinting at motives.").Value;
-            ClueInjector.MaxClues = Config.Bind("Clues", "MaxCluesPerCase", 8,
-                "Safety cap on total motive clues per case (one per event-suspect: love letter / promotion letter + rival threats / termination notices).").Value;
-            ClueInjector.ObviousNames = Config.Bind("Clues", "ObviousTestNames", true,
-                "TESTING: rename injected notes to 'MODCLUE ...' so they're easy to find. Set false for normal play.").Value;
-            ClueInjector.FingerprintChance = Config.Bind("Clues", "FingerprintChance", 0.7f,
-                "Chance (0..1) a note carries the author's fingerprints. Below that, it's traceable only by handwriting.").Value;
-            ClueInjector.WorkplaceClueShare = Config.Bind("Clues", "WorkplaceClueShare", 0.5f,
-                "Chance (0..1) a given clue is placed at the victim's WORKPLACE rather than home. Motive-agnostic: any motive's clue can land at either, so location never betrays the motive.").Value;
-            ClueInjector.EmailClueShare = Config.Bind("Clues", "EmailClueShare", 0.5f,
-                "Chance (0..1) an eligible clue (affair love-letter, redundancy list, redevelopment plan) arrives as an EMAIL in an NPC's inbox instead of a physical note — never both. The player checks computers when the physical clue is absent. Promotion is exempt: it always uses BOTH channels (physical anonymous rival threats + an email promotion letter boss->promotee, which lands in both inboxes). RentArrears/Feud/Debt are always physical (their leads are handwriting + fingerprint, which email can't carry).").Value;
+            // --- General ---
+            BindApply("General", "EnableOverride", true,
+                "Replace vanilla killer/victim selection with a motivated pair from the social graph.",
+                v => MurderSelector.EnableOverride = v);
+            BindApply("General", "UnstickStalledMurders", true,
+                "Recover a mod motive-murder that soft-locks in the 'executing' state (killer never lands a lethal blow). ONLY acts on our overridden cases, and ONLY when the killer is co-located with the victim, so the crime scene stays coherent; touches no vanilla murder.",
+                v => MurderWatchdog.Enable = v);
+            BindApply("General", "StallGameHours", 24f,
+                "In-game hours a mod murder may sit stalled in 'executing' before the watchdog force-finishes it (only if killer is present and no damage is landing).",
+                v => MurderWatchdog.StallGameHours = v);
+
+            // --- Selection ---
+            // THE MAIN MIX KNOB — floated to the top of the section (Order) and shown as a 0..1 slider.
+            BindApply("Selection", "MotiveCaseShare", 1.0f,
+                "MAIN KNOB: fraction (0..1) of murders that are relationship-MOTIVE cases; the rest are left as vanilla serial-killer cases. 1 = every case is a motive case (the MAX; current behaviour). Lower mixes in more classic vanilla cases. 0 = all vanilla. Applies to the next case.",
+                v => MurderSelector.MotiveCaseShare = v, R01(), Order(100));
+            BindApply("Selection", "MinSuspects", 3,
+                "PREFER victims with at least this many real event-backed suspects. If none qualify, degrade to the richest available victim (never vanilla for the floor).",
+                v => MurderSelector.MinSuspects = v);
+            BindApply("Selection", "KillerPoolSize", 10,
+                "The real killer is picked uniformly at random from the victim's top-N strongest suspects.",
+                v => MurderSelector.KillerPoolSize = v);
+            BindApply("Selection", "WorkplaceCaseShare", 0.5f,
+                "When the F6 force is OFF: target fraction of mod cases that feature a workplace motive, so the far-more-numerous affairs don't swamp workplace. 0 = affairs only, 1 = workplace only.",
+                v => MurderSelector.WorkplaceCaseShare = v, R01());
+            BindApply("Selection", "NameKnownThreshold", 0.2f,
+                "Minimum directed familiarity (Acquaintance.known, 0..1) for an NPC to count as knowing a person's NAME (able to identify their photo). Gates interrogation gossip + the F9 knower list. Real relationships sit ~0.6-0.9; casual acquaintances ~0.1-0.2. Lowered to 0.2 to widen gossip coverage.",
+                v => Motive.NameKnownThreshold = v, R01());
+            // Legacy V1/V2.0 knobs — kept bound so existing .cfg files don't break; no longer consulted by
+            // the victim-centric selector. Collapsed under the overlay's "Advanced" toggle; deleted in cleanup (B1).
+            BindApply("Selection", "TopPoolSize", 40,
+                "(Legacy, unused) Weighted-random pick was drawn from this many of the strongest feuds.",
+                v => MurderSelector.TopPoolSize = v, null, Hidden());
+            BindApply("Selection", "RedHerringBonusPer", 0.4f,
+                "(Legacy, unused) Selection weight bonus per EXTRA motivated enemy the victim has.",
+                v => MurderSelector.RedHerringBonusPer = v, null, Hidden());
+            BindApply("Selection", "WeightExponent", 0.6f,
+                "(Legacy, unused) Below 1.0 compressed score gaps so weaker motives surfaced.",
+                v => MurderSelector.WeightExponent = v, null, Hidden());
+            BindApply("Selection", "SameTypePenalty", 0.4f,
+                "(Legacy, unused) Weight multiplier for a motive type used in the previous murder.",
+                v => MurderSelector.SameTypePenalty = v, null, Hidden());
+
+            // --- Flavour ---
+            BindApply("Flavour", "StripSignatures", true,
+                "Remove serial-killer calling card/moniker/graffiti from motivated cases so they read as personal crimes.",
+                v => MurderSelector.StripSignatures = v);
+            BindApply("Flavour", "VanillaCaseEvery", 0,
+                "Force a full vanilla serial-killer case every Nth case (deterministic). 0 = never force vanilla. Composes with MotiveCaseShare (either can force vanilla). Production suggestion: 3-4.",
+                v => MurderSelector.VanillaCaseEvery = v);
+
+            // --- Workplace (built on-demand from live company rosters at murder time) ---
+            BindApply("Workplace", "EnableWorkplace", true,
+                "Add workplace-rivalry cases (promotions + layoffs) as murder-motive sources, derived on-demand from real company rosters.",
+                v => WorkplaceSim.Enable = v);
+            BindApply("Workplace", "MaxSuspects", 5,
+                "Maximum suspects per workplace case (passed-over rivals / employees on the layoff list).",
+                v => WorkplaceSim.MaxSuspects = v);
+            BindApply("Workplace", "PromotionShare", 0.4f,
+                "Of workplace cases where both are possible, the fraction that are promotions; the rest are layoffs (a boss-victim, most reliably multi-suspect).",
+                v => WorkplaceSim.PromotionShare = v, R01());
+
+            // --- Property (built on-demand from the live residency graph) ---
+            BindApply("Property", "EnableProperty", true,
+                "Add landlord/tenant cases (eviction/redevelopment + rent arrears) as murder-motive sources, derived on-demand from real landlord/tenant relationships.",
+                v => PropertySim.Enable = v);
+            BindApply("Property", "MaxTenantSuspects", 6,
+                "Maximum tenant suspects per eviction case (the aggrieved tenants being cleared out for redevelopment).",
+                v => PropertySim.MaxTenantSuspects = v);
+            BindApply("Property", "PropertyCaseShare", 0.25f,
+                "When the F6 force is OFF: target fraction of mod cases that feature a landlord/property motive (affair = the remainder after workplace + property).",
+                v => MurderSelector.PropertyCaseShare = v, R01());
+            BindApply("Property", "EvictionShare", 0.6f,
+                "Of eligible buildings, the fraction whose case is an eviction (landlord victim, many tenant suspects); the rest are rent-arrears (a tenant victim, the landlord suspect).",
+                v => PropertySim.EvictionShare = v, R01());
+
+            // --- Feud (SEEDED AT NEW GAME — these apply to the next new game, not the current city) ---
+            BindApply("Feud", "EnableFeuds", true,
+                "Seed personal-feud cases (bad blood between two citizens), synthesized from genuinely soured relationships. Bidirectional: either party can be killer or victim. (Seeded at new-game.)",
+                v => FeudSim.EnableFeuds = v);
+            BindApply("Feud", "EnableDebts", true,
+                "Seed debt cases (a creditor fed up with a debtor who stopped paying), synthesized over real acquaintance edges. A Money motive; the creditor is the lone suspect. (Seeded at new-game.)",
+                v => FeudSim.EnableDebts = v);
+            BindApply("Feud", "MaxFeuds", 40,
+                "Cap on synthesized feuds seeded per city (keeps the far-more-numerous affairs from being swamped). (Seeded at new-game.)",
+                v => FeudSim.MaxFeuds = v);
+            BindApply("Feud", "MaxDebts", 40,
+                "Cap on synthesized debts seeded per city. (Seeded at new-game.)",
+                v => FeudSim.MaxDebts = v);
+            BindApply("Feud", "FeudCaseShare", 0.15f,
+                "When the F6 force is OFF: target fraction of mod cases that feature a personal-feud motive (affair = the remainder after workplace + money + feud).",
+                v => MurderSelector.FeudCaseShare = v, R01());
+
+            // --- Clues ---
+            BindApply("Clues", "InjectClues", true,
+                "Inject deliberately-ambiguous physical notes per motivated case, hinting at motives.",
+                v => ClueInjector.Enable = v);
+            BindApply("Clues", "MaxCluesPerCase", 8,
+                "Safety cap on total motive clues per case (one per event-suspect: love letter / promotion letter + rival threats / termination notices).",
+                v => ClueInjector.MaxClues = v);
+            BindApply("Clues", "ObviousTestNames", true,
+                "TESTING: rename injected notes to 'MODCLUE ...' so they're easy to find. Set false for normal play.",
+                v => ClueInjector.ObviousNames = v);
+            BindApply("Clues", "FingerprintChance", 0.7f,
+                "Chance (0..1) a note carries the author's fingerprints. Below that, it's traceable only by handwriting.",
+                v => ClueInjector.FingerprintChance = v, R01());
+            BindApply("Clues", "WorkplaceClueShare", 0.5f,
+                "Chance (0..1) a given clue is placed at the victim's WORKPLACE rather than home. Motive-agnostic: any motive's clue can land at either, so location never betrays the motive.",
+                v => ClueInjector.WorkplaceClueShare = v, R01());
+            BindApply("Clues", "EmailClueShare", 0.5f,
+                "Chance (0..1) an eligible clue (affair love-letter, redundancy list, redevelopment plan) arrives as an EMAIL in an NPC's inbox instead of a physical note — never both. Promotion is exempt (always BOTH channels). RentArrears/Feud/Debt are always physical (handwriting + fingerprint, which email can't carry).",
+                v => ClueInjector.EmailClueShare = v, R01());
+
+            // --- Debug Keys (rebindable hotkeys; KeyCode renders as a key-binder in the overlay) ---
+            BindApply("Debug Keys", "CaseSolutionOverlay", UnityEngine.KeyCode.F9,
+                "Toggle the on-screen case-solution overlay (killer / victim / suspect pool / injected clues).",
+                v => DebugTools.KeyCaseSolution = v);
+            BindApply("Debug Keys", "InjectTestEmail", UnityEngine.KeyCode.F3,
+                "Inject a test email between two citizens (read on a home computer).",
+                v => DebugTools.KeyTestEmail = v);
+            BindApply("Debug Keys", "SpawnTestNote", UnityEngine.KeyCode.F4,
+                "Spawn a threatening test note in your apartment.",
+                v => DebugTools.KeyTestNote = v);
+            BindApply("Debug Keys", "CycleForceEvent", UnityEngine.KeyCode.F6,
+                "Cycle the forced next-murder event type (off / affair / promotion / layoffs / eviction / rentarrears / feud / debt).",
+                v => DebugTools.KeyCycleForce = v);
+            BindApply("Debug Keys", "GhostMode", UnityEngine.KeyCode.F7,
+                "Toggle ghost mode (NPCs ignore you; invincible).",
+                v => DebugTools.KeyGhost = v);
+            BindApply("Debug Keys", "AlwaysAnswer", UnityEngine.KeyCode.F8,
+                "Toggle always-answer (NPCs never refuse 'do you know this person?').",
+                v => DebugTools.KeyAlwaysAnswer = v);
+            BindApply("Debug Keys", "TeleportToScene", UnityEngine.KeyCode.F10,
+                "Teleport to the current crime scene.",
+                v => DebugTools.KeyTeleportScene = v);
+            BindApply("Debug Keys", "TeleportToWork", UnityEngine.KeyCode.F11,
+                "Teleport to the victim's workplace.",
+                v => DebugTools.KeyTeleportWork = v);
+            BindApply("Debug Keys", "TeleportToNearestKnower", UnityEngine.KeyCode.F12,
+                "Teleport to the nearest case-knower.",
+                v => DebugTools.KeyTeleportKnower = v);
+
+            // Live re-apply: when a knob changes (overlay edit / .cfg reload), push it into its static field.
+            Config.SettingChanged += (sender, e) =>
+            {
+                try
+                {
+                    var cs = (e as SettingChangedEventArgs)?.ChangedSetting;
+                    if (cs != null && _applyByEntry.TryGetValue(cs, out var apply)) apply();
+                }
+                catch (Exception ex) { Log.LogWarning($"[SODMotives] config live-apply error: {ex.Message}"); }
+            };
 
             // TESTING DEFAULT: force the first (and every) new murder to a MONEY case so V2.4 debts are
             // fast to test (with [Property] EnableProperty = false the Money bucket is debt-only, so this
@@ -117,6 +208,26 @@ namespace SODMotives
             Log.LogInfo("==  Murders will be driven by NPC relationships.       ==");
             Log.LogInfo("========================================================");
         }
+
+        // ---- A3 config helpers -----------------------------------------------
+
+        // Bind a knob, apply it now, and register it for live re-apply when it changes (overlay / .cfg).
+        // range = optional AcceptableValueRange (renders a slider + clamps); ui = optional overlay hints.
+        private void BindApply<T>(string section, string key, T def, string desc, Action<T> apply,
+                                  AcceptableValueBase range = null, ConfigurationManagerAttributes ui = null)
+        {
+            ConfigDescription cd =
+                (range == null && ui == null) ? new ConfigDescription(desc)
+              : (ui == null) ? new ConfigDescription(desc, range)
+              : new ConfigDescription(desc, range, ui);
+            ConfigEntry<T> entry = Config.Bind(section, key, def, cd);
+            apply(entry.Value);
+            _applyByEntry[entry] = () => apply(entry.Value);
+        }
+
+        private static AcceptableValueRange<float> R01() => new AcceptableValueRange<float>(0f, 1f);         // 0..1 slider
+        private static ConfigurationManagerAttributes Order(int order) => new ConfigurationManagerAttributes { Order = order };  // float toward top of section
+        private static ConfigurationManagerAttributes Hidden() => new ConfigurationManagerAttributes { IsAdvanced = true, Browsable = false }; // collapse under the overlay's "Advanced" toggle (the SoD overlay honours IsAdvanced; Browsable/Order are for the official ConfigurationManager)
 
         // ---- logging helpers -------------------------------------------------
 
@@ -209,6 +320,16 @@ namespace SODMotives
             }
             catch (Exception e) { Log.LogWarning($"[SODMotives]   {label}: describe error: {e.Message}"); }
         }
+    }
+
+    // Overlay integration: the BepInEx ConfigurationManager / BepInExConfigManager overlays recognise a
+    // settings-tags class purely by NAME ("ConfigurationManagerAttributes") via reflection — no assembly
+    // reference needed. We declare only the few fields we use (nullable so unset = the overlay's default).
+    public sealed class ConfigurationManagerAttributes
+    {
+        public int? Order;
+        public bool? Browsable;
+        public bool? IsAdvanced;
     }
 
     // One-time city-wide calibration report: real like distribution + strongest

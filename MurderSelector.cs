@@ -23,6 +23,11 @@ namespace SODMotives
         // classic serial-killer hunt never disappears. 0 (or less) = never force vanilla.
         // TESTING DEFAULT = 0 so every new sandbox yields a mod case to test.
         internal static int VanillaCaseEvery = 0;
+        // THE MAIN MIX KNOB (A3): probability [0..1] that an eligible case is a relationship-MOTIVE
+        // case; the rest are left entirely to vanilla (serial-killer, signature and all). 1 = every
+        // case is a motive case (the MAX — current behaviour), 0 = all vanilla. Read once per case, so
+        // an edit applies to the NEXT murder. Composes with VanillaCaseEvery (either can force vanilla).
+        internal static float MotiveCaseShare = 1.0f;
 
         // --- legacy V1/V2.0 selector knobs, kept bound so existing .cfg files don't break;
         //     no longer consulted by the victim-centric selector. Pruned in release cleanup. ---
@@ -38,9 +43,15 @@ namespace SODMotives
         // hunts (signature and all). Call once per handled case.
         internal static bool ShouldForceVanilla()
         {
-            if (VanillaCaseEvery <= 0) return false;   // testing: never force vanilla
-            _casesSinceForced++;
-            if (_casesSinceForced >= VanillaCaseEvery) { _casesSinceForced = 0; return true; }
+            // Deterministic cadence (optional): a full vanilla case every Nth handled case.
+            if (VanillaCaseEvery > 0)
+            {
+                _casesSinceForced++;
+                if (_casesSinceForced >= VanillaCaseEvery) { _casesSinceForced = 0; return true; }
+            }
+            // Probabilistic mix (the main knob): with probability (1 - MotiveCaseShare) leave this case
+            // to vanilla. MotiveCaseShare >= 1 => never (all motive, the default); <= 0 => always vanilla.
+            if (MotiveCaseShare < 1f && _rng.NextDouble() >= MotiveCaseShare) return true;
             return false;
         }
 

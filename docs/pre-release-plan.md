@@ -88,15 +88,41 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
     never contradict a vanilla "I don't know them"; it's purely a taste dial** ("how faint an
     acquaintance may gossip"). Safe to go lower (≈0.10 ≈ vanilla) for even more chatter. Tune in Phase C.
 
-- [ ] **A3 — In-game menu config** (L) *(new work package; needs recon first)*
-  Today config is BepInEx `.cfg` only (`Config.Bind` in `Plugin.cs`). The project references **no**
-  `SOD.Common` or config-menu lib yet.
-  - **Recon:** compare (a) `SOD.Common` (community lib — check whether it exposes an in-game settings
-    menu, not just save/time hooks), (b) the generic BepInEx **ConfigurationManager** overlay (quick
-    baseline, dev-flavoured, separate user install), (c) a custom Unity IMGUI menu hung off the game's
-    own options. Decide dependency vs roll-our-own.
-  - **Build:** surface the existing `ConfigEntry`s through the chosen path. Ideally lands before Phase D
-    so every knob is menu-exposed.
+- [~] **A3 — In-game menu config** (L) — **DECIDED + CODE DONE 2026-09-16** (builds clean + deployed;
+  NOT yet verified in-game — overlay not installed). Full recon: [`a3-config-menu-recon.md`](a3-config-menu-recon.md).
+  - **Recon result:** (a) `SOD.Common` = `.cfg`-binding sugar (`PluginController`/`IConfigBindings`), **no
+    in-game UI** → rejected. (b) external **ConfigurationManager** overlay = the SOD market norm (ship
+    `ConfigEntry`s + rely on BepInExConfigManager/ConfigurationManager; e.g. GameBalanceOptions). (c) custom
+    IMGUI + (a 4th option) native new-game-menu injection = scoped and **declined** (largest, no modding
+    API, most patch-fragile; the new-game screen is a fixed prefab of named `MainMenuController` widget
+    fields + hardcoded `ModifiersController` bools).
+  - **DECISION: Tier 1 — external overlay.** Player opens the overlay (incl. at the main menu, before New
+    Game) to edit knobs. Chosen because most knobs are actually LIVE (only the 4 `[Feud]` seeding caps are
+    new-game-time), so an overlay usable both in-game and at the main menu strictly dominates a new-game-only
+    native panel.
+  - **CODE DONE (`Plugin.cs` + `MurderSelector.cs`):** `BindApply` + `Config.SettingChanged` re-read
+    refactor — every knob is now re-applied into its static field on change (overlay / .cfg reload), so
+    edits actually take effect (next case; `[Feud]` caps next new game). New headline knob **`[Selection]
+    MotiveCaseShare`** (0..1, default **1.0 = all-motive = current MAX**; lower mixes in vanilla via
+    `MurderSelector.ShouldForceVanilla`, composing with `VanillaCaseEvery`). Local
+    `ConfigurationManagerAttributes` class → 0..1 sliders, MotiveCaseShare ordered to top, legacy knobs
+    hidden (still in `.cfg`).
+  - **OVERLAY INSTALLED (2026-09-16):** BepInExConfigManager 1.3.1 (TeamSpyraxi, SoD-native) →
+    `plugins/BepInExConfigManager/` (overlay + UniverseLib) + `patchers/BepInExConfigManager/` (patcher).
+    Toggle **rebound F5 → BackQuote** (the game's F5 = quicksave) by pre-writing
+    `config/com.sinai.BepInExConfigManager.cfg` — `[Settings]` / `Main Menu Toggle = BackQuote` (schema from
+    decompiling the overlay: section const `CTG="Settings"`, key `KeyCode` default F5=286). **This overlay
+    honours only `IsAdvanced`** (ignores `Order`/`Browsable`) — legacy knobs use `IsAdvanced=true`. Our debug
+    **F5 (TriggerMurder) unbound** in `DebugTools` (method kept for later re-bind).
+  - **KEYS CONFIGURABLE (2026-09-16):** all debug hotkeys are now a `[Debug Keys]` `KeyCode` section
+    (`DebugTools.Key*`, live-rebound from the overlay's key-binders — BepInEx converts enums natively, so
+    KeyCode binds regardless of load order). The MENU toggle key is the overlay's OWN `[Settings] Main Menu
+    Toggle` (rebindable natively under the "BepInExConfigManager" category); deliberately NOT duplicated in
+    our config to avoid two controls fighting over one setting.
+  - **PENDING:** verify in-game — open with `` ` ``, edit `MotiveCaseShare`, confirm live-apply (next case)
+    + New-Game reseed for `[Feud]`, and that a rebound debug key takes effect; then declare the overlay an
+    optional/recommended dependency for release (as GameBalanceOptions does). If the pre-written keybind
+    doesn't take, fall back = rebind in the overlay's own Settings ▸ Main Menu Toggle.
 
 - [x] **A4 — Workplace/property participant-knower exemption** (S, design call) ✅ **DONE 2026-09-16**
   **Decision:** exempt MULTI-PARTY events (Promotion/Layoffs/Eviction) from the "a participant isn't a
@@ -248,3 +274,11 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
   (vanilla precedent `TriggerCoverUpTelephoneCall`). Verdict: MEDIUM spike (vmail-class runtime risk),
   address-book half larger. Recommend post-release unless a call-log-only spike is wanted; **decision
   pending.**
+- 2026-09-16 — **A3 recon DONE + DECIDED + CODE DONE** (`a3-config-menu-recon.md`; builds clean, deployed,
+  NOT yet verified in-game). Market survey: ~90% of SOD mods ship `ConfigEntry`s + rely on the
+  BepInExConfigManager/ConfigurationManager overlay (F5/F1); a few build bespoke IMGUI menus (Khundian's
+  Debug Menu); nobody injects config into the native new-game menu. **Chose Tier 1 (external overlay).**
+  Implemented the `BindApply`/`SettingChanged` re-read refactor (all knobs live), the `MotiveCaseShare`
+  0..1 mix knob (1.0 = all-motive MAX = current), and a local `ConfigurationManagerAttributes` (sliders /
+  ordering / hide-legacy). PENDING: install an overlay (recommend SoD-native BepInExConfigManager) + in-game
+  verify; then declare it an optional dependency.

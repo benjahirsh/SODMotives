@@ -15,16 +15,16 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
 
 ## Phase A — Content & robustness (safe during testing; highest player-facing value)
 
-- [ ] **A1 — Gossip writing pass** (M) *(user-requested 2026-09-14; bigger than a tweak)*
-  Testimony reads templated and **overuses em-dashes ("AI giveaway")**. Naturalise across ALL motive
-  types: `SocialEvent.TestimonyAbout` (`SocialEvent.cs`), `Interrogation.AffairLine` +
-  `Interrogation.ComposeLines` (`Interrogation.cs`), and the workplace/property/feud/debt phrasings.
-  - Cut em-dashes; add lexical variety picked **deterministically per (npc,subject) seed** (re-asking
-    stays stable — mirror the existing `Pick(seed, …)` pattern).
-  - Make multi-line delivery conversational (a follow-on "…and I heard they also fell out with Y"),
-    not a second identically-shaped sentence.
-  - **Pairs with A5** (feud gossip-bubble collapse) — same file (`Interrogation.ComposeLines`); best
-    done in the same pass as the naturalisation.
+- [x] **A1 — Gossip writing pass** ✅ **DONE 2026-09-16** (builds clean; NOT yet playtested)
+  - **Finding:** the player-facing gossip variants have **no em-dashes** — every em-dash was in comments
+    or log strings, so the "AI giveaway" concern was already clean. Lexical variety (seeded `Pick`)
+    already present too.
+  - **Done:** added `DedupeOpeners` — after the first bubble, a repeated "Word is …" opener becomes a
+    conversational follow-on ("I also heard …" / "And …" / "On top of that, …"), so a multi-bubble
+    answer no longer reads as several identically-shaped sentences (the documented ask). Combined with A5
+    (collapse), repetition is much reduced.
+  - **Not done (not needed):** a line-by-line rewrite of the individual variant strings — they already
+    read naturally. Revisit only if playtesting shows a specific phrasing grating.
 
 - [ ] **A2 — Non-killer-knower guarantee** (M) *(robustness; open task-chip since v2.3.1; A4-playtest
   findings + decision recorded 2026-09-16 — familiarity symmetry considered and DECLINED)*
@@ -92,12 +92,11 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
   suspect→suspect, uninvolved control) + feud negative (parties stay silent) both pass. Eviction is a
   no-op (suspects can't ID the landlord — see A2, accepted).
 
-- [ ] **A5 — Feud gossip-bubble collapse** (S) *(moved up from extensions 2026-09-16; pairs with A1)*
-  Collapse the multiple feud lines about one subject into a SINGLE bubble, the way affairs/debt already
-  do — e.g. "Word is they'd fallen out with X, Y and Z." Today each feud event the subject is in yields
-  its own bubble ("rounds off strangely" with many feud suspects). **Mechanism already exists:** mirror
-  the `lovers` / `owedTo` / `owedBy` list-collapse in `Interrogation.ComposeLines` + add a
-  `FeudLine(subject, others, seed)` like `AffairLine`. Low complexity; best done alongside A1.
+- [x] **A5 — Feud gossip-bubble collapse** ✅ **DONE 2026-09-16** (builds clean; NOT yet playtested)
+  A subject's feuds now collapse into ONE bubble ("Word is they'd fallen out with X, Y and Z.") via a new
+  `feudOthers` list + `FeudLine` helper in `Interrogation.ComposeLines`, mirroring the affair/debt
+  collapse — instead of one identical "falling-out" line per feud. `TestimonyAbout`'s Feud case is no
+  longer routed from ComposeLines (noted in `SocialEvent.cs`); RentArrears still uses `TestimonyAbout`.
 
 - [~] **A6 — Address-book / call-history "who to interview" lead** — **RECON DONE 2026-09-16**, full
   writeup in [`a6-callhistory-recon.md`](a6-callhistory-recon.md). Findings:
@@ -213,6 +212,10 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
   "bad blood between them and <themselves>", since `TestimonyAbout(victim)` names the other party = the
   interviewee). **Contrast also CONFIRMED:** an uninvolved feud knower relayed the feud and NAMED the
   killer — so the suspect silence is definitively the skip, not broken/missing gossip. A4 airtight.
+- 2026-09-16 — **A1 + A5 DONE** (builds clean, NOT yet playtested): A5 collapses a subject's feuds into
+  one bubble (`FeudLine` in `Interrogation.ComposeLines`); A1 adds `DedupeOpeners` (repeated "Word is …"
+  → conversational follow-on). Finding: gossip strings had NO em-dashes (only comments did), so the
+  writing pass was lighter than expected.
 - 2026-09-16 — **A2 decision:** accept clue-led eviction; do NOT modify acquaintance `known` weights
   (killer-silence tell + thin eviction suspect interrogation accepted). Original independent-knower
   guarantee stays in scope but must be met without weight edits (`MarkKnown` an existing name-knower /

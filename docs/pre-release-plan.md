@@ -282,3 +282,8 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
   0..1 mix knob (1.0 = all-motive MAX = current), and a local `ConfigurationManagerAttributes` (sliders /
   ordering / hide-legacy). PENDING: install an overlay (recommend SoD-native BepInExConfigManager) + in-game
   verify; then declare it an optional dependency.
+- 2026-09-16 — **A3 overlay installed + configurable debug keys + COMMITTED (`92a396b` on v2).** Installed
+  BepInExConfigManager 1.3.1 (user-side, not in-repo), rebound its toggle F5 → BackQuote (F5 = quicksave).
+  Added a `[Debug Keys]` `KeyCode` section (all debug hotkeys rebindable live via the overlay's key-binders);
+  unbound debug F5 (was TriggerMurder). Menu CONFIRMED working in-game ("works awesome"). Remaining: verify
+  MotiveCaseShare mixing over several murders + a rebound debug key; then declare the overlay an optional dep.

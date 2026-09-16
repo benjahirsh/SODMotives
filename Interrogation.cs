@@ -208,14 +208,17 @@ namespace SODMotives
             // Gather the subject's affair partners (that this NPC knows) and non-affair lines
             // separately. Multiple affairs of the same subject COLLAPSE into ONE line naming each
             // lover once — so affairs are a single bubble.
-            // Collapse the one-to-one money/affair relations into single list bubbles (like affairs):
-            //   lovers  -> "having an affair with X, Y and Z"
-            //   owedTo  -> creditors the subject owes  ("they owed X and Y money")
-            //   owedBy  -> debtors who owe the subject  ("X and Y owed them money")
-            // Everything else (workplace / property / feud) stays one bubble per event line.
+            // Collapse the one-to-one relations into single list bubbles (like affairs) so an answer
+            // never reads as several identically-shaped sentences:
+            //   lovers     -> "having an affair with X, Y and Z"
+            //   owedTo     -> creditors the subject owes  ("they owed X and Y money")
+            //   owedBy     -> debtors who owe the subject  ("X and Y owed them money")
+            //   feudOthers -> feud counterparties          ("fallen out with X, Y and Z")
+            // Only the multi-party workplace / property events stay one bubble per event line.
             var lovers = new List<Human>();
             var owedTo = new List<Human>();   // subject is the debtor; these are their creditors
             var owedBy = new List<Human>();   // subject is the creditor; these are their debtors
+            var feudOthers = new List<Human>();   // feud counterparties of the subject (collapsed like affairs/debt)
             var workLines = new List<string>();
             foreach (var e in EventStore.KnownBy(npc.humanID))
             {
@@ -241,11 +244,19 @@ namespace SODMotives
                     if (e.a != null && Motive.Same(e.a, subject)) { if (e.b != null && !ContainsHuman(owedTo, e.b)) owedTo.Add(e.b); }
                     else if (e.b != null && Motive.Same(e.b, subject)) { if (e.a != null && !ContainsHuman(owedBy, e.a)) owedBy.Add(e.a); }
                 }
+                else if (e.type == SocialEventType.Feud)
+                {
+                    // Collapse the subject's feuds into ONE bubble (like affairs/debt) instead of a
+                    // separate, identically-shaped "falling-out" line per feud. Name the counterparty
+                    // (the party that isn't the subject).
+                    if (e.a != null && Motive.Same(e.a, subject)) { if (e.b != null && !ContainsHuman(feudOthers, e.b)) feudOthers.Add(e.b); }
+                    else if (e.b != null && Motive.Same(e.b, subject)) { if (e.a != null && !ContainsHuman(feudOthers, e.a)) feudOthers.Add(e.a); }
+                }
                 else
                 {
-                    // Non-affair, non-debt (workplace / property / feud): the SUBJECT's own role.
-                    // Bump the seed per line so multiple events of one type don't pick the same variant.
-                    // Null when the subject isn't in this event.
+                    // Multi-party workplace / property (Promotion / Layoffs / Eviction / RentArrears):
+                    // the SUBJECT's own role. Bump the seed per line so multiple events of one type don't
+                    // pick the same variant. Null when the subject isn't in this event.
                     string wl = e.TestimonyAbout(subject, seed + workLines.Count);
                     if (!string.IsNullOrEmpty(wl) && !workLines.Contains(wl)) workLines.Add(wl);
                 }
@@ -257,11 +268,13 @@ namespace SODMotives
             if (lovers.Count > 0) lines.Add(AffairLine(subject, lovers, seed));
             if (owedTo.Count > 0) lines.Add(DebtOwedLine(owedTo, seed));
             if (owedBy.Count > 0) lines.Add(DebtOwedToThemLine(owedBy, seed + 1));
+            if (feudOthers.Count > 0) lines.Add(FeudLine(feudOthers, seed + 2));
             for (int i = 0; i < workLines.Count && lines.Count < MaxGossipBubbles; i++) lines.Add(workLines[i]);
 
-            // A hearsay tail like ", from what I hear." reads oddly repeated across bubbles in one answer.
-            // Keep it on the first line that uses it and trim it from the rest (the sentence still reads
-            // fine without it), so the same framing is never echoed back-to-back.
+            // Naturalise a multi-bubble answer so it never reads as several identically-shaped sentences:
+            // vary a repeated "Word is …" opener into a conversational follow-on, and keep the
+            // ", from what I hear." hearsay tail on only the first line that uses it.
+            DedupeOpeners(lines);
             DedupeHearsayTail(lines);
             return lines;
         }
@@ -273,10 +286,13 @@ namespace SODMotives
         {
             Human sp = SafePartner(subject);
             string ln = Pick(seed,
-                $"Word is they've been having an affair with {JoinNames(lovers)}.",
-                $"They've been sleeping with {JoinNames(lovers)}, from what I hear.",
-                $"Word is there's something going on between them and {JoinNames(lovers)}.");
-            if (sp != null) ln += $" Can't imagine {Name(sp)} took that well.";
+                $"I think they've been having an affair with {JoinNames(lovers)}.",
+                $"Apparently they have something going on with {JoinNames(lovers)}.",
+                $"Rumour has it they've been seeing {JoinNames(lovers)} in secret.");
+            if (sp != null) ln += Pick(seed + 5,
+                $" Can't imagine {Name(sp)} took that well.",
+                $" {Name(sp)} can't have been happy about it.",
+                $" Don't think {Name(sp)} knew.");
             return ln;
         }
 
@@ -284,21 +300,55 @@ namespace SODMotives
         // a "X, Y and Z" list (no singular/plural verb agreement on the list).
         private static string DebtOwedLine(List<Human> creditors, int seed)   // subject OWES these people
             => Pick(seed,
-                $"Word is they owed {JoinNames(creditors)} money.",
-                $"Heard they were in debt to {JoinNames(creditors)}.",
-                $"They owed {JoinNames(creditors)} money and hadn't paid it back, from what I hear.",
-                $"Word is they'd borrowed money off {JoinNames(creditors)} and never repaid it.");
+                $"Apparently they owed {JoinNames(creditors)} money.",
+                $"Word is they were in debt to {JoinNames(creditors)}.",
+                $"I think they owed {JoinNames(creditors)} and hadn't paid it back.",
+                $"Rumour has it they'd borrowed off {JoinNames(creditors)} and never repaid it.");
 
         private static string DebtOwedToThemLine(List<Human> debtors, int seed)   // these people OWE the subject
             => Pick(seed,
-                $"Word is {JoinNames(debtors)} owed them money.",
-                $"Heard {JoinNames(debtors)} still owed them money.",
-                $"{JoinNames(debtors)} owed them money and hadn't paid it back, from what I hear.",
-                $"Word is they'd lent {JoinNames(debtors)} money that was never repaid.");
+                $"Apparently {JoinNames(debtors)} owed them money.",
+                $"Word is {JoinNames(debtors)} still owed them money.",
+                $"Heard they'd lent {JoinNames(debtors)} money that was never repaid.",
+                $"I think {JoinNames(debtors)} owed them and never paid them back.");
+
+        // Feud gossip, collapsed like affairs/debt. Subject = "they". Names each distinct counterparty
+        // once; variants read correctly for one name or an "X, Y and Z" list.
+        private static string FeudLine(List<Human> others, int seed)
+            => Pick(seed,
+                $"Apparently they'd fallen out with {JoinNames(others)}.",
+                $"Word is they and {JoinNames(others)} had a serious falling out.",
+                $"Rumour has it they'd been at odds with {JoinNames(others)}.",
+                $"Heard they weren't on speaking terms with {JoinNames(others)}.");
 
         // Deterministic variant pick (stable per seed; never negative-indexes).
         private static string Pick(int seed, params string[] variants)
             => variants[((seed % variants.Length) + variants.Length) % variants.Length];
+
+        // Rumour lead-ins we recognise. If a bubble repeats a lead-in already used earlier in the SAME
+        // answer, swap it for a conversational follow-on so a multi-bubble answer never stacks the same
+        // framing ("Apparently X. Apparently Y."). The clause after every lead-in starts with
+        // they/there's/a name, so each follow-on stays grammatical.
+        private static readonly string[] _leadIns =
+            { "Word is ", "Apparently ", "Rumour has it ", "I think ", "I heard that ", "I heard ",
+              "I gather ", "Someone mentioned ", "Heard " };
+        private static readonly string[] _followOns = { "I also heard ", "And ", "On top of that, " };
+        private static void DedupeOpeners(List<string> lines)
+        {
+            var usedLead = new HashSet<string>();
+            int f = 0;
+            for (int i = 0; i < lines.Count; i++)
+            {
+                var s = lines[i];
+                if (string.IsNullOrEmpty(s)) continue;
+                string lead = null;
+                for (int j = 0; j < _leadIns.Length; j++) if (s.StartsWith(_leadIns[j])) { lead = _leadIns[j]; break; }
+                if (lead == null) continue;
+                if (usedLead.Add(lead)) continue;   // first appearance of this lead-in — keep it
+                lines[i] = _followOns[f % _followOns.Length] + s.Substring(lead.Length);
+                f++;
+            }
+        }
 
         // Keep a repeated hearsay tail on only the FIRST bubble that uses it; trim it from later ones so
         // the same "…, from what I hear." framing is never echoed twice in one interrogation answer.

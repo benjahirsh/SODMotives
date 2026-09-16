@@ -201,22 +201,18 @@ namespace SODMotives
                     // / "passed over" framing — the player infers the rivalry from the pool.
                     if (a != null && a.humanID == sid)        // the subject IS the promotee
                         return Pick(seed,
-                            "Word is they just got a promotion.",
+                            "Apparently they just got a promotion.",
                             "Heard they were promoted recently.",
-                            "They landed a promotion at work, from what I hear.",
-                            "Word is they moved up at work not long ago.");
+                            "Someone mentioned they'd landed a promotion at work.");
                     if (b != null && b.humanID == sid)        // the subject IS the boss / decider
                         return Pick(seed,
-                            "Word is they're the boss and made a promotion recently.",
-                            "Heard they run the place and just promoted one of their staff.",
-                            "They're the one in charge, and word is they handed out a promotion lately.",
-                            "Word is they're the boss where someone was just promoted.");
+                            "Heard they gave someone a promotion at work.",
+                            "Apparently they recently promoted an employee.");
                     if (InGroup(sid))                         // a rival who was up for the same promotion
                         return Pick(seed,
-                            "Word is they were up for a promotion recently.",
-                            "Heard they'd been in the running for a promotion at work.",
-                            "Word is they were up for a promotion that went to a colleague.",
-                            "They'd been after a promotion at work, from what I hear.");
+                            "I think they were up for a promotion recently.",
+                            "I heard they were after a promotion that went to a colleague instead.",
+                            "Word is they'd been chasing a promotion at work.");
                     return null;
                 }
 
@@ -224,16 +220,15 @@ namespace SODMotives
                 {
                     if (a != null && a.humanID == sid)        // the subject IS the boss (victim)
                         return Pick(seed,
-                            "Word is they're the boss and have been letting people go.",
-                            "Heard they run the place and had to make some layoffs.",
-                            "Word is they've been cutting staff at work.",
-                            "They're in charge at work, and word is they've been laying people off.");
+                            "They've been laying off some of their employees.",
+                            "Apparently they've had to make some cuts to their staff.",
+                            "Heard they have been putting some of their employees through a round of layoffs.");
                     if (InGroup(sid))                         // someone let go in the cuts (equal treatment)
                         return Pick(seed,
-                            "Heard they were let go from work.",
-                            "Word is they lost their job recently.",
-                            "They got laid off, from what I hear.",
-                            "Word is they'd been let go from their job.");
+                            "Apparently they got fired from work.",
+                            "I think they lost their job recently.",
+                            "Someone mentioned they'd been laid off.",
+                            "I gather they'd been let go from their job.");
                     return null;
                 }
 
@@ -243,16 +238,16 @@ namespace SODMotives
                     // (the specific address could be the killer's own home). Pointer, not detail.
                     if (a != null && a.humanID == sid)        // the subject IS the landlord (victim)
                         return Pick(seed,
-                            "They're a landlord. Word is they're clearing tenants out of one of their buildings.",
-                            "Heard they let places out and they're evicting the tenants from one of them.",
-                            "Word is they're a landlord, turfing tenants out of a building they own.",
-                            "They own property. Word is they're clearing a building of its tenants.");
+                            "Word is they're clearing tenants out of one of their buildings.",
+                            "Apparently they're evicting tenants from one of their properties.",
+                            "Heard they've been turfing tenants out of a property they own.",
+                            "I think they are clearing a building of its tenants.");
                     if (InGroup(sid))                         // a tenant being evicted (equal grievance)
                         return Pick(seed,
-                            "Heard their landlord's evicting them.",
-                            "Word is they're being turfed out of their place.",
-                            "They're losing their home, from what I hear.",
-                            "Word is their landlord's kicking them out.");
+                            "I heard that their landlord's evicting them.",
+                            "Rumour has it they're being turfed out of their place.",
+                            "Someone mentioned they're being forced to move from their home.",
+                            "Heard their landlord's kicking them out.");
                     return null;
                 }
 
@@ -260,21 +255,24 @@ namespace SODMotives
                 {
                     if (a != null && a.humanID == sid)        // the subject IS the tenant (victim)
                         return Pick(seed,
-                            "Word is they'd been struggling with money lately.",
-                            "Heard they'd been having money trouble.",
-                            "They'd fallen behind on their rent, from what I hear.",
-                            "Word is money had been tight for them.");
+                            "Apparently they've been struggling with money.",
+                            "I think they had been having money trouble.",
+                            "Heard they fell behind on their rent.",
+                            "Money had been tight for them, apparently.");
                     if (b != null && b.humanID == sid)        // the subject IS the landlord (suspect)
                         return Pick(seed,
-                            "They're a landlord. Word is they had a tenant who wouldn't pay up.",
-                            "Heard they let places out and one of their tenants stopped paying rent.",
-                            "Word is they're a landlord chasing a tenant for unpaid rent.",
-                            "They own property, and one of their tenants had stopped paying, from what I hear.");
+                            "Apparently they had a tenant who wouldn't pay up.",
+                            "Word is one of their tenants stopped paying rent.",
+                            "Heard they were chasing a tenant for unpaid rent.",
+                            "I think one of their tenants had stopped paying rent.");
                     return null;
                 }
 
                 case SocialEventType.Feud:
                 {
+                    // NOTE (A5, 2026-09-16): gossip now COLLAPSES a subject's feuds into one bubble via
+                    // Interrogation.FeudLine, so ComposeLines no longer routes feuds here. Kept for
+                    // reference / any other caller of TestimonyAbout.
                     // NAME the other party: a feud has no relationship anchor and no identity-carrying
                     // clue (its threat note is anonymous handwriting), so this testimony IS the lead. Both
                     // parties are treated identically, so naming reads no guiltier for the killer than a

@@ -219,13 +219,15 @@ namespace SODMotives
             var workLines = new List<string>();
             foreach (var e in EventStore.KnownBy(npc.humanID))
             {
-                // An NPC is NOT a knower of an event they are themselves a party to: they lived it,
-                // they don't relay it as gossip. For a one-to-one event (feud/debt/affair) the
-                // testimony names the OTHER party, so a party asked about the other would end up
-                // naming THEMSELVES — which is how the killer was heard narrating their own feud with
-                // the victim in the third person. (This also means an involved coworker/tenant no
-                // longer relays a workplace/property event they're in — only uninvolved observers do.)
-                if (e.InvolvesHuman(npc.humanID)) continue;
+                // A party to a ONE-TO-ONE event (affair/feud/debt/rent-arrears) is NOT a gossip
+                // "knower" of it: its testimony names the OTHER party, so a party asked about the other
+                // would narrate THEMSELVES in the third person (how the killer was once heard describing
+                // their own feud with the victim) — or worse, volunteer their own motive (a landlord
+                // relaying their tenant's arrears). MULTI-PARTY events (promotion/layoffs/eviction) are
+                // EXEMPT: their testimony reports the SUBJECT's role, not the speaker's, so an involved
+                // coworker/tenant naming a co-participant can't self-incriminate — and office/building
+                // drama realistically spreads among the very people in it. (A4, 2026-09-16.)
+                if (IsOneToOne(e.type) && e.InvolvesHuman(npc.humanID)) continue;
 
                 if (e.type == SocialEventType.Affair)
                 {
@@ -335,6 +337,24 @@ namespace SODMotives
         }
 
         // ---- helpers ----
+        // One-to-one / two-party events whose testimony names the OTHER party — a party to one must NOT
+        // relay it (they'd narrate themselves / confess their own motive). Multi-party events
+        // (promotion/layoffs/eviction) name the SUBJECT's role instead, so involved parties may gossip
+        // them (see the skip in ComposeLines, A4).
+        private static bool IsOneToOne(SocialEventType t)
+        {
+            switch (t)
+            {
+                case SocialEventType.Affair:
+                case SocialEventType.Feud:
+                case SocialEventType.Debt:
+                case SocialEventType.RentArrears:
+                    return true;
+                default:
+                    return false;   // Promotion / Layoffs / Eviction — multi-party, exempt
+            }
+        }
+
         private static bool Involves(SocialEvent e, Human h)
             => h != null && ((e.a != null && e.a.humanID == h.humanID) || (e.b != null && e.b.humanID == h.humanID));
 

@@ -123,14 +123,19 @@ namespace SODMotives
 
         // Eviction: a = landlord (victim); group = aggrieved tenants being cleared out for a
         // redevelopment. Every tenant about to lose their home has a reason to kill the landlord.
+        // Each tenant's detail names THEIR OWN unit (the home they're losing), not one shared building
+        // label: the old `placeName` was just the first resident's unit (PropertySim.PlaceName), so every
+        // suspect read as being cleared from the same — often wrong — address in F9/logs. Falls back to
+        // placeName / "their building" only when a tenant's own address is unavailable.
         private void CollectEvictionEdges(List<SuspectEdge> o)
         {
-            string co = string.IsNullOrEmpty(placeName) ? "their building" : placeName;
             for (int i = 0; i < group.Count; i++)
             {
                 Human t = group[i];
                 if (t == null) continue;
-                Emit(o, t, a, 85f, MotiveType.Money, $"{SafeName(a)} was clearing them out of {co} in the redevelopment");
+                string where = SafeAddr(t);
+                if (string.IsNullOrEmpty(where)) where = string.IsNullOrEmpty(placeName) ? "their building" : placeName;
+                Emit(o, t, a, 85f, MotiveType.Money, $"{SafeName(a)} was clearing them out of {where} in the redevelopment");
             }
         }
 
@@ -414,6 +419,14 @@ namespace SODMotives
         private static string SafeLocName(NewGameLocation loc)
         {
             try { return loc != null ? loc.name : "?"; } catch { return "?"; }
+        }
+
+        // A human's own home-address label (the specific unit), or null if unavailable. Used so an
+        // eviction suspect's motive detail names the home THEY are losing, not a shared building label.
+        private static string SafeAddr(Human h)
+        {
+            try { var home = h != null ? h.home : null; return home != null && !string.IsNullOrEmpty(home.name) ? home.name : null; }
+            catch { return null; }
         }
     }
 

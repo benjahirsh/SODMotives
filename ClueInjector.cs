@@ -1011,12 +1011,12 @@ namespace SODMotives
             // SAME line for the same rival. Hostile, promotion-flavoured, no em-dashes (gossip-style tone).
             int seed = 0; try { if (aggressor != null) seed = aggressor.humanID; } catch { }
             sb.Append(PickVariant(seed,
-                "That promotion should have been mine. Enjoy it while it lasts. You'll regret taking what I earned.",
-                "You think you deserved that job? You took what was mine, and I won't forget it.",
-                "I was next in line and you know it. Don't get too comfortable in that new office.",
-                "Congratulations on the promotion. Shame it won't do you much good. Watch yourself.",
-                "You stepped over me to get that job. People who do that don't stay on top for long.",
-                "So you got the promotion. Make the most of it while you still can."));
+                "You'll regret taking what I earned. Enjoy it while it lasts.",
+                "You took what was mine, and I won't forget it.",
+                "Don't get too comfortable in that new office.",
+                "Congratulations on the promotion. Watch yourself.",
+                "Traitor. You took what was mine.",
+                "Make the most of it while you still can."));
             string hwFont = "Pacific Beach Script Font SDF";
             try { if (aggressor != null && aggressor.handwriting != null && aggressor.handwriting.fontAsset != null) { var fn = aggressor.handwriting.fontAsset.name; if (!string.IsNullOrEmpty(fn)) hwFont = fn; } } catch { }
             string treeId = RegisterCustomDocTree(sb.ToString(), fixedTreeId, hwFont, 30f, true);

@@ -88,8 +88,9 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
   knower of their own event" skip; KEEP the skip for one-to-one events (Affair/Feud/Debt/RentArrears),
   whose testimony names the other party (a party would narrate themselves / confess their own motive).
   **Applied:** `Interrogation.ComposeLines` skip is now gated on a new `IsOneToOne(e.type)` helper
-  (`Interrogation.cs`). Builds clean; NOT yet playtested (confirm involved coworkers/tenants now relay
-  workplace/property gossip, and one-to-one self-narration is still suppressed).
+  (`Interrogation.cs`). Builds clean; **PLAYTEST VERIFIED 2026-09-16** — layoffs positive (suspect→victim,
+  suspect→suspect, uninvolved control) + feud negative (parties stay silent) both pass. Eviction is a
+  no-op (suspects can't ID the landlord — see A2, accepted).
 
 - [ ] **A5 — Feud gossip-bubble collapse** (S) *(moved up from extensions 2026-09-16; pairs with A1)*
   Collapse the multiple feud lines about one subject into a SINGLE bubble, the way affairs/debt already
@@ -206,8 +207,12 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
   eviction). Both findings rolled into **A2** (two-gate structure, killer-silence tell).
 - 2026-09-16 — **A4 layoffs FULLY VERIFIED:** suspect→victim ✅, suspect→non-killer-suspect ✅ (Annie
   relayed a co-suspect's layoff; others gated by `KnowsName`, expected), uninvolved-knower control ✅.
-  Only remaining core A4 check: the **Feud negative** (a feud party must stay silent about the other
-  party; an uninvolved knower must relay it).
+- 2026-09-16 — **A4 Feud negative PASSED (party-side) → A4 VERIFIED.** All feud suspects could name the
+  victim (both gates pass) yet gave NO feud gossip → the `IsOneToOne` skip suppresses a party's
+  third-person self-narration exactly as intended (an un-skipped feud would have each suspect narrate
+  "bad blood between them and <themselves>", since `TestimonyAbout(victim)` names the other party = the
+  interviewee). **Contrast also CONFIRMED:** an uninvolved feud knower relayed the feud and NAMED the
+  killer — so the suspect silence is definitively the skip, not broken/missing gossip. A4 airtight.
 - 2026-09-16 — **A2 decision:** accept clue-led eviction; do NOT modify acquaintance `known` weights
   (killer-silence tell + thin eviction suspect interrogation accepted). Original independent-knower
   guarantee stays in scope but must be met without weight edits (`MarkKnown` an existing name-knower /

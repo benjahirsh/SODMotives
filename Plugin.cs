@@ -38,8 +38,8 @@ namespace SODMotives
                 "The real killer is picked uniformly at random from the victim's top-N strongest suspects.").Value;
             MurderSelector.WorkplaceCaseShare = Config.Bind("Selection", "WorkplaceCaseShare", 0.5f,
                 "When the F6 force is OFF: target fraction of mod cases that feature a workplace motive, so the far-more-numerous affairs don't swamp workplace. 0 = affairs only, 1 = workplace only.").Value;
-            Motive.NameKnownThreshold = Config.Bind("Selection", "NameKnownThreshold", 0.35f,
-                "Minimum directed familiarity (Acquaintance.known, 0..1) for an NPC to count as knowing a person's NAME (able to identify their photo). Gates interrogation gossip + the F9 knower list. Real relationships sit ~0.6-0.9; casual acquaintances ~0.1-0.2.").Value;
+            Motive.NameKnownThreshold = Config.Bind("Selection", "NameKnownThreshold", 0.2f,
+                "Minimum directed familiarity (Acquaintance.known, 0..1) for an NPC to count as knowing a person's NAME (able to identify their photo). Gates interrogation gossip + the F9 knower list. Real relationships sit ~0.6-0.9; casual acquaintances ~0.1-0.2. Lowered to 0.2 to widen gossip coverage (more interactions); tune vs the vanilla 'do you know this person' threshold.").Value;
             // Legacy V1/V2.0 knobs — kept bound so existing .cfg files don't break; no longer
             // consulted by the victim-centric selector. Pruned in release cleanup.
             MurderSelector.TopPoolSize = Config.Bind("Selection", "TopPoolSize", 40,

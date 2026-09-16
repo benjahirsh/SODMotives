@@ -98,18 +98,21 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
   the `lovers` / `owedTo` / `owedBy` list-collapse in `Interrogation.ComposeLines` + add a
   `FeudLine(subject, others, seed)` like `AffairLine`. Low complexity; best done alongside A1.
 
-- [ ] **A6 — Address-book / call-history "who to interview" lead** (L, RECON-FIRST)
-  *(moved up from extensions 2026-09-16 to scope its complexity)*
-  Surface the victim's phone contacts + call log as a lead to WHO to interview — mirroring how the clue
-  pile + gossip already point at suspects. **Recon before committing** (this may drop back to
-  post-release if the API doesn't cooperate):
-  - Is an NPC's address book / call history exposed as INSPECTABLE evidence the player can read?
-    (`AddressBookController`, `CallLogsContentController` via `TelephoneController.PhoneCall`;
-    `Toolbox.GetMailbox()` = the physical mailbox.)
-  - Can we INJECT entries (ensure the victim's contacts/log include the suspects + knowers), or is it
-    read-only sim state?
-  - Does it persist / round-trip on reload?
-  Decide after recon: keep as a pre-release feature, or return it to `docs/extensions/`.
+- [~] **A6 — Address-book / call-history "who to interview" lead** — **RECON DONE 2026-09-16**, full
+  writeup in [`a6-callhistory-recon.md`](a6-callhistory-recon.md). Findings:
+  - **Inspectable?** ✅ call log renders via the phone (`CallLogsContentController.building` →
+    `NewBuilding.callLog : List<TelephoneController.PhoneCall>`); a call is `EvidenceTelephoneCall`.
+    Address book = `Human.addressBook : Evidence`.
+  - **Injectable?** call log = **likely clean** (construct `PhoneCall`, `building.callLog.Add`; vanilla
+    precedent `TriggerCoverUpTelephoneCall`). Address book (Evidence) = **harder/opaque**.
+  - **Persists?** ✅ **natively** — `BuildingStateSav.callLog` + value-type `PhoneCall`, so **no sidecar/
+    reload engine** (the email feature's biggest cost is absent here).
+  - **VERDICT:** call-log lead is **MEDIUM** (not "small") — native persistence shrinks it, but it
+    carries vmail-class runtime risk (renderer finickiness + an unconfirmed player-access flow, pinnable
+    only in-game). Address-book half is **larger/uncertain** → post-release.
+  - **RECOMMENDATION:** keep A6 **post-release by default**; if wanted in v1, scope **only** the call-log
+    half as a test-hook-first spike (retire the render + access unknowns before wiring). Not a safe
+    drop-in. → **decision needed:** pre-release call-log spike, or return A6 to `docs/extensions/`?
 
 ---
 
@@ -200,9 +203,17 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
 - 2026-09-16 — **A4 playtest (partial):** layoffs — involved non-killer suspects now relay gossip
   (A4 works); killer was the only silent suspect (`KnowsName` gate). Eviction — B4 F9 address fix
   CONFIRMED in-game; tenant suspects can't ID the landlord, so gossip never arms (A4 no-op for
-  eviction). Both findings rolled into **A2** (two-gate structure, killer-silence tell). Still to test:
-  suspect→non-killer-suspect, and a non-involved knower control on layoffs.
+  eviction). Both findings rolled into **A2** (two-gate structure, killer-silence tell).
+- 2026-09-16 — **A4 layoffs FULLY VERIFIED:** suspect→victim ✅, suspect→non-killer-suspect ✅ (Annie
+  relayed a co-suspect's layoff; others gated by `KnowsName`, expected), uninvolved-knower control ✅.
+  Only remaining core A4 check: the **Feud negative** (a feud party must stay silent about the other
+  party; an uninvolved knower must relay it).
 - 2026-09-16 — **A2 decision:** accept clue-led eviction; do NOT modify acquaintance `known` weights
   (killer-silence tell + thin eviction suspect interrogation accepted). Original independent-knower
   guarantee stays in scope but must be met without weight edits (`MarkKnown` an existing name-knower /
   prefer such victims at selection).
+- 2026-09-16 — **A6 recon DONE** (`a6-callhistory-recon.md`): call log = per-building
+  `NewBuilding.callLog`, persists natively (`BuildingStateSav`), injectable via `PhoneCall` + list add
+  (vanilla precedent `TriggerCoverUpTelephoneCall`). Verdict: MEDIUM spike (vmail-class runtime risk),
+  address-book half larger. Recommend post-release unless a call-log-only spike is wanted; **decision
+  pending.**

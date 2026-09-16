@@ -62,20 +62,6 @@ namespace SODMotives
             BindApply("Selection", "NameKnownThreshold", 0.2f,
                 "Minimum directed familiarity (Acquaintance.known, 0..1) for an NPC to count as knowing a person's NAME (able to identify their photo). Gates interrogation gossip + the F9 knower list. Real relationships sit ~0.6-0.9; casual acquaintances ~0.1-0.2. Lowered to 0.2 to widen gossip coverage.",
                 v => Motive.NameKnownThreshold = v, R01());
-            // Legacy V1/V2.0 knobs — kept bound so existing .cfg files don't break; no longer consulted by
-            // the victim-centric selector. Collapsed under the overlay's "Advanced" toggle; deleted in cleanup (B1).
-            BindApply("Selection", "TopPoolSize", 40,
-                "(Legacy, unused) Weighted-random pick was drawn from this many of the strongest feuds.",
-                v => MurderSelector.TopPoolSize = v, null, Hidden());
-            BindApply("Selection", "RedHerringBonusPer", 0.4f,
-                "(Legacy, unused) Selection weight bonus per EXTRA motivated enemy the victim has.",
-                v => MurderSelector.RedHerringBonusPer = v, null, Hidden());
-            BindApply("Selection", "WeightExponent", 0.6f,
-                "(Legacy, unused) Below 1.0 compressed score gaps so weaker motives surfaced.",
-                v => MurderSelector.WeightExponent = v, null, Hidden());
-            BindApply("Selection", "SameTypePenalty", 0.4f,
-                "(Legacy, unused) Weight multiplier for a motive type used in the previous murder.",
-                v => MurderSelector.SameTypePenalty = v, null, Hidden());
 
             // --- Flavour ---
             BindApply("Flavour", "StripSignatures", true,
@@ -146,6 +132,11 @@ namespace SODMotives
             BindApply("Clues", "EmailClueShare", 0.5f,
                 "Chance (0..1) an eligible clue (affair love-letter, redundancy list, redevelopment plan) arrives as an EMAIL in an NPC's inbox instead of a physical note — never both. Promotion is exempt (always BOTH channels). RentArrears/Feud/Debt are always physical (handwriting + fingerprint, which email can't carry).",
                 v => ClueInjector.EmailClueShare = v, R01());
+
+            // --- Interrogation ---
+            BindApply("Interrogation", "EnableInterrogation", true,
+                "Let interrogated NPCs volunteer mod gossip about people they know (affairs / workplace / property / feuds), appended after the vanilla 'do you know this person?' answer. Off = vanilla interrogation only.",
+                v => Interrogation.Enable = v);
 
             // --- Debug Keys (rebindable hotkeys; KeyCode renders as a key-binder in the overlay) ---
             BindApply("Debug Keys", "CaseSolutionOverlay", UnityEngine.KeyCode.F9,
@@ -227,7 +218,6 @@ namespace SODMotives
 
         private static AcceptableValueRange<float> R01() => new AcceptableValueRange<float>(0f, 1f);         // 0..1 slider
         private static ConfigurationManagerAttributes Order(int order) => new ConfigurationManagerAttributes { Order = order };  // float toward top of section
-        private static ConfigurationManagerAttributes Hidden() => new ConfigurationManagerAttributes { IsAdvanced = true, Browsable = false }; // collapse under the overlay's "Advanced" toggle (the SoD overlay honours IsAdvanced; Browsable/Order are for the official ConfigurationManager)
 
         // ---- logging helpers -------------------------------------------------
 
@@ -593,15 +583,15 @@ namespace SODMotives
                             MotivesPlugin.Log.LogInfo($"[SODMotives]       {(isKiller ? "* " : "  ")}{MotivesPlugin.F(s.score).PadLeft(6)}  {MotivesPlugin.Name(s.suspect)}  [{s.type}] {s.detail}");
                         }
                     }
-                    // Back-compat: on an affair-backed kill, log nearest knowers (F12 interro aid).
+                    // Log nearest case-knowers (ANY motive type) as an interrogation aid (F12 jumps there).
                     try
                     {
-                        if (MurderSelector.AffairByVictim.TryGetValue(v.humanID, out var affair) && affair != null)
+                        if (MurderSelector.EventByVictim.TryGetValue(v.humanID, out var evt) && evt != null)
                         {
                             UnityEngine.Vector3 scenePos = default; string sceneName = "victim's home";
                             try { if (v.home != null && v.home.anchorNode != null) { scenePos = v.home.anchorNode.position; sceneName = v.home.name; } } catch { }
-                            MotivesPlugin.Log.LogInfo($"[SODMotives]   nearest affair-knowers to {sceneName}:");
-                            foreach (var ln in affair.NearestKnowers(scenePos, 6)) MotivesPlugin.Log.LogInfo($"[SODMotives]       {ln}");
+                            MotivesPlugin.Log.LogInfo($"[SODMotives]   nearest case-knowers to {sceneName}:");
+                            foreach (var ln in evt.NearestKnowers(scenePos, 6)) MotivesPlugin.Log.LogInfo($"[SODMotives]       {ln}");
                         }
                     }
                     catch { }

@@ -15,7 +15,6 @@ namespace SODMotives
         internal static bool Enable = true;
         internal static int MaxClues = 8;                 // safety cap on total clues per case
         internal static bool ObviousNames = true;         // TESTING: rename injected notes so they're easy to spot
-        internal static bool UseMultiPageList = false;     // false = reliable DDS note (names in title + connections tab); true = experimental multipage (placeable multipage items only dump profile tiles — no readable clue, no connections tab)
         internal static float FingerprintChance = 0.7f;   // chance a note carries its author's prints
         internal static float WorkplaceClueShare = 0.5f;  // chance a given clue is placed at the workplace vs home
         internal static float EmailClueShare = 0.5f;       // chance an eligible clue (Affair/Layoffs/Eviction) arrives as an EMAIL instead of a physical note (never both). Promotion is exempt — it always uses BOTH channels (physical rival threats + an email letter).
@@ -24,8 +23,6 @@ namespace SODMotives
 
         private static InteractablePreset _notePreset;
         private static InteractablePreset _listPreset;   // multipage-reading clone: the redundancy list's clickable name list
-        private static List<InteractablePreset> _listItemPresets;  // NATIVE multipage-reading placeable items, ranked best-first (scanned once)
-        private static bool _listItemResolved;
         private static bool _scanned;
 
         // For F9 overlay.
@@ -127,11 +124,6 @@ namespace SODMotives
             ("e6cfbb79-cc0b-4848-b699-280cbe261c3e", "Cheaters_Love_Poem"),
             ("7b3abe1a-30dd-41b1-b0ec-8fe6e739d2a2", "Flower_Note_Affair"),
         };
-        // Layoffs render EVERY notice as Probation_Notice, but each gets its OWN tree id (the real
-        // tree + runtime clones) so no two same-sender notices share a (writer, tree) pair — the pair
-        // the case board collapses recipient-links on. Clones reuse Probation_Notice's messages, so
-        // they render pixel-identical with zero new message/block/Strings entries.
-        private const string ProbationNoticeTreeId = "3a57626e-b359-4c28-b6ae-75135e32a737";
         // Body for the single redundancy list: Ev_PrintedEmployeeDB — a treeType-2 HR/personnel
         // printout, writer-only, deterministic, with NO passcode/address token (the old
         // Employees_Office_Code embedded |writer.passcode|, which rendered the note as a door-code
@@ -662,11 +654,9 @@ namespace SODMotives
             }
 
             // PRIMARY: a custom DDS document whose BODY is a readable list of the laid-off staff as
-            // clickable citizen links (built by registering our own tree/message/block + text). The
-            // multipage route is a dead end (placeable multipage items just dump tiles); the DDS
-            // employee-record note is the last-resort fallback (names in title + connections tab).
+            // clickable citizen links (built by registering our own tree/message/block + text). The DDS
+            // employee-record note (names in title + connections tab) is the last-resort fallback.
             if (InjectLayoffsCustomText(victim, ev, boss, uniq, recList)) return 1;
-            if (UseMultiPageList && TryMultiPageList(victim, ev, boss, uniq, recList)) return 1;
             return InjectLayoffsDDS(victim, ev, boss, uniq, recList);
         }
 
@@ -1549,161 +1539,6 @@ namespace SODMotives
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][TEST] SpawnTestThreatNote: {e}"); return false; }
         }
 
-        // Preferred: place a NATIVE multipage item (whose read interaction is wired for multipage at
-        // setup — the reading UI decides mode at placement, so a post-placement preset swap is inert),
-        // then populate ITS OWN EvidenceMultiPage in place with one clickable citizen row per suspect.
-        // Returns false (leaving nothing placed) if any prerequisite is missing, so the caller can fall
-        // back to the DDS-body note.
-        private static bool TryMultiPageList(Human victim, SocialEvent ev, Human boss, List<Human> uniq, List<string> recList)
-        {
-            var candidates = ResolveMultiPageItemPresets();
-            if (candidates == null || candidates.Count == 0) { MotivesPlugin.Log.LogInfo("[SODMotives] clue: no native multipage item preset; using DDS list."); return false; }
-
-            // PlaceObject NREs when given a NULL DDS override (independent of the preset), so seed a real
-            // tree — a multipage item ignores it at read-time. Try candidates best-first until one places.
-            string seedTree = CloneDDSTree(RedundancyMemoTreeId, "SODMotives_RList_" + (++_cloneSeq));
-            Interactable note = null; InteractablePreset itemPreset = null;
-            for (int c = 0; c < candidates.Count && note == null; c++)
-            {
-                itemPreset = candidates[c];
-                note = PlaceClue(victim, boss, null, seedTree, itemPreset);
-                if (note == null) MotivesPlugin.Log.LogInfo($"[SODMotives] clue: multipage item '{SafeName(itemPreset)}' failed to place; trying next.");
-            }
-            if (note == null) { LogFail("redundancy list (multipage)", boss, victim); return false; }
-
-            // Use the item's OWN evidence (mutating the reader's cached object avoids rebind uncertainty).
-            EvidenceMultiPage mp = null;
-            try { var ev0 = note.evidence; mp = ev0 != null ? ev0.TryCast<EvidenceMultiPage>() : null; } catch { }
-            if (mp == null)
-            {
-                // The native item didn't yield a multipage evidence — create one and bind it.
-                EvidencePreset rosterPreset = ResolveMultiPagePreset(victim);
-                if (rosterPreset != null)
-                {
-                    try
-                    {
-                        var controller = note.evidence != null ? note.evidence.controller : null;
-                        var created = EvidenceCreator.Instance.CreateEvidence(rosterPreset, System.Guid.NewGuid().ToString(), controller, boss, boss, null, null, false, null);
-                        mp = created != null ? created.TryCast<EvidenceMultiPage>() : null;
-                        if (mp != null) { try { note.evidence = mp; } catch { } try { mp.interactable = note; } catch { } }
-                    }
-                    catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: CreateEvidence(multipage) failed: {e.Message}"); }
-                }
-            }
-            if (mp == null) { MotivesPlugin.Log.LogWarning("[SODMotives] clue: no multipage evidence; using DDS list."); try { note.SafeDelete(); } catch { } return false; }
-
-            // Replace any native auto-content (e.g. calendar dates / real staff) with OUR suspect list.
-            try { var pc = mp.pageContent; if (pc != null) pc.Clear(); } catch { }
-            int pageIdx = -1, rows = 0;
-            for (int i = 0; i < uniq.Count; i++)
-            {
-                Human h = uniq[i]; Evidence cev = null;
-                try { cev = h.evidenceEntry; } catch { }
-                if (cev == null) { try { h.CreateEvidence(); cev = h.evidenceEntry; } catch { } }
-                if (cev == null) continue;
-                try { if (pageIdx < 0) pageIdx = mp.AddEvidenceToNewPage(cev); else mp.AddEvidenceToPage(pageIdx, cev); rows++; }
-                catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: AddEvidenceToPage({MotivesPlugin.Name(h)}): {e.Message}"); }
-            }
-            if (rows == 0) { MotivesPlugin.Log.LogWarning("[SODMotives] clue: multipage got 0 rows; using DDS list."); try { note.SafeDelete(); } catch { } return false; }
-
-            var fp = ResolveConnectFactPreset(mp);   // citizen-link preset from the roster/multipage preset
-
-            try { mp.SetWriter(boss); } catch { }
-            try { note.SetWriter(boss); } catch { }
-            try { note.AddNewDynamicFingerprint(boss, Interactable.PrintLife.manualRemoval); } catch { }
-            try { mp.AddOrSetCustomName(Evidence.DataKey.name, ObviousNames ? "MODCLUE Redundancy List" : "Redundancy List"); } catch { }
-            try { mp.UpdateName(); } catch { }
-            try { note.UpdateName(true, Evidence.DataKey.name); } catch { try { note.UpdateName(); } catch { } }
-
-            // One case-board connection line per suspect (document -> citizen).
-            int linked = 0;
-            for (int i = 0; i < uniq.Count; i++) if (AddCitizenConnection(mp, uniq[i], fp)) linked++;
-
-            string where = "?", locDesc = "?";
-            try { var node = note.node; if (node != null) { var gl = node.gameLocation; string loc = gl != null ? gl.name : "?"; string room = ""; try { if (node.room != null) room = node.room.GetName(); } catch { } locDesc = string.IsNullOrEmpty(room) ? loc : $"{room}, {loc}"; where = ClassifyLocation(victim, loc); } } catch { }
-            int itemId = -1; try { itemId = note.id; } catch { }
-            string rec = $"redundancy list (multipage) [{where}: {locDesc}] itemId={itemId} rows={rows}/{uniq.Count} linked={linked} item='{SafeName(itemPreset)}'";
-            recList.Add(rec);
-            MotivesPlugin.Log.LogInfo($"[SODMotives] clue: INJECTED {rec}");
-            return true;
-        }
-
-        // Find placeable items whose reading source is NATIVELY multipageEvidence (so the reading UI
-        // renders them as a paged, clickable list). Scanned once; ranked best-first, penalising the
-        // context-bound auto-populated types (ResidentRoster/Calendar/…) that need a building/company
-        // and NRE when placed in arbitrary furniture. Cloned with author-only prints. Null if the
-        // dictionary isn't ready yet (retried next case).
-        private static List<InteractablePreset> ResolveMultiPageItemPresets()
-        {
-            if (_listItemResolved) return _listItemPresets;
-            var dict = Toolbox.Instance != null ? Toolbox.Instance.objectPresetDictionary : null;
-            if (dict == null) return null;   // not ready yet — retry next case
-            _listItemResolved = true;
-            var ranked = new List<KeyValuePair<int, InteractablePreset>>();
-            try
-            {
-                var en = dict.GetEnumerator();
-                while (en.MoveNext())
-                {
-                    var p = en.Current.Value;
-                    if (p == null) continue;
-                    InteractablePreset.ReadingModeSource rs;
-                    try { rs = p.readingSource; } catch { continue; }
-                    if (rs != InteractablePreset.ReadingModeSource.multipageEvidence) continue;
-                    string nm = SafeName(p);
-                    bool ok = true;
-                    try { if (!p.readingEnabled) ok = false; } catch { }
-                    try { if (p.retailItem != null) ok = false; } catch { }
-                    try { if (p.alwaysPlaceAtGameLocation) ok = false; } catch { }
-                    try { if (p.limitToCertainBuildings) ok = false; } catch { }
-                    string low = nm.ToLowerInvariant();
-                    int s = 0;
-                    // Readable rosters render as an actual name LIST (the target); a container like
-                    // PaperStack just dumps anonymous tiles. Prefer rosters, then paper/document items.
-                    if (low.Contains("roster") || low.Contains("resident")) s += 30;
-                    else if (low.Contains("paper") || low.Contains("stack") || low.Contains("note") || low.Contains("memo") || low.Contains("document") || low.Contains("letter")) s += 20;
-                    // Non-document / wrong meshes — deprioritise.
-                    if (low.Contains("calendar") || low.Contains("phone") || low.Contains("clock") || low.Contains("disk") || low.Contains("wound") || low.Contains("box")) s -= 50;
-                    MotivesPlugin.Log.LogInfo($"[SODMotives] clue: multipage item candidate '{nm}' placeable={ok} score={s}");
-                    if (ok) ranked.Add(new KeyValuePair<int, InteractablePreset>(s, p));
-                }
-            }
-            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: ResolveMultiPageItemPresets: {e.Message}"); }
-            ranked.Sort((a, b) => b.Key.CompareTo(a.Key));
-            var outList = new List<InteractablePreset>();
-            for (int i = 0; i < ranked.Count; i++)
-            {
-                var p = ranked[i].Value;
-                try
-                {
-                    var c = UnityEngine.Object.Instantiate(p);
-                    c.hideFlags = HideFlags.HideAndDontSave;
-                    try { c.printsSource = RoomConfiguration.PrintsSource.writers; } catch { }
-                    try { c.findEvidence = InteractablePreset.FindEvidence.none; } catch { }   // don't auto-fill the building's real residents
-                    outList.Add(c);
-                }
-                catch { outList.Add(p); }
-            }
-            _listItemPresets = outList;
-            MotivesPlugin.Log.LogInfo($"[SODMotives] clue: multipage item candidates ranked: {outList.Count} (best='{(outList.Count > 0 ? SafeName(outList[0]) : "<none>")}').");
-            return _listItemPresets;
-        }
-
-        // The victim IS the layoffs boss, so their company's employee roster is a live EvidenceMultiPage
-        // whose preset we reuse to spin up our own list. Null if unavailable (-> DDS fallback).
-        private static EvidencePreset ResolveMultiPagePreset(Human victim)
-        {
-            try
-            {
-                var comp = victim != null && victim.job != null ? victim.job.employer : null;
-                var roster = comp != null ? comp.employeeRoster : null;
-                if (roster != null && roster.preset != null) return roster.preset;
-            }
-            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: ResolveMultiPagePreset: {e.Message}"); }
-            return null;
-        }
-
-        private static string SafeEvPresetName(EvidencePreset p) { try { return p != null ? p.name : "<null>"; } catch { return "?"; } }
 
         // Fallback: a DDS HR-record note with the names in its TITLE (no clickable body list).
         private static int InjectLayoffsDDS(Human victim, SocialEvent ev, Human boss, List<Human> uniq, List<string> recList)

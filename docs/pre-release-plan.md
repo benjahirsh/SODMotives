@@ -159,18 +159,19 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
 
 ## Phase B — Code hygiene (safe anytime, low risk)
 
-- [ ] **B1 — Delete legacy selector knobs** (S) — the 4 bound-but-unused fields + their `Config.Bind`s:
-  `TopPoolSize`, `RedHerringBonusPer`, `WeightExponent`, `SameTypePenalty`
-  (`MurderSelector.cs:29-32`, `Plugin.cs:45-52`).
-- [ ] **B2 — Dead DDS paths** (S) — resolve `ProbationNoticeTreeId` (defined, unused,
-  `ClueInjector.cs`) and the documented-broken `UseMultiPageList` path (`ClueInjector.cs:18` +
-  `TryMultiPageList`): keep the custom single-list, delete the dead code. Optionally trim the
-  never-firing `InjectEmail` `ProgressVmailThread`/hand-populate fallbacks (per `v2.6-email-recon.md`).
-- [ ] **B3 — W5 completeness** (S) —
-  - Bind `Interrogation.Enable` to config (currently hardcoded `true`, `Interrogation.cs:24`) under a
-    new `[Interrogation]` section.
-  - Repoint the last affair-only nearest-knower log (`Plugin.cs:478`, `AffairByVictim`) →
-    `EventByVictim` + `evt.NearestKnowers(...)` so workplace/property kills log knowers too. Log-only.
+- [x] **B1 — Delete legacy selector knobs** ✅ **DONE 2026-09-17** — removed the 4 bound-but-unused fields
+  (`TopPoolSize`/`RedHerringBonusPer`/`WeightExponent`/`SameTypePenalty`) + their binds + the now-unused
+  `Hidden()` overlay helper. Builds clean.
+- [x] **B2 — Dead DDS paths** ✅ **DONE 2026-09-17** — deleted the unused `ProbationNoticeTreeId` and the
+  whole documented-broken multipage path: `UseMultiPageList` field + its guard + `TryMultiPageList` +
+  `ResolveMultiPageItemPresets` + `ResolveMultiPagePreset` + `SafeEvPresetName` + the `_listItem*` fields
+  (`ResolveConnectFactPreset`/`AddCitizenConnection` kept — shared by live paths). Custom single-list note
+  is now the only layoffs path. Builds clean. **Deferred (optional):** trimming the never-firing
+  `InjectEmail` vmail fallbacks — email is verified working, so low value / higher risk.
+- [x] **B3 — W5 completeness** ✅ **DONE 2026-09-17** —
+  - Bound `Interrogation.Enable` to a new `[Interrogation] EnableInterrogation` knob (live-editable).
+  - Repointed the nearest-knower log from affair-only `AffairByVictim` → `EventByVictim` +
+    `evt.NearestKnowers(...)`, so workplace/property/feud kills log knowers too. Log-only.
 - [~] **B4 — F9/log address labels** — *NOTE: F9 is now a RELEASE-retained diagnostics panel (D2), so
   these are correctness, not throwaway-debug.*
   - [x] **Eviction detail FIXED 2026-09-16** — each tenant suspect now names their OWN unit via new
@@ -178,9 +179,11 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
     (`SocialEvent.CollectEvictionEdges`). Builds clean. **Verify on a FRESH eviction case** — the pool
     `detail` is baked at selection and stored verbatim in the save (PB/MB lines), so already-selected
     cases keep the old text even across reload.
-  - [ ] **RentArrears** — same `placeName` pattern in its detail ("their tenant at X …"); same fix
-    (`SafeAddr(a)` = the victim tenant's unit) if wanted.
-  - [ ] F9 "basement 03" vs "unknown address" quirk — use `NewGameLocation.name`.
+  - [x] **RentArrears FIXED 2026-09-17** — the detail now names the tenant-victim's OWN unit via
+    `SafeAddr(a)` (`SocialEvent.CollectRentArrearsEdges`), not the shared `placeName`. Verify on a FRESH
+    rent-arrears case (the pool `detail` is baked at selection, so already-selected cases keep old text).
+  - [ ] F9 "basement 03" vs "unknown address" quirk — use `NewGameLocation.name`. *(still open — cosmetic
+    F9 label; deferred, low value.)*
 
 ---
 
@@ -287,3 +290,10 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
   Added a `[Debug Keys]` `KeyCode` section (all debug hotkeys rebindable live via the overlay's key-binders);
   unbound debug F5 (was TriggerMurder). Menu CONFIRMED working in-game ("works awesome"). Remaining: verify
   MotiveCaseShare mixing over several murders + a rebound debug key; then declare the overlay an optional dep.
+- 2026-09-17 — **Phase B (code hygiene) DONE** (builds clean, deployed; not yet committed). B1: removed the 4
+  legacy selector knobs + `Hidden()` helper. B2: deleted `ProbationNoticeTreeId` + the whole broken
+  multipage path (`UseMultiPageList`/`TryMultiPageList`/`ResolveMultiPageItemPresets`/`ResolveMultiPagePreset`/
+  `SafeEvPresetName`/`_listItem*`); kept shared `ResolveConnectFactPreset`/`AddCitizenConnection`. B3: bound
+  `Interrogation.Enable` (`[Interrogation]`) + repointed the knower log to `EventByVictim` (any motive type).
+  B4: RentArrears detail now uses `SafeAddr(a)`. Deferred: the optional B2 email-fallback trim + the cosmetic
+  F9 "basement 03" address quirk.

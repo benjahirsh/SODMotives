@@ -29,13 +29,6 @@ namespace SODMotives
         // an edit applies to the NEXT murder. Composes with VanillaCaseEvery (either can force vanilla).
         internal static float MotiveCaseShare = 1.0f;
 
-        // --- legacy V1/V2.0 selector knobs, kept bound so existing .cfg files don't break;
-        //     no longer consulted by the victim-centric selector. Pruned in release cleanup. ---
-        internal static int TopPoolSize = 40;
-        internal static float RedHerringBonusPer = 0.4f;
-        internal static float WeightExponent = 0.6f;
-        internal static float SameTypePenalty = 0.4f;
-
         private static int _casesSinceForced = 0;
         private static readonly Random _rng = new Random();
 

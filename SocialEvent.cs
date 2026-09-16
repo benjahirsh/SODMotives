@@ -143,7 +143,10 @@ namespace SODMotives
         // a tenant who wouldn't pay is the one holding the grudge.
         private void CollectRentArrearsEdges(List<SuspectEdge> o)
         {
-            string co = string.IsNullOrEmpty(placeName) ? "their building" : placeName;
+            // Name the tenant-victim's OWN unit (SafeAddr(a)), not the shared first-resident building
+            // label (placeName); fall back to placeName / "their building" if the unit is unavailable.
+            string co = SafeAddr(a);
+            if (string.IsNullOrEmpty(co)) co = string.IsNullOrEmpty(placeName) ? "their building" : placeName;
             Emit(o, b, a, 70f, MotiveType.Money, $"their tenant at {co} owed them months of back rent");
         }
 

@@ -207,7 +207,8 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
   - `[Selection]` MinSuspects 3 · KillerPoolSize 10 · **NameKnownThreshold 0.2** (supersedes the stale
     0.35 in earlier drafts — Cpp2IL-confirmed a subset of vanilla recognition, a pure taste dial).
   - `[Feud]` EnableFeuds/EnableDebts true · MaxFeuds 40 · MaxDebts 40 (seed at New Game).
-  - `[Clues]` MaxCluesPerCase 8 · FingerprintChance 0.7 · WorkplaceClueShare 0.5 · EmailClueShare 0.5.
+  - `[Clues]` MaxCluesPerCase 8 · WorkplaceClueShare 0.5 · EmailClueShare 0.5. (FingerprintChance REMOVED —
+    prints are now an absolute per-type policy; see the playtest-2 log below.)
   - `[Troubleshooting]` `ObviousTestNames` stays **true through Phase C** (find clues while testing) —
     the flip to false is Phase D (D1). Watchdog/StripSignatures/clues/interrogation already production.
   - **NOTE:** Property is now very rare (~7%) and landlord-bounded, and Workplace ~18% — a short playtest
@@ -331,6 +332,13 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
   backed up to scratchpad and removed so it regenerates clean at defaults on next launch. C1 section
   rewritten to the new `[Motive Mix]` model + the confirmed production values. Remaining Phase C work =
   C1b (playtest each motive type). `ObviousTestNames` intentionally kept true until Phase D.
+- 2026-09-18 — **Playtest round 2 fixes (C1b in progress):** affair love-letter stray-"To" + name-leak fixed
+  (`e34e625`); promotee-about-boss firsthand testimony hinting at rivals (`1aef17e`); **fingerprints reworked
+  to an absolute per-type policy** (`498c441`) — removed `FingerprintChance`; affair = one participant's print
+  50/50 (unsent=writer / sent=recipient); rent-arrears + debt = NO print (handwriting + named addressee);
+  promotion/feud threats + redundancy list + redevelopment plan = always author's print; added
+  `[Troubleshooting] ForceAllPrints` test toggle. OPEN test: does a print on a scene clue aid the game's
+  suspect scoring? (force-all-prints + observe → decide final liberality).
 - 2026-09-18 — **User set the production blend** (confirmed weights need not sum to 1 — normalised).
   Applied as code defaults + builds clean: `[Motive Mix]` Affair/Feud/Debt 0.35, **Workplace 0.46**,
   **Property 0.18** (sum 1.69) ⇒ Affair/Feud/Debt ~20.7% each, Workplace ~27.2% (Promotion ~19.1%, Layoffs

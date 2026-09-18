@@ -252,6 +252,17 @@ namespace SODMotives
                     if (e.a != null && Motive.Same(e.a, subject)) { if (e.b != null && !ContainsHuman(feudOthers, e.b)) feudOthers.Add(e.b); }
                     else if (e.b != null && Motive.Same(e.b, subject)) { if (e.a != null && !ContainsHuman(feudOthers, e.a)) feudOthers.Add(e.a); }
                 }
+                else if (e.type == SocialEventType.Promotion && e.a != null && Motive.Same(e.a, npc)
+                         && e.b != null && Motive.Same(e.b, subject))
+                {
+                    // The PROMOTEE (e.a) asked about the BOSS (e.b) who promoted them — the one participant
+                    // with firsthand knowledge. Speak first-person (they were IN it, so no "word is" rumour
+                    // framing) and hint at the disgruntled rivals WITHOUT naming them, giving the player a
+                    // lead into the suspect pool while leaving the "ask around to find who" work intact.
+                    // (The promotee is never a suspect in their own promotion, so this can't self-incriminate.)
+                    string pl = PromoteeAboutBossLine(seed + workLines.Count);
+                    if (!string.IsNullOrEmpty(pl) && !workLines.Contains(pl)) workLines.Add(pl);
+                }
                 else
                 {
                     // Multi-party workplace / property (Promotion / Layoffs / Eviction / RentArrears):
@@ -320,6 +331,17 @@ namespace SODMotives
                 $"Word is they and {JoinNames(others)} had a serious falling out.",
                 $"Rumour has it they'd been at odds with {JoinNames(others)}.",
                 $"Heard they weren't on speaking terms with {JoinNames(others)}.");
+
+        // Promotee (a non-suspect participant) speaking firsthand about the boss (the victim) who promoted
+        // them. First person — they were in it, so no rumour framing — with a soft, non-naming hint at the
+        // disgruntled rivals: a lead INTO the suspect pool that still leaves finding who to the player. The
+        // boss (subject) stays "they"; a promotion case always has passed-over rivals, so the hint is true.
+        private static string PromoteeAboutBossLine(int seed)
+            => Pick(seed,
+                "They handed me a promotion. I reckon some people weren't too happy about it.",
+                "They're the one who promoted me. A few people weren't best pleased, I can tell you.",
+                "I got my promotion from them. Not everyone took it well.",
+                "They gave me the promotion. I don't think it went down well with everyone.");
 
         // Deterministic variant pick (stable per seed; never negative-indexes).
         private static string Pick(int seed, params string[] variants)

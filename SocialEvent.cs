@@ -141,13 +141,17 @@ namespace SODMotives
 
         // RentArrears: a = tenant (victim); b = landlord (the lone suspect). A landlord fed up with
         // a tenant who wouldn't pay is the one holding the grudge.
+        // RentArrears is BIDIRECTIONAL (like feuds/debts): the landlord may kill a tenant who won't pay,
+        // OR the cornered tenant may kill the landlord hounding them over the arrears. Either is a suspect
+        // in the other's murder, so the selector can pick either as the victim.
         private void CollectRentArrearsEdges(List<SuspectEdge> o)
         {
-            // Name the tenant-victim's OWN unit (SafeAddr(a)), not the shared first-resident building
-            // label (placeName); fall back to placeName / "their building" if the unit is unavailable.
+            // Name the tenant's OWN unit (SafeAddr(a)), not the shared first-resident building label
+            // (placeName); fall back to placeName / "their building" if the unit is unavailable.
             string co = SafeAddr(a);
             if (string.IsNullOrEmpty(co)) co = string.IsNullOrEmpty(placeName) ? "their building" : placeName;
             Emit(o, b, a, 70f, MotiveType.Money, $"their tenant at {co} owed them months of back rent");
+            Emit(o, a, b, 70f, MotiveType.Money, $"their landlord had been hounding them over months of unpaid rent at {co}");
         }
 
         // Feud: a and b have genuine bad blood (seeded from a soured relationship). Either could snap

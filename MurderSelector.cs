@@ -15,37 +15,28 @@ namespace SODMotives
         internal static bool EnableOverride = true;
         internal static int MinSuspects = 3;            // PREFER victims with at least this many real suspects
         internal static int KillerPoolSize = 10;        // killer = uniform-random among the victim's top-N suspects
-        internal static float WorkplaceCaseShare = 0.5f; // when NOT force-filtering (F6 off): target fraction of cases featuring a workplace motive, so affairs don't swamp workplace
-        internal static float PropertyCaseShare = 0.25f; // when F6 off: target fraction of cases featuring a MONEY motive (landlord/property + seeded debts); affair = the remainder
-        internal static float FeudCaseShare = 0.15f;     // when F6 off: target fraction of cases featuring a personal-feud (PersonalFeud) motive
-        internal static bool StripSignatures = true;    // remove serial-killer calling card/moniker/graffiti on motivated cases
-        // Deterministic (V2 design): force a vanilla case every Nth handled case so the
-        // classic serial-killer hunt never disappears. 0 (or less) = never force vanilla.
-        // TESTING DEFAULT = 0 so every new sandbox yields a mod case to test.
-        internal static int VanillaCaseEvery = 0;
-        // THE MAIN MIX KNOB (A3): probability [0..1] that an eligible case is a relationship-MOTIVE
-        // case; the rest are left entirely to vanilla (serial-killer, signature and all). 1 = every
-        // case is a motive case (the MAX — current behaviour), 0 = all vanilla. Read once per case, so
-        // an edit applies to the NEXT murder. Composes with VanillaCaseEvery (either can force vanilla).
+        // THE MAIN MIX KNOB: probability [0..1] a case is a relationship-MOTIVE case; the rest are left
+        // entirely to vanilla (serial-killer, signature and all). 1 = all motive (current), 0 = all vanilla.
+        // Read once per case, so an edit applies to the NEXT murder.
         internal static float MotiveCaseShare = 1.0f;
+        // Per-motive-FAMILY weights (each 0..1), NORMALISED by their sum at selection so any combination
+        // works. When the F6 force is OFF, a case's motive family is drawn by these relative weights.
+        internal static float AffairShare = 0.30f;      // infidelity / love-triangle
+        internal static float WorkplaceShare = 0.30f;   // promotion + layoffs (bounded by how many bosses exist)
+        internal static float PropertyShare = 0.15f;    // eviction + rent-arrears (bounded by how many landlords exist)
+        internal static float FeudShare = 0.15f;        // personal feuds
+        internal static float DebtShare = 0.10f;        // debts
+        internal static bool StripSignatures = true;    // remove serial-killer calling card/moniker/graffiti on motivated cases
 
-        private static int _casesSinceForced = 0;
         private static readonly Random _rng = new Random();
 
         // Occasionally leave a case entirely to vanilla, preserving classic serial-killer
         // hunts (signature and all). Call once per handled case.
         internal static bool ShouldForceVanilla()
         {
-            // Deterministic cadence (optional): a full vanilla case every Nth handled case.
-            if (VanillaCaseEvery > 0)
-            {
-                _casesSinceForced++;
-                if (_casesSinceForced >= VanillaCaseEvery) { _casesSinceForced = 0; return true; }
-            }
-            // Probabilistic mix (the main knob): with probability (1 - MotiveCaseShare) leave this case
-            // to vanilla. MotiveCaseShare >= 1 => never (all motive, the default); <= 0 => always vanilla.
-            if (MotiveCaseShare < 1f && _rng.NextDouble() >= MotiveCaseShare) return true;
-            return false;
+            // With probability (1 - MotiveCaseShare) leave this case entirely to vanilla (serial-killer,
+            // signature and all). MotiveCaseShare >= 1 => never (all motive); <= 0 => always vanilla.
+            return MotiveCaseShare < 1f && _rng.NextDouble() >= MotiveCaseShare;
         }
 
         // ---- bookkeeping shared with the clue injector / signature stripping / F9 ----
@@ -80,7 +71,6 @@ namespace SODMotives
             EventByVictim.Clear();
             UsedWorkplaceCompanies.Clear();
             UsedBuildings.Clear();
-            _casesSinceForced = 0;
         }
 
         // Persistence (pass 2): replace all per-case maps with state imported from the save sidecar.
@@ -206,50 +196,62 @@ namespace SODMotives
             foreach (var kv in byVictim) if (kv.Value.Count >= floor) candVictims.Add(kv.Key);
             if (candVictims.Count == 0) return false;
 
-            // 3) Balance case types so affairs (far more numerous) don't swamp workplace when the
-            //    F6 force is OFF. Bucket victims by whether they have a workplace / affair suspect
-            //    (mixed victims sit in BOTH, preserving mixed pools), then pick a bucket by share.
+            // 3) Balance case FAMILIES by the per-motive weights (F6 force OFF only). Bucket victims by
+            //    which motive families their suspects cover (a mixed victim sits in several), then draw a
+            //    family by the NORMALISED weights so no single motive swamps the rest.
             List<int> bucket = candVictims;
             if (DebugTools.ForceMotiveType == MotiveType.None)
             {
-                var workV = new List<int>();
                 var affairV = new List<int>();
-                var moneyV = new List<int>();   // landlord/property + seeded debts (both MotiveType.Money)
-                var feudV = new List<int>();    // personal feuds (MotiveType.PersonalFeud)
+                var workV = new List<int>();
+                var propertyV = new List<int>();   // eviction / rent-arrears (Money via a landlord/tenant event)
+                var feudV = new List<int>();        // personal feuds
+                var debtV = new List<int>();        // debts (Money via a debt event)
                 foreach (int vid in candVictims)
                 {
-                    bool hasWork = false, hasAffair = false, hasMoney = false, hasFeud = false;
+                    bool hasAffair = false, hasWork = false, hasProperty = false, hasFeud = false, hasDebt = false;
                     foreach (var ed in byVictim[vid].Values)
                     {
                         switch (ed.type)
                         {
-                            case MotiveType.Professional: hasWork = true; break;
                             case MotiveType.Infidelity: hasAffair = true; break;
-                            case MotiveType.Money: hasMoney = true; break;         // landlord/property + debt
-                            case MotiveType.PersonalFeud: hasFeud = true; break;   // personal grudge
+                            case MotiveType.Professional: hasWork = true; break;
+                            case MotiveType.PersonalFeud: hasFeud = true; break;
+                            case MotiveType.Money:
+                                // Money splits into property (eviction/rent-arrears) vs debt by event type.
+                                if (ed.evt != null && ed.evt.type == SocialEventType.Debt) hasDebt = true;
+                                else hasProperty = true;
+                                break;
                         }
                     }
-                    if (hasWork) workV.Add(vid);
                     if (hasAffair) affairV.Add(vid);
-                    if (hasMoney) moneyV.Add(vid);
+                    if (hasWork) workV.Add(vid);
+                    if (hasProperty) propertyV.Add(vid);
                     if (hasFeud) feudV.Add(vid);
+                    if (hasDebt) debtV.Add(vid);
                 }
-                // Pick a case FAMILY by share (work + money + feud; affair = the remainder), so the
-                // far-more-numerous seeded affairs don't swamp the other motive types.
-                float pWork = Math.Max(0f, WorkplaceCaseShare);
-                float pMoney = Math.Max(0f, PropertyCaseShare);
-                float pFeud = Math.Max(0f, FeudCaseShare);
-                if (pWork + pMoney + pFeud > 1f) { float s = pWork + pMoney + pFeud; pWork /= s; pMoney /= s; pFeud /= s; }
-                double r = _rng.NextDouble();
-                bucket = (r < pWork) ? workV
-                       : (r < pWork + pMoney) ? moneyV
-                       : (r < pWork + pMoney + pFeud) ? feudV
-                       : affairV;
-                if (bucket.Count == 0) bucket = affairV.Count > 0 ? affairV
-                                              : moneyV.Count > 0 ? moneyV
-                                              : feudV.Count > 0 ? feudV
-                                              : workV;
-                if (bucket.Count == 0) bucket = candVictims;
+                // Draw a family by the five weights, normalised by their sum (so any 0..1 combination works).
+                float pAffair = Math.Max(0f, AffairShare), pWork = Math.Max(0f, WorkplaceShare),
+                      pProperty = Math.Max(0f, PropertyShare), pFeud = Math.Max(0f, FeudShare), pDebt = Math.Max(0f, DebtShare);
+                float sum = pAffair + pWork + pProperty + pFeud + pDebt;
+                if (sum <= 0f) bucket = candVictims;
+                else
+                {
+                    double r = _rng.NextDouble() * sum;
+                    bucket = (r < pAffair) ? affairV
+                           : (r < pAffair + pWork) ? workV
+                           : (r < pAffair + pWork + pProperty) ? propertyV
+                           : (r < pAffair + pWork + pProperty + pFeud) ? feudV
+                           : debtV;
+                }
+                // Chosen family empty this city -> fall back to any non-empty family.
+                if (bucket == null || bucket.Count == 0)
+                    bucket = affairV.Count > 0 ? affairV
+                           : workV.Count > 0 ? workV
+                           : propertyV.Count > 0 ? propertyV
+                           : feudV.Count > 0 ? feudV
+                           : debtV.Count > 0 ? debtV
+                           : candVictims;
             }
 
             // 4) Uniform-random victim within the chosen bucket.

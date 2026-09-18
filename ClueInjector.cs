@@ -326,7 +326,10 @@ namespace SODMotives
             var pick = InfidelityTrees[_rng.Next(InfidelityTrees.Length)];
             var note = PlaceClue(victim, ev.a, ev.b, pick.id);
             if (note == null) { LogFail("affair", ev.a, ev.b); return 0; }
-            Finish(note, victim, ev.a, ev.b, pick.id, pick.name, $"affair {MotivesPlugin.Name(ev.a)}->{MotivesPlugin.Name(ev.b)}", recList);
+            // anonWriter: the love letter reads as anonymous (initialled body) — no discovered From/To that
+            // would name the lovers in the connections tab (#22). Handwriting + print stay as the latent lead;
+            // gossip still names the lovers, so the case is solvable without the note being a giveaway.
+            Finish(note, victim, ev.a, ev.b, pick.id, pick.name, $"affair {MotivesPlugin.Name(ev.a)}->{MotivesPlugin.Name(ev.b)}", recList, anonWriter: true);
             return 1;
         }
 
@@ -1182,6 +1185,51 @@ namespace SODMotives
             return 1;
         }
 
+        // #20: printed body-list emails (redundancy list / eviction plan) get the SAME citizen connections
+        // as the physical note. When the player prints one of our emails the game spawns an
+        // EvidencePrintedVmail (an Evidence) whose AutoCreateFacts only mints From/To (sender/receiver) —
+        // the body-NAMED people stay plain clickable text. Re-add a connection per named citizen so the
+        // printout's connections tab lists them, matching the physical clue. Called from the
+        // Evidence.AutoCreateFacts postfix (Plugin.cs); guarded to run once per printout.
+        private static readonly HashSet<int> _printedVmailLinked = new HashSet<int>();
+        internal static void ConnectPrintedVmail(EvidencePrintedVmail pv)
+        {
+            try
+            {
+                if (pv == null) return;
+                string treeId = null;
+                try { var th = pv.thread; if (th != null) treeId = th.treeID; } catch { }
+                if (string.IsNullOrEmpty(treeId)) return;
+
+                // Our record for this tree — only layoffs/eviction carry a body citizen list (affair/promotion
+                // are empty, and their From/To auto-facts already name the two people).
+                List<int> pids = null;
+                var emails = Persistence.Emails;
+                for (int i = 0; i < emails.Count; i++)
+                    if (emails[i].treeId == treeId) { pids = emails[i].citizenHumanIds; break; }
+                if (pids == null || pids.Count == 0) return;
+
+                // Once per printout (AutoCreateFacts can fire repeatedly for the same evidence).
+                int key = -1; try { var it = pv.interactable; if (it != null) key = it.id; } catch { }
+                if (key >= 0 && !_printedVmailLinked.Add(key)) return;
+
+                // Resolve the named citizens (citizenDirectory includes the dead — laid-off victims stay linkable).
+                var dir = CityData.Instance != null ? CityData.Instance.citizenDirectory : null;
+                if (dir == null) return;
+                var want = new HashSet<int>(); for (int i = 0; i < pids.Count; i++) want.Add(pids[i]);
+                var byId = new Dictionary<int, Human>();
+                for (int i = 0; i < dir.Count; i++) { var h = dir[i]; if (h == null) continue; int hid; try { hid = h.humanID; } catch { continue; } if (want.Contains(hid)) byId[hid] = h; }
+
+                Evidence ev = pv;   // EvidencePrintedVmail : Evidence
+                var fp = ResolveConnectFactPreset(ev);
+                int linked = 0;
+                for (int i = 0; i < pids.Count; i++)
+                    if (byId.TryGetValue(pids[i], out var h) && AddCitizenConnection(ev, h, fp)) linked++;
+                MotivesPlugin.Log.LogInfo($"[SODMotives] clue: printed-vmail body connections added: {linked}/{pids.Count} (treeId={treeId}).");
+            }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: ConnectPrintedVmail: {e.Message}"); }
+        }
+
         // Save/reload replay (Persistence, V2.6): a vmail thread persists natively (StateSaveData.messageThreads),
         // but the custom DDS tree its treeID points at is runtime-only and gone after a reload — so the body would
         // render blank. Re-register the tree under the SAME treeID (rebuilding the same body), then RE-POINT the
@@ -1790,7 +1838,7 @@ namespace SODMotives
         }
 
         // Set writer/reciever, override the DDS tree, add the author's prints, name + verify + record.
-        private static void Finish(Interactable note, Human victim, Human writer, Human receiver, string treeId, string treeName, string label, List<string> recList, bool unsentDoc = false)
+        private static void Finish(Interactable note, Human victim, Human writer, Human receiver, string treeId, string treeName, string label, List<string> recList, bool unsentDoc = false, bool anonWriter = false)
         {
             // "Linked" = the killer AUTHORED this clue, so their prints are on it (weapon-matchable).
             // Being merely the addressee of an UNSENT letter is not a forensic link (they never touched it).
@@ -1800,10 +1848,15 @@ namespace SODMotives
             try
             {
                 if (writer != null) note.SetWriter(writer);
-                try { if (receiver != null) note.SetReciever(receiver); } catch { }
+                // anonWriter (e.g. an initialled love letter): keep the writer field as a LATENT handwriting/
+                // print lead, but suppress the discovered "From"/"To" facts that would name the author +
+                // recipient in the connections tab. Skipping SetReciever avoids the "To"; adding the note to
+                // AnonWriterNoteIds makes the AutoCreateFacts postfix strip the auto-created "From".
+                if (!anonWriter) { try { if (receiver != null) note.SetReciever(receiver); } catch { } }
                 note.SetDDSOverride(treeId);
                 var ev = note.evidence;
                 if (ev != null) { ev.SetOverrideDDS(treeId); if (writer != null) ev.SetWriter(writer); }
+                if (anonWriter) { try { int nid = note.id; if (nid >= 0) AnonWriterNoteIds.Add(nid); } catch { } }
                 // Only the AUTHOR's prints belong on a note — an UNSENT letter was touched only by its
                 // writer, never the addressee. The killer's OWN authored clue ALWAYS carries their
                 // prints (so it matches the murder weapon); other notes carry the author's at chance.

@@ -38,38 +38,38 @@ namespace SODMotives
             BindApply("General", "EnableOverride", true,
                 "Replace vanilla killer/victim selection with a motivated pair from the social graph.",
                 v => MurderSelector.EnableOverride = v);
-            BindApply("General", "UnstickStalledMurders", true,
-                "Recover a mod motive-murder that soft-locks in the 'executing' state (killer never lands a lethal blow). ONLY acts on our overridden cases, and ONLY when the killer is co-located with the victim, so the crime scene stays coherent; touches no vanilla murder.",
-                v => MurderWatchdog.Enable = v);
-            BindApply("General", "StallGameHours", 24f,
-                "In-game hours a mod murder may sit stalled in 'executing' before the watchdog force-finishes it (only if killer is present and no damage is landing).",
-                v => MurderWatchdog.StallGameHours = v);
 
-            // --- Selection ---
-            // THE MAIN MIX KNOB — floated to the top of the section (Order) and shown as a 0..1 slider.
-            BindApply("Selection", "MotiveCaseShare", 1.0f,
-                "MAIN KNOB: fraction (0..1) of murders that are relationship-MOTIVE cases; the rest are left as vanilla serial-killer cases. 1 = every case is a motive case (the MAX; current behaviour). Lower mixes in more classic vanilla cases. 0 = all vanilla. Applies to the next case.",
+            // --- Motive Mix: how many cases are mod vs vanilla, and the blend of motive families ---
+            BindApply("Motive Mix", "MotiveCaseShare", 1.0f,
+                "MAIN KNOB: fraction (0..1) of murders that are relationship-MOTIVE cases; the rest are left as vanilla serial-killer cases. 1 = every case is a motive case, 0 = all vanilla. Applies to the next case.",
                 v => MurderSelector.MotiveCaseShare = v, R01(), Order(100));
+            // The five motive families — each a 0..1 weight, NORMALISED together, so any mix works (they need
+            // not sum to 1). Set one to 0 to drop that motive from the blend.
+            BindApply("Motive Mix", "AffairShare", 0.30f,
+                "Relative weight of AFFAIR (infidelity / love-triangle) cases in the blend.",
+                v => MurderSelector.AffairShare = v, R01());
+            BindApply("Motive Mix", "WorkplaceShare", 0.30f,
+                "Relative weight of WORKPLACE (promotion + layoffs) cases. NOTE: bounded by how many bosses/companies exist — a high weight can't create more workplace cases than the city has candidates.",
+                v => MurderSelector.WorkplaceShare = v, R01());
+            BindApply("Motive Mix", "PropertyShare", 0.15f,
+                "Relative weight of PROPERTY (eviction + rent-arrears) cases. NOTE: bounded by how many landlords exist — best kept rare; in small sandboxes landlords can run out.",
+                v => MurderSelector.PropertyShare = v, R01());
+            BindApply("Motive Mix", "FeudShare", 0.15f,
+                "Relative weight of personal-FEUD cases in the blend.",
+                v => MurderSelector.FeudShare = v, R01());
+            BindApply("Motive Mix", "DebtShare", 0.10f,
+                "Relative weight of DEBT cases in the blend.",
+                v => MurderSelector.DebtShare = v, R01());
+            // --- Selection ---
             BindApply("Selection", "MinSuspects", 3,
                 "PREFER victims with at least this many real event-backed suspects. If none qualify, degrade to the richest available victim (never vanilla for the floor).",
                 v => MurderSelector.MinSuspects = v);
             BindApply("Selection", "KillerPoolSize", 10,
                 "The real killer is picked uniformly at random from the victim's top-N strongest suspects.",
                 v => MurderSelector.KillerPoolSize = v);
-            BindApply("Selection", "WorkplaceCaseShare", 0.5f,
-                "When the F6 force is OFF: target fraction of mod cases that feature a workplace motive, so the far-more-numerous affairs don't swamp workplace. 0 = affairs only, 1 = workplace only.",
-                v => MurderSelector.WorkplaceCaseShare = v, R01());
             BindApply("Selection", "NameKnownThreshold", 0.2f,
-                "Minimum directed familiarity (Acquaintance.known, 0..1) for an NPC to count as knowing a person's NAME (able to identify their photo). Gates interrogation gossip + the F9 knower list. Real relationships sit ~0.6-0.9; casual acquaintances ~0.1-0.2. Lowered to 0.2 to widen gossip coverage.",
+                "Minimum directed familiarity (Acquaintance.known, 0..1) for an NPC to count as knowing a person's NAME (able to identify their photo). Gates interrogation gossip + the F9 knower list. Real relationships sit ~0.6-0.9; casual acquaintances ~0.1-0.2.",
                 v => Motive.NameKnownThreshold = v, R01());
-
-            // --- Flavour ---
-            BindApply("Flavour", "StripSignatures", true,
-                "Remove serial-killer calling card/moniker/graffiti from motivated cases so they read as personal crimes.",
-                v => MurderSelector.StripSignatures = v);
-            BindApply("Flavour", "VanillaCaseEvery", 0,
-                "Force a full vanilla serial-killer case every Nth case (deterministic). 0 = never force vanilla. Composes with MotiveCaseShare (either can force vanilla). Production suggestion: 3-4.",
-                v => MurderSelector.VanillaCaseEvery = v);
 
             // --- Workplace (built on-demand from live company rosters at murder time) ---
             BindApply("Workplace", "EnableWorkplace", true,
@@ -79,7 +79,7 @@ namespace SODMotives
                 "Maximum suspects per workplace case (passed-over rivals / employees on the layoff list).",
                 v => WorkplaceSim.MaxSuspects = v);
             BindApply("Workplace", "PromotionShare", 0.4f,
-                "Of workplace cases where both are possible, the fraction that are promotions; the rest are layoffs (a boss-victim, most reliably multi-suspect).",
+                "Of workplace cases, the fraction that are promotions; the rest are layoffs. NOTE: pushing this LOW (more layoffs) is bounded by how many bosses exist to be the layoff victim.",
                 v => WorkplaceSim.PromotionShare = v, R01());
 
             // --- Property (built on-demand from the live residency graph) ---
@@ -89,40 +89,28 @@ namespace SODMotives
             BindApply("Property", "MaxTenantSuspects", 6,
                 "Maximum tenant suspects per eviction case (the aggrieved tenants being cleared out for redevelopment).",
                 v => PropertySim.MaxTenantSuspects = v);
-            BindApply("Property", "PropertyCaseShare", 0.25f,
-                "When the F6 force is OFF: target fraction of mod cases that feature a landlord/property motive (affair = the remainder after workplace + property).",
-                v => MurderSelector.PropertyCaseShare = v, R01());
             BindApply("Property", "EvictionShare", 0.6f,
-                "Of eligible buildings, the fraction whose case is an eviction (landlord victim, many tenant suspects); the rest are rent-arrears (a tenant victim, the landlord suspect).",
+                "Of property cases, the fraction that are evictions (a landlord victim, many aggrieved tenant suspects); the rest are rent-arrears (bidirectional — landlord OR tenant can be the victim). NOTE: bounded by landlord count.",
                 v => PropertySim.EvictionShare = v, R01());
 
-            // --- Feud (SEEDED AT NEW GAME — these apply to the next new game, not the current city) ---
+            // --- Feud (SEEDED AT NEW GAME — these apply to the next NEW GAME, not the current city) ---
             BindApply("Feud", "EnableFeuds", true,
-                "Seed personal-feud cases (bad blood between two citizens), synthesized from genuinely soured relationships. Bidirectional: either party can be killer or victim. (Seeded at new-game.)",
+                "(New Game) Seed personal-feud cases (bad blood between two citizens), synthesized from genuinely soured relationships. Bidirectional: either party can be killer or victim.",
                 v => FeudSim.EnableFeuds = v);
             BindApply("Feud", "EnableDebts", true,
-                "Seed debt cases (a creditor fed up with a debtor who stopped paying), synthesized over real acquaintance edges. A Money motive; the creditor is the lone suspect. (Seeded at new-game.)",
+                "(New Game) Seed debt cases (a creditor fed up with a debtor who stopped paying), synthesized over real acquaintance edges. Bidirectional: either party can be killer or victim.",
                 v => FeudSim.EnableDebts = v);
             BindApply("Feud", "MaxFeuds", 40,
-                "Cap on synthesized feuds seeded per city (keeps the far-more-numerous affairs from being swamped). (Seeded at new-game.)",
+                "(New Game) Cap on synthesized feuds seeded per city.",
                 v => FeudSim.MaxFeuds = v);
             BindApply("Feud", "MaxDebts", 40,
-                "Cap on synthesized debts seeded per city. (Seeded at new-game.)",
+                "(New Game) Cap on synthesized debts seeded per city.",
                 v => FeudSim.MaxDebts = v);
-            BindApply("Feud", "FeudCaseShare", 0.15f,
-                "When the F6 force is OFF: target fraction of mod cases that feature a personal-feud motive (affair = the remainder after workplace + money + feud).",
-                v => MurderSelector.FeudCaseShare = v, R01());
 
             // --- Clues ---
-            BindApply("Clues", "InjectClues", true,
-                "Inject deliberately-ambiguous physical notes per motivated case, hinting at motives.",
-                v => ClueInjector.Enable = v);
             BindApply("Clues", "MaxCluesPerCase", 8,
                 "Safety cap on total motive clues per case (one per event-suspect: love letter / promotion letter + rival threats / termination notices).",
                 v => ClueInjector.MaxClues = v);
-            BindApply("Clues", "ObviousTestNames", true,
-                "TESTING: rename injected notes to 'MODCLUE ...' so they're easy to find. Set false for normal play.",
-                v => ClueInjector.ObviousNames = v);
             BindApply("Clues", "FingerprintChance", 0.7f,
                 "Chance (0..1) a note carries the author's fingerprints. Below that, it's traceable only by handwriting.",
                 v => ClueInjector.FingerprintChance = v, R01());
@@ -133,21 +121,30 @@ namespace SODMotives
                 "Chance (0..1) an eligible clue (affair love-letter, redundancy list, redevelopment plan) arrives as an EMAIL in an NPC's inbox instead of a physical note — never both. Promotion is exempt (always BOTH channels). RentArrears/Feud/Debt are always physical (handwriting + fingerprint, which email can't carry).",
                 v => ClueInjector.EmailClueShare = v, R01());
 
-            // --- Interrogation ---
-            BindApply("Interrogation", "EnableInterrogation", true,
-                "Let interrogated NPCs volunteer mod gossip about people they know (affairs / workplace / property / feuds), appended after the vanilla 'do you know this person?' answer. Off = vanilla interrogation only.",
-                v => Interrogation.Enable = v);
+            // --- Troubleshooting: you shouldn't normally need these — fixes, test aids, and inverted toggles. ---
+            BindApply("Troubleshooting", "UnstickStalledMurders", true,
+                "Recover a mod motive-murder that soft-locks in the 'executing' state (killer never lands a lethal blow). ONLY acts on our overridden cases, and ONLY when the killer is co-located with the victim; touches no vanilla murder.",
+                v => MurderWatchdog.Enable = v);
+            BindApply("Troubleshooting", "StallGameHours", 24f,
+                "In-game hours a mod murder may sit stalled in 'executing' before the watchdog force-finishes it (only if killer is present and no damage is landing).",
+                v => MurderWatchdog.StallGameHours = v);
+            BindApply("Troubleshooting", "StripSignatures", true,
+                "Remove serial-killer calling card / moniker / graffiti from motivated cases so they read as personal crimes. (Off = motive cases keep the vanilla serial-killer signatures.)",
+                v => MurderSelector.StripSignatures = v);
+            BindApply("Troubleshooting", "DisableClueInjection", false,
+                "Turn OFF motive-clue injection (physical notes + emails). Default off = clues ON.",
+                v => ClueInjector.Enable = !v);
+            BindApply("Troubleshooting", "DisableInterrogation", false,
+                "Turn OFF mod interrogation gossip (the extra answer appended to 'do you know this person?'). Default off = interrogation ON.",
+                v => Interrogation.Enable = !v);
+            BindApply("Troubleshooting", "ObviousTestNames", true,
+                "TESTING: rename injected notes to 'MODCLUE ...' so they're easy to find. Set false for normal play.",
+                v => ClueInjector.ObviousNames = v);
 
             // --- Debug Keys (rebindable hotkeys; KeyCode renders as a key-binder in the overlay) ---
             BindApply("Debug Keys", "CaseSolutionOverlay", UnityEngine.KeyCode.F9,
                 "Toggle the on-screen case-solution overlay (killer / victim / suspect pool / injected clues).",
                 v => DebugTools.KeyCaseSolution = v);
-            BindApply("Debug Keys", "InjectTestEmail", UnityEngine.KeyCode.F3,
-                "Inject a test email between two citizens (read on a home computer).",
-                v => DebugTools.KeyTestEmail = v);
-            BindApply("Debug Keys", "SpawnTestNote", UnityEngine.KeyCode.F4,
-                "Spawn a threatening test note in your apartment.",
-                v => DebugTools.KeyTestNote = v);
             BindApply("Debug Keys", "CycleForceEvent", UnityEngine.KeyCode.F6,
                 "Cycle the forced next-murder event type (off / affair / promotion / layoffs / eviction / rentarrears / feud / debt).",
                 v => DebugTools.KeyCycleForce = v);
@@ -178,11 +175,9 @@ namespace SODMotives
                 catch (Exception ex) { Log.LogWarning($"[SODMotives] config live-apply error: {ex.Message}"); }
             };
 
-            // TESTING DEFAULT: force the first (and every) new murder to a MONEY case so V2.4 debts are
-            // fast to test (with [Property] EnableProperty = false the Money bucket is debt-only, so this
-            // yields a debtor victim + creditor suspect straight off F5 — no F6 presses). Cycle in-game with
-            // F6 (off / affair / professional / money / feud). SET TO MotiveType.None FOR RELEASE.
-            DebugTools.ForceMotiveType = MotiveType.Money;
+            // No forced motive type by default — the Motive Mix weights drive the blend. Cycle a force
+            // in-game with F6 to test one specific event type.
+            DebugTools.ForceMotiveType = MotiveType.None;
 
             _harmony = new Harmony(Guid);
             _harmony.PatchAll(typeof(MotivesPlugin).Assembly);
@@ -212,8 +207,21 @@ namespace SODMotives
               : (ui == null) ? new ConfigDescription(desc, range)
               : new ConfigDescription(desc, range, ui);
             ConfigEntry<T> entry = Config.Bind(section, key, def, cd);
-            apply(entry.Value);
-            _applyByEntry[entry] = () => apply(entry.Value);
+            ConfigEntryBase baseEntry = entry;
+            Action applyNow = () =>
+            {
+                // Float knobs: snap to 2 decimals so the overlay (which renders the raw value with no
+                // format control) shows a clean number like 0.5 / 0.48 instead of 0.4823529. Writing the
+                // rounded value back re-fires SettingChanged; on that pass it is already clean, so it applies.
+                if (baseEntry is ConfigEntry<float> fe)
+                {
+                    float r = (float)Math.Round(fe.Value, 2, MidpointRounding.AwayFromZero);
+                    if (Math.Abs(r - fe.Value) > 0.0005f) { fe.Value = r; return; }
+                }
+                apply(entry.Value);
+            };
+            applyNow();
+            _applyByEntry[entry] = applyNow;
         }
 
         private static AcceptableValueRange<float> R01() => new AcceptableValueRange<float>(0f, 1f);         // 0..1 slider
@@ -451,6 +459,10 @@ namespace SODMotives
             try
             {
                 if (__instance == null) return;
+                // #20: when the player prints one of our body-list emails, the printout is an
+                // EvidencePrintedVmail whose auto-facts are only From/To — add the body-named citizen
+                // connections so its connections tab matches the physical clue (once per printout).
+                try { var pv = __instance.TryCast<EvidencePrintedVmail>(); if (pv != null) ClueInjector.ConnectPrintedVmail(pv); } catch { }
                 int id = -1;
                 try { var it = __instance.interactable; if (it != null) id = it.id; } catch { }
                 if (id < 0 || !ClueInjector.AnonWriterNoteIds.Contains(id)) return;

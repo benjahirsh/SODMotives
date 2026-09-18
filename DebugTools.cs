@@ -47,8 +47,6 @@ namespace SODMotives
         // re-applied live from the in-game overlay (which renders KeyCode as a key-binder). Defaults are
         // the original F-keys (F5 left free for the game's quicksave + the config-menu toggle).
         internal static KeyCode KeyCaseSolution   = KeyCode.F9;
-        internal static KeyCode KeyTestEmail      = KeyCode.F3;
-        internal static KeyCode KeyTestNote       = KeyCode.F4;
         internal static KeyCode KeyCycleForce     = KeyCode.F6;
         internal static KeyCode KeyGhost          = KeyCode.F7;
         internal static KeyCode KeyAlwaysAnswer   = KeyCode.F8;
@@ -89,7 +87,7 @@ namespace SODMotives
                 GameObject.DontDestroyOnLoad(go);
                 go.hideFlags = HideFlags.HideAndDontSave;
                 go.AddComponent<DebugHotkey>();
-                MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys (defaults; all rebindable in the config menu -> SOD Motives / Debug Keys): F3=inject test EMAIL (read on a citizen's home computer), F4=spawn threatening test note in your apartment, F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=ghost, F8=always-answer, F9=case solution, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower. (F5 left free for the game's quicksave + the config-menu toggle.)");
+                MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys (defaults; rebindable in the config menu -> SOD Motives / Debug Keys): F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=ghost, F8=always-answer, F9=case solution, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower. (F3/F4/F5 unbound.)");
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] hotkey register failed: {e.Message}"); }
         }
@@ -526,8 +524,6 @@ namespace SODMotives
                     if (DebugTools.Show) { DebugTools.Show = false; }
                     else { DebugTools.BuildSolution(); DebugTools.Show = true; }
                 }
-                if (Input.GetKeyDown(DebugTools.KeyTestEmail)) DebugTools.SpawnTestEmail();
-                if (Input.GetKeyDown(DebugTools.KeyTestNote)) DebugTools.SpawnTestNote();
                 if (Input.GetKeyDown(DebugTools.KeyCycleForce)) DebugTools.CycleForceMotive();
                 if (Input.GetKeyDown(DebugTools.KeyTeleportScene)) DebugTools.TeleportToScene();
                 if (Input.GetKeyDown(DebugTools.KeyTeleportWork)) DebugTools.TeleportToWork();
@@ -565,14 +561,14 @@ namespace SODMotives
                 float x = Screen.width - w - rm;
                 float y = 8f;
 
-                // Force-motive (F6) — ALWAYS visible (incl. OFF); the persistent F6 state survives
-                // sandbox re-rolls within one game, so it should never be a surprise.
+                // Force-motive (F6) — shown ONLY when a force is active (hidden when OFF).
                 bool fm = DebugTools.ForceEventType.HasValue || DebugTools.ForceMotiveType != MotiveType.None;
-                _hudStyle.normal.textColor = fm ? Color.yellow : Color.gray;
-                GUI.Label(new Rect(x, y, w, 20),
-                    fm ? $"FORCE: {DebugTools.ForceLabel()} (F6)" : "FORCE: OFF (F6 = affair/promotion/layoffs/eviction/rentarrears/feud/debt)",
-                    _hudStyle);
-                y += 20f;
+                if (fm)
+                {
+                    _hudStyle.normal.textColor = Color.yellow;
+                    GUI.Label(new Rect(x, y, w, 20), $"FORCE: {DebugTools.ForceLabel()} (F6)", _hudStyle);
+                    y += 20f;
+                }
 
                 // Always-answer (F8) + who-you're-talking-to readout.
                 if (DebugTools.AlwaysAnswer)
@@ -595,17 +591,6 @@ namespace SODMotives
                     y += 20f;
                 }
 
-                // Injected-clue locations (populated by clue injection / F4 test note).
-                int n = DebugTools.ClueHud.Count;
-                if (n > 0)
-                {
-                    _hudStyle.normal.textColor = new Color(1f, 0.6f, 0.2f);   // orange
-                    for (int i = 0; i < n; i++)
-                    {
-                        GUI.Label(new Rect(x, y, w, 20), "CLUE @ " + DebugTools.ClueHud[i], _hudStyle);
-                        y += 20f;
-                    }
-                }
             }
             catch { }
 

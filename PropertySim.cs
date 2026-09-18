@@ -19,7 +19,7 @@ namespace SODMotives
     {
         internal static bool Enable = true;
         internal static int MaxTenantSuspects = 6;        // cap eviction suspects per building
-        internal static float EvictionShare = 0.6f;       // of eligible buildings, fraction that are eviction (rest = rent arrears)
+        internal static float EvictionShare = 0.3f;       // of eligible buildings, fraction that are eviction (rest = rent arrears)
 
         private static readonly Random _rng = new Random();
 

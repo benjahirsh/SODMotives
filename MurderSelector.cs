@@ -21,11 +21,11 @@ namespace SODMotives
         internal static float MotiveCaseShare = 1.0f;
         // Per-motive-FAMILY weights (each 0..1), NORMALISED by their sum at selection so any combination
         // works. When the F6 force is OFF, a case's motive family is drawn by these relative weights.
-        internal static float AffairShare = 0.30f;      // infidelity / love-triangle
-        internal static float WorkplaceShare = 0.30f;   // promotion + layoffs (bounded by how many bosses exist)
-        internal static float PropertyShare = 0.15f;    // eviction + rent-arrears (bounded by how many landlords exist)
-        internal static float FeudShare = 0.15f;        // personal feuds
-        internal static float DebtShare = 0.10f;        // debts
+        internal static float AffairShare = 0.35f;      // infidelity / love-triangle
+        internal static float WorkplaceShare = 0.25f;   // promotion + layoffs (bounded by how many bosses exist)
+        internal static float PropertyShare = 0.10f;    // eviction + rent-arrears (bounded by how many landlords exist)
+        internal static float FeudShare = 0.35f;        // personal feuds
+        internal static float DebtShare = 0.35f;        // debts
         internal static bool StripSignatures = true;    // remove serial-killer calling card/moniker/graffiti on motivated cases
 
         private static readonly Random _rng = new Random();

@@ -45,19 +45,19 @@ namespace SODMotives
                 v => MurderSelector.MotiveCaseShare = v, R01(), Order(100));
             // The five motive families — each a 0..1 weight, NORMALISED together, so any mix works (they need
             // not sum to 1). Set one to 0 to drop that motive from the blend.
-            BindApply("Motive Mix", "AffairShare", 0.30f,
+            BindApply("Motive Mix", "AffairShare", 0.35f,
                 "Relative weight of AFFAIR (infidelity / love-triangle) cases in the blend.",
                 v => MurderSelector.AffairShare = v, R01());
-            BindApply("Motive Mix", "WorkplaceShare", 0.30f,
+            BindApply("Motive Mix", "WorkplaceShare", 0.25f,
                 "Relative weight of WORKPLACE (promotion + layoffs) cases. NOTE: bounded by how many bosses/companies exist — a high weight can't create more workplace cases than the city has candidates.",
                 v => MurderSelector.WorkplaceShare = v, R01());
-            BindApply("Motive Mix", "PropertyShare", 0.15f,
+            BindApply("Motive Mix", "PropertyShare", 0.10f,
                 "Relative weight of PROPERTY (eviction + rent-arrears) cases. NOTE: bounded by how many landlords exist — best kept rare; in small sandboxes landlords can run out.",
                 v => MurderSelector.PropertyShare = v, R01());
-            BindApply("Motive Mix", "FeudShare", 0.15f,
+            BindApply("Motive Mix", "FeudShare", 0.35f,
                 "Relative weight of personal-FEUD cases in the blend.",
                 v => MurderSelector.FeudShare = v, R01());
-            BindApply("Motive Mix", "DebtShare", 0.10f,
+            BindApply("Motive Mix", "DebtShare", 0.35f,
                 "Relative weight of DEBT cases in the blend.",
                 v => MurderSelector.DebtShare = v, R01());
             // --- Selection ---
@@ -78,7 +78,7 @@ namespace SODMotives
             BindApply("Workplace", "MaxSuspects", 5,
                 "Maximum suspects per workplace case (passed-over rivals / employees on the layoff list).",
                 v => WorkplaceSim.MaxSuspects = v);
-            BindApply("Workplace", "PromotionShare", 0.4f,
+            BindApply("Workplace", "PromotionShare", 0.7f,
                 "Of workplace cases, the fraction that are promotions; the rest are layoffs. NOTE: pushing this LOW (more layoffs) is bounded by how many bosses exist to be the layoff victim.",
                 v => WorkplaceSim.PromotionShare = v, R01());
 
@@ -89,7 +89,7 @@ namespace SODMotives
             BindApply("Property", "MaxTenantSuspects", 6,
                 "Maximum tenant suspects per eviction case (the aggrieved tenants being cleared out for redevelopment).",
                 v => PropertySim.MaxTenantSuspects = v);
-            BindApply("Property", "EvictionShare", 0.6f,
+            BindApply("Property", "EvictionShare", 0.3f,
                 "Of property cases, the fraction that are evictions (a landlord victim, many aggrieved tenant suspects); the rest are rent-arrears (bidirectional — landlord OR tenant can be the victim). NOTE: bounded by landlord count.",
                 v => PropertySim.EvictionShare = v, R01());
 

@@ -189,24 +189,28 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
 
 ## Phase C — Final playtest at production balance
 
-- [x] **C1a — Production balance set as code defaults** ✅ **DONE 2026-09-18.** The Playtest-Round-1
-  config redesign already baked the candidate production values into the code defaults (`Plugin.cs`
-  `BindApply` + `MurderSelector.cs` static fields), so **no code change was needed** — audited and
-  confirmed below. The **live `.cfg` had drifted to test values** (FeudShare 0.3, DebtShare 0.3,
-  MaxCluesPerCase 4, EmailClueShare 1) plus orphan keys from old code versions; it was backed up to the
-  session scratchpad and removed so it **regenerates clean at these defaults on next launch**. Confirmed
-  production values (all = current code defaults; live-tunable in the overlay):
-  - `[Motive Mix]` MotiveCaseShare 1.0 · AffairShare 0.30 · WorkplaceShare 0.30 · PropertyShare 0.15 ·
-    FeudShare 0.15 · DebtShare 0.10 — normalised by their sum ⇒ blend **Affair 30 / Workplace 30 /
-    Property 15 / Feud 15 / Debt 10 %** (the redesign replaced the old independent `*CaseShare` knobs).
+- [x] **C1a — Production balance set as code defaults** ✅ **DONE 2026-09-18.** First pass confirmed the
+  Round-1 redesign had already baked reasonable defaults (no code change) and reset a **drifted live `.cfg`**
+  (FeudShare 0.3, DebtShare 0.3, MaxCluesPerCase 4, EmailClueShare 1 + orphan keys → backed up to scratchpad
+  and removed so it regenerates clean). **Then the user set the production blend** (2026-09-18): the five
+  `[Motive Mix]` weights need NOT sum to 1 (normalised by their sum at `MurderSelector.cs` selection).
+  Applied as new code defaults (`Plugin.cs` `BindApply` + the `MurderSelector`/`WorkplaceSim`/`PropertySim`
+  static fields), builds clean:
+  - `[Motive Mix]` MotiveCaseShare 1.0 · **AffairShare 0.35 · FeudShare 0.35 · DebtShare 0.35 ·
+    WorkplaceShare 0.25 · PropertyShare 0.10** (raw weights, sum 1.40) ⇒ normalised blend **Affair 25 /
+    Feud 25 / Debt 25 / Workplace ~17.9 / Property ~7.1 %**.
+  - `[Workplace]` EnableWorkplace true · MaxSuspects 5 · **PromotionShare 0.70** (⇒ 70% promotions / 30%
+    layoffs ⇒ Promotion 12.5% / Layoffs 5.4% of all cases).
+  - `[Property]` EnableProperty true · MaxTenantSuspects 6 · **EvictionShare 0.30** (⇒ 30% evictions / 70%
+    rent-arrears ⇒ Eviction 2.1% / RentArrears 5.0% of all cases).
   - `[Selection]` MinSuspects 3 · KillerPoolSize 10 · **NameKnownThreshold 0.2** (supersedes the stale
     0.35 in earlier drafts — Cpp2IL-confirmed a subset of vanilla recognition, a pure taste dial).
-  - `[Workplace]` EnableWorkplace true · MaxSuspects 5 · PromotionShare 0.4 (of workplace cases).
-  - `[Property]` EnableProperty true · MaxTenantSuspects 6 · EvictionShare 0.6 (of property cases).
   - `[Feud]` EnableFeuds/EnableDebts true · MaxFeuds 40 · MaxDebts 40 (seed at New Game).
   - `[Clues]` MaxCluesPerCase 8 · FingerprintChance 0.7 · WorkplaceClueShare 0.5 · EmailClueShare 0.5.
   - `[Troubleshooting]` `ObviousTestNames` stays **true through Phase C** (find clues while testing) —
     the flip to false is Phase D (D1). Watchdog/StripSignatures/clues/interrogation already production.
+  - **NOTE:** Property is now very rare (~7%) and landlord-bounded, and Workplace ~18% — a short playtest
+    may not surface an eviction/rent-arrears/layoffs case by chance; use F6 to force those while verifying.
 - [ ] **C1b — Playtest each motive type at production balance.** Run each of Affair / Promotion /
   Layoffs / Eviction / RentArrears / Feud / Debt (F6 to force while F-keys still exist), checking clue
   pile + gossip + solvability. The blend above is a starting point — tune the `[Motive Mix]` weights
@@ -326,3 +330,8 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
   backed up to scratchpad and removed so it regenerates clean at defaults on next launch. C1 section
   rewritten to the new `[Motive Mix]` model + the confirmed production values. Remaining Phase C work =
   C1b (playtest each motive type). `ObviousTestNames` intentionally kept true until Phase D.
+- 2026-09-18 — **User set the production blend** (confirmed weights need not sum to 1 — normalised).
+  Applied as code defaults + builds clean: `[Motive Mix]` Affair/Feud/Debt 0.35, Workplace 0.25,
+  Property 0.10 ⇒ Affair/Feud/Debt 25% each, Workplace ~17.9%, Property ~7.1%; `PromotionShare` 0.4→0.70
+  (70% promotions), `EvictionShare` 0.6→0.30 (30% evictions). Property/layoffs/eviction now rare — F6 to
+  force them in the C1b playtest.

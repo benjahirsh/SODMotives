@@ -15,7 +15,7 @@ namespace SODMotives
     {
         internal static bool Enable = true;
         internal static int MaxSuspects = 5;          // cap suspects per workplace case
-        internal static float PromotionShare = 0.4f;  // of workplace cases where both are possible, fraction that are promotions (rest = layoffs)
+        internal static float PromotionShare = 0.7f;  // of workplace cases where both are possible, fraction that are promotions (rest = layoffs)
 
         private static readonly Random _rng = new Random();
 

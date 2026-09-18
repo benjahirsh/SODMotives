@@ -197,12 +197,12 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
   Applied as new code defaults (`Plugin.cs` `BindApply` + the `MurderSelector`/`WorkplaceSim`/`PropertySim`
   static fields), builds clean:
   - `[Motive Mix]` MotiveCaseShare 1.0 · **AffairShare 0.35 · FeudShare 0.35 · DebtShare 0.35 ·
-    WorkplaceShare 0.25 · PropertyShare 0.10** (raw weights, sum 1.40) ⇒ normalised blend **Affair 25 /
-    Feud 25 / Debt 25 / Workplace ~17.9 / Property ~7.1 %**.
+    WorkplaceShare 0.30 · PropertyShare 0.10** (raw weights, sum 1.45) ⇒ normalised blend **Affair ~24.1 /
+    Feud ~24.1 / Debt ~24.1 / Workplace ~20.7 / Property ~6.9 %**.
   - `[Workplace]` EnableWorkplace true · MaxSuspects 5 · **PromotionShare 0.70** (⇒ 70% promotions / 30%
-    layoffs ⇒ Promotion 12.5% / Layoffs 5.4% of all cases).
+    layoffs ⇒ Promotion ~14.5% / Layoffs ~6.2% of all cases).
   - `[Property]` EnableProperty true · MaxTenantSuspects 6 · **EvictionShare 0.30** (⇒ 30% evictions / 70%
-    rent-arrears ⇒ Eviction 2.1% / RentArrears 5.0% of all cases).
+    rent-arrears ⇒ Eviction ~2.1% / RentArrears ~4.8% of all cases).
   - `[Selection]` MinSuspects 3 · KillerPoolSize 10 · **NameKnownThreshold 0.2** (supersedes the stale
     0.35 in earlier drafts — Cpp2IL-confirmed a subset of vanilla recognition, a pure taste dial).
   - `[Feud]` EnableFeuds/EnableDebts true · MaxFeuds 40 · MaxDebts 40 (seed at New Game).
@@ -331,7 +331,7 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
   rewritten to the new `[Motive Mix]` model + the confirmed production values. Remaining Phase C work =
   C1b (playtest each motive type). `ObviousTestNames` intentionally kept true until Phase D.
 - 2026-09-18 — **User set the production blend** (confirmed weights need not sum to 1 — normalised).
-  Applied as code defaults + builds clean: `[Motive Mix]` Affair/Feud/Debt 0.35, Workplace 0.25,
-  Property 0.10 ⇒ Affair/Feud/Debt 25% each, Workplace ~17.9%, Property ~7.1%; `PromotionShare` 0.4→0.70
-  (70% promotions), `EvictionShare` 0.6→0.30 (30% evictions). Property/layoffs/eviction now rare — F6 to
-  force them in the C1b playtest.
+  Applied as code defaults + builds clean: `[Motive Mix]` Affair/Feud/Debt 0.35, **Workplace 0.30**,
+  Property 0.10 (sum 1.45) ⇒ Affair/Feud/Debt ~24.1% each, Workplace ~20.7%, Property ~6.9%;
+  `PromotionShare` 0.4→0.70 (70% promotions), `EvictionShare` 0.6→0.30 (30% evictions). (Workplace bumped
+  0.25→0.30, same split, in a follow-up.) Property/layoffs/eviction still rare — F6 to force them in C1b.

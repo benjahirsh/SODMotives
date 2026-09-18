@@ -48,7 +48,7 @@ namespace SODMotives
             BindApply("Motive Mix", "AffairShare", 0.35f,
                 "Relative weight of AFFAIR (infidelity / love-triangle) cases in the blend.",
                 v => MurderSelector.AffairShare = v, R01());
-            BindApply("Motive Mix", "WorkplaceShare", 0.25f,
+            BindApply("Motive Mix", "WorkplaceShare", 0.30f,
                 "Relative weight of WORKPLACE (promotion + layoffs) cases. NOTE: bounded by how many bosses/companies exist — a high weight can't create more workplace cases than the city has candidates.",
                 v => MurderSelector.WorkplaceShare = v, R01());
             BindApply("Motive Mix", "PropertyShare", 0.10f,

@@ -297,3 +297,12 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
   `Interrogation.Enable` (`[Interrogation]`) + repointed the knower log to `EventByVictim` (any motive type).
   B4: RentArrears detail now uses `SafeAddr(a)`. Deferred: the optional B2 email-fallback trim + the cosmetic
   F9 "basement 03" address quirk.
+- 2026-09-18 — **Playtest round 1 DONE + COMMITTED (`eeb06ca`).** 26-item feedback batch. Config-screen
+  redesign: new `[Motive Mix]` (MotiveCaseShare + 5 normalized family sliders Affair/Workplace/Property/Feud/
+  Debt), `[Troubleshooting]` section (inverted DisableClueInjection/DisableInterrogation, etc.),
+  PromotionShare→`[Workplace]` / EvictionShare→`[Property]`, deleted VanillaCaseEvery + old `*CaseShare`,
+  2-decimal float rounding, `ForceMotiveType`→None, F6 HUD hidden-when-off, ClueHud + F3/F4 keys removed,
+  RentArrears bidirectional. Clue fixes: **#20** printed-email body connections (VERIFIED in-game via
+  `ClueInjector.ConnectPrintedVmail`) + **#22** affair love-letter now latent. Gameplay Q&A: #21/#23/#25/#26
+  = vanilla. **NEXT: Phase C (playtest at production values), then Phase D (release gate).** Full disposition
+  + watch-list in the auto-loaded memory `sod-prerelease-progress.md`.

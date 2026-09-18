@@ -111,9 +111,6 @@ namespace SODMotives
             BindApply("Clues", "MaxCluesPerCase", 8,
                 "Safety cap on total motive clues per case (one per event-suspect: love letter / promotion letter + rival threats / termination notices).",
                 v => ClueInjector.MaxClues = v);
-            BindApply("Clues", "FingerprintChance", 0.7f,
-                "Chance (0..1) a note carries the author's fingerprints. Below that, it's traceable only by handwriting.",
-                v => ClueInjector.FingerprintChance = v, R01());
             BindApply("Clues", "WorkplaceClueShare", 0.5f,
                 "Chance (0..1) a given clue is placed at the victim's WORKPLACE rather than home. Motive-agnostic: any motive's clue can land at either, so location never betrays the motive.",
                 v => ClueInjector.WorkplaceClueShare = v, R01());
@@ -140,6 +137,9 @@ namespace SODMotives
             BindApply("Troubleshooting", "ObviousTestNames", true,
                 "TESTING: rename injected notes to 'MODCLUE ...' so they're easy to find. Set false for normal play.",
                 v => ClueInjector.ObviousNames = v);
+            BindApply("Troubleshooting", "ForceAllPrints", false,
+                "TESTING: force the author's fingerprint onto EVERY motive clue (overrides the per-type print policy, including the normally print-free rent/debt notes). Use to check whether a print on a clue at the scene aids the game's suspect scoring.",
+                v => ClueInjector.ForceAllPrints = v);
 
             // --- Debug Keys (rebindable hotkeys; KeyCode renders as a key-binder in the overlay) ---
             BindApply("Debug Keys", "TriggerMurder", UnityEngine.KeyCode.F4,

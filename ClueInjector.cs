@@ -15,7 +15,12 @@ namespace SODMotives
         internal static bool Enable = true;
         internal static int MaxClues = 8;                 // safety cap on total clues per case
         internal static bool ObviousNames = true;         // TESTING: rename injected notes so they're easy to spot
-        internal static float FingerprintChance = 0.7f;   // chance a note carries its author's prints
+        // Prints are now an ABSOLUTE policy per clue type (no chance roll): threat/authority notes carry
+        // the author's print; rent-arrears + debt notes carry NONE (handwriting + the named addressee are
+        // the leads); the affair letter carries ONE participant's print, 50/50 writer-vs-recipient (unsent
+        // vs sent). This TEST toggle forces the author's print onto EVERY clue — to check whether a print
+        // on a clue at the scene aids the game's suspect scoring.
+        internal static bool ForceAllPrints = false;
         internal static float WorkplaceClueShare = 0.5f;  // chance a given clue is placed at the workplace vs home
         internal static float EmailClueShare = 0.5f;       // chance an eligible clue (Affair/Layoffs/Eviction) arrives as an EMAIL instead of a physical note (never both). Promotion is exempt — it always uses BOTH channels (physical rival threats + an email letter).
 
@@ -417,7 +422,7 @@ namespace SODMotives
             try { if (docEv != null) docEv.SetWriter(landlord); } catch { }
             try { note.SetDDSOverride(treeId); } catch { }
             if (docEv != null) { try { docEv.SetOverrideDDS(treeId); } catch { } }
-            try { note.AddNewDynamicFingerprint(landlord, Interactable.PrintLife.manualRemoval); } catch { }
+            AddAuthorPrint(note, landlord, policyOn: true);   // the landlord's own plan carries their print
 
             if (docEv != null)
             {
@@ -532,7 +537,9 @@ namespace SODMotives
             // Handwriting (writer field above) + the print (below) are the two latent leads to the suspect.
             try { note.SetDDSOverride(treeId); } catch { }
             if (docEv != null) { try { docEv.SetOverrideDDS(treeId); } catch { } }
-            try { note.AddNewDynamicFingerprint(writer, Interactable.PrintLife.manualRemoval); } catch { }
+            // Rent-arrears + debt notes (kind "rentdemand") carry NO print — the handwriting + the addressee
+            // named in the body are the leads. Feud + promotion-rival threats still carry the author's print.
+            AddAuthorPrint(note, writer, policyOn: kind != "rentdemand");
 
             if (docEv != null)
             {
@@ -1443,7 +1450,7 @@ namespace SODMotives
             try { if (docEv != null && boss != null) docEv.SetWriter(boss); } catch { }
             try { note.SetDDSOverride(treeId); } catch { }
             if (docEv != null) { try { docEv.SetOverrideDDS(treeId); } catch { } }
-            try { note.AddNewDynamicFingerprint(boss, Interactable.PrintLife.manualRemoval); } catch { }
+            AddAuthorPrint(note, boss, policyOn: true);   // the boss's own redundancy list carries their print
 
             // Clean title (names live in the body now, so just "Redundancy List"); blank tied keys.
             if (docEv != null)
@@ -1843,6 +1850,16 @@ namespace SODMotives
             return null;
         }
 
+        // Central fingerprint policy. Adds the author's print when this clue type's policy says so (policyOn)
+        // OR when the ForceAllPrints test toggle is on. Absolute per type — no chance roll.
+        private static void AddAuthorPrint(Interactable note, Human author, bool policyOn)
+        {
+            if (note == null || author == null) return;
+            if (!(policyOn || ForceAllPrints)) return;
+            try { note.AddNewDynamicFingerprint(author, Interactable.PrintLife.manualRemoval); }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: print add: {e.Message}"); }
+        }
+
         // Set writer/reciever, override the DDS tree, add the author's prints, name + verify + record.
         private static void Finish(Interactable note, Human victim, Human writer, Human receiver, string treeId, string treeName, string label, List<string> recList, bool unsentDoc = false, bool anonWriter = false, string titleOverride = null)
         {
@@ -1863,17 +1880,18 @@ namespace SODMotives
                 var ev = note.evidence;
                 if (ev != null) { ev.SetOverrideDDS(treeId); if (writer != null) ev.SetWriter(writer); }
                 if (anonWriter) { try { int nid = note.id; if (nid >= 0) AnonWriterNoteIds.Add(nid); } catch { } }
-                // Only the AUTHOR's prints belong on a note — an UNSENT letter was touched only by its
-                // writer, never the addressee. The killer's OWN authored clue ALWAYS carries their
-                // prints (so it matches the murder weapon); other notes carry the author's at chance.
-                if (writer != null)
+                // Prints. The affair love letter (anonWriter) carries exactly ONE participant's print,
+                // 50/50 by a sent/unsent flip: UNSENT (a draft the writer kept) -> the WRITER's print;
+                // SENT (delivered) -> the RECIPIENT held it -> the RECIPIENT's print. Handwriting stays the
+                // writer's either way. Any other Finish clue (the redundancy-list fallback) carries its author's.
+                if (anonWriter && writer != null)
                 {
-                    bool killerWrote = _killerId >= 0 && writer.humanID == _killerId;
-                    if (killerWrote || _rng.NextDouble() < FingerprintChance)
-                    {
-                        try { note.AddNewDynamicFingerprint(writer, Interactable.PrintLife.manualRemoval); }
-                        catch (Exception e4) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: print add: {e4.Message}"); }
-                    }
+                    bool sent = receiver != null && _rng.NextDouble() < 0.5;
+                    AddAuthorPrint(note, sent ? receiver : writer, policyOn: true);
+                }
+                else if (writer != null)
+                {
+                    AddAuthorPrint(note, writer, policyOn: true);
                 }
                 // An UNSENT official document (termination notice / promotion letter) was never handled
                 // by its addressee — strip any recipient print the game auto-stamped, keep the author's.

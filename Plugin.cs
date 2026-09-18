@@ -142,6 +142,9 @@ namespace SODMotives
                 v => ClueInjector.ObviousNames = v);
 
             // --- Debug Keys (rebindable hotkeys; KeyCode renders as a key-binder in the overlay) ---
+            BindApply("Debug Keys", "TriggerMurder", UnityEngine.KeyCode.F4,
+                "Force the game's next murder to run NOW (fast test loop). Combine with the forced event type to get a specific case quickly. Set to None to disable.",
+                v => DebugTools.KeyTriggerMurder = v);
             BindApply("Debug Keys", "CaseSolutionOverlay", UnityEngine.KeyCode.F9,
                 "Toggle the on-screen case-solution overlay (killer / victim / suspect pool / injected clues).",
                 v => DebugTools.KeyCaseSolution = v);

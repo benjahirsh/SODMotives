@@ -17,8 +17,8 @@ solvability**. Companion to `pre-release-plan.md` (Phase C). Production blend is
 Order: **Affair → Promotion → Layoffs → Eviction → RentArrears → Feud → Debt**
 
 1. **Force the type** — tap **F6** until the top-right HUD shows your target type.
-2. **Get a murder** — wait for the next scheduled murder. *(No trigger hotkey right now — ask me to add one
-   for a fast loop.)*
+2. **Get a murder** — tap **F4** to force the next murder NOW. It becomes your forced type if the city has a
+   valid suspect pool for it; if the log says *"no event-backed suspect pool,"* tap F4 again to re-roll.
 3. **Read the solution** — **F9** overlay: confirm **CASE TYPE** matches, note **KILLER**, the **SUSPECT
    POOL**, and the **INJECTED CLUES** + where each landed.
 4. **Find the clue(s)** — **F10** (crime scene) / **F11** (victim's workplace) to get there; look for the
@@ -47,8 +47,8 @@ Order: **Affair → Promotion → Layoffs → Eviction → RentArrears → Feud 
 | **Debt** | Physical; creditor vs debtor | bidirectional |
 
 ## Notes
-- **F6 forces the NEXT murder only.** If the log says *"no event-backed suspect pool,"* the city had no
-  valid pool of that type this roll — get another murder or move on.
+- **F4 = trigger next murder now; F6 forces its type (NEXT murder only).** Set F6 first, then F4. If the
+  log says *"no event-backed suspect pool,"* the city had no valid pool of that type this roll — F4 again.
 - **Eviction (~3%) and layoffs (~8%)** are the rarest — always F6-force those.
 - If a case's feel/balance is off, tweak the `[Motive Mix]` sliders live in the overlay (**`` ` ``**);
   changes apply to the next case.

@@ -53,6 +53,7 @@ namespace SODMotives
         internal static KeyCode KeyTeleportScene  = KeyCode.F10;
         internal static KeyCode KeyTeleportWork   = KeyCode.F11;
         internal static KeyCode KeyTeleportKnower = KeyCode.F12;
+        internal static KeyCode KeyTriggerMurder  = KeyCode.F4;   // force the game's next murder NOW (fast test loop)
 
         // Each SocialEventType maps to exactly one MotiveType — used to keep ForceMotiveType in sync with F6.
         internal static MotiveType MotiveOf(SocialEventType t)
@@ -87,7 +88,7 @@ namespace SODMotives
                 GameObject.DontDestroyOnLoad(go);
                 go.hideFlags = HideFlags.HideAndDontSave;
                 go.AddComponent<DebugHotkey>();
-                MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys (defaults; rebindable in the config menu -> SOD Motives / Debug Keys): F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=ghost, F8=always-answer, F9=case solution, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower. (F3/F4/F5 unbound.)");
+                MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys (defaults; rebindable in the config menu -> SOD Motives / Debug Keys): F4=trigger next murder NOW, F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=ghost, F8=always-answer, F9=case solution, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower. (F3/F5 unbound.)");
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] hotkey register failed: {e.Message}"); }
         }
@@ -168,20 +169,20 @@ namespace SODMotives
             catch (Exception e) { log.LogWarning($"[SODMotives][F4] error: {e}"); }
         }
 
-        // F5: force the game to run its next murder NOW (testing) — combine with F6=Professional to
-        // get a workplace case fast instead of waiting for / re-rolling sandboxes. Our override still
-        // gates on proc-gen + caseType==murder, so a triggered kidnap/sniper is left to vanilla.
+        // F4: force the game to run its next murder NOW (testing) — combine with F6=<type> to get that
+        // case fast instead of waiting for / re-rolling sandboxes. Our override still gates on proc-gen +
+        // caseType==murder, so a triggered kidnap/sniper is left to vanilla.
         internal static void TriggerMurder()
         {
             var log = MotivesPlugin.Log;
             try
             {
                 var mc = MurderController.Instance;
-                if (mc == null) { log.LogInfo("[SODMotives][F5] no MurderController."); return; }
-                log.LogInfo($"[SODMotives][F5] triggering next murder (Force={ForceLabel()})...");
+                if (mc == null) { log.LogInfo("[SODMotives][F4] no MurderController."); return; }
+                log.LogInfo($"[SODMotives][F4] triggering next murder (Force={ForceLabel()})...");
                 mc.TriggerNextMurder();
             }
-            catch (Exception e) { log.LogWarning($"[SODMotives][F5] trigger error: {e.Message}"); }
+            catch (Exception e) { log.LogWarning($"[SODMotives][F4] trigger error: {e.Message}"); }
         }
 
         // F6: cycle which SPECIFIC event type the NEXT murder is forced to (finer than the old motive-type
@@ -525,6 +526,7 @@ namespace SODMotives
                     else { DebugTools.BuildSolution(); DebugTools.Show = true; }
                 }
                 if (Input.GetKeyDown(DebugTools.KeyCycleForce)) DebugTools.CycleForceMotive();
+                if (Input.GetKeyDown(DebugTools.KeyTriggerMurder)) DebugTools.TriggerMurder();
                 if (Input.GetKeyDown(DebugTools.KeyTeleportScene)) DebugTools.TeleportToScene();
                 if (Input.GetKeyDown(DebugTools.KeyTeleportWork)) DebugTools.TeleportToWork();
                 if (Input.GetKeyDown(DebugTools.KeyTeleportKnower)) DebugTools.TeleportToNearestKnower();

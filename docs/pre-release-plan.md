@@ -197,13 +197,13 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
   Applied as new code defaults (`Plugin.cs` `BindApply` + the `MurderSelector`/`WorkplaceSim`/`PropertySim`
   static fields), builds clean:
   - `[Motive Mix]` MotiveCaseShare 1.0 · **AffairShare 0.35 · FeudShare 0.35 · DebtShare 0.35 ·
-    WorkplaceShare 0.46 · PropertyShare 0.10** (raw weights, sum 1.61) ⇒ normalised blend **Affair ~21.7 /
-    Feud ~21.7 / Debt ~21.7 / Workplace ~28.6 / Property ~6.2 %** (Workplace sized so Promotion ≈ 20%
-    overall while Affair/Feud/Debt raw weights stay 0.35).
+    WorkplaceShare 0.46 · PropertyShare 0.18** (raw weights, sum 1.69) ⇒ normalised blend **Affair ~20.7 /
+    Feud ~20.7 / Debt ~20.7 / Workplace ~27.2 / Property ~10.7 %** (Property raised so RentArrears lands
+    mid-band ~5–10%; the other four families scale down uniformly via normalisation).
   - `[Workplace]` EnableWorkplace true · MaxSuspects 5 · **PromotionShare 0.70** (⇒ 70% promotions / 30%
-    layoffs ⇒ **Promotion ~20.0%** / Layoffs ~8.6% of all cases).
+    layoffs ⇒ **Promotion ~19.1%** / Layoffs ~8.2% of all cases).
   - `[Property]` EnableProperty true · MaxTenantSuspects 6 · **EvictionShare 0.30** (⇒ 30% evictions / 70%
-    rent-arrears ⇒ Eviction ~1.9% / RentArrears ~4.3% of all cases).
+    rent-arrears ⇒ Eviction ~3.2% / **RentArrears ~7.5%** of all cases).
   - `[Selection]` MinSuspects 3 · KillerPoolSize 10 · **NameKnownThreshold 0.2** (supersedes the stale
     0.35 in earlier drafts — Cpp2IL-confirmed a subset of vanilla recognition, a pure taste dial).
   - `[Feud]` EnableFeuds/EnableDebts true · MaxFeuds 40 · MaxDebts 40 (seed at New Game).
@@ -333,7 +333,8 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
   C1b (playtest each motive type). `ObviousTestNames` intentionally kept true until Phase D.
 - 2026-09-18 — **User set the production blend** (confirmed weights need not sum to 1 — normalised).
   Applied as code defaults + builds clean: `[Motive Mix]` Affair/Feud/Debt 0.35, **Workplace 0.46**,
-  Property 0.10 (sum 1.61) ⇒ Affair/Feud/Debt ~21.7% each, Workplace ~28.6% (**Promotion ~20.0%**, Layoffs
-  ~8.6%), Property ~6.2% (Eviction ~1.9%, RentArrears ~4.3%); `PromotionShare` 0.4→0.70, `EvictionShare`
-  0.6→0.30. (Workplace tuned 0.25→0.30→0.46 across follow-ups to land Promotion ≈20% overall while keeping
-  the 70/30 split and NOT cutting Affair/Feud/Debt raw weights.) Eviction/layoffs still rare — F6 in C1b.
+  **Property 0.18** (sum 1.69) ⇒ Affair/Feud/Debt ~20.7% each, Workplace ~27.2% (Promotion ~19.1%, Layoffs
+  ~8.2%), Property ~10.7% (Eviction ~3.2%, **RentArrears ~7.5%**); `PromotionShare` 0.4→0.70, `EvictionShare`
+  0.6→0.30. (Workplace tuned 0.25→0.30→0.46 for Promotion ≈20%; then Property 0.10→0.18 to lift RentArrears
+  into 5–10% by raising Property alone — normalisation lowers the other four uniformly, nudging Promotion
+  20.0→19.1%.) Eviction/layoffs still comparatively rare — F6 in C1b.

@@ -51,7 +51,7 @@ namespace SODMotives
             BindApply("Motive Mix", "WorkplaceShare", 0.46f,
                 "Relative weight of WORKPLACE (promotion + layoffs) cases. NOTE: bounded by how many bosses/companies exist — a high weight can't create more workplace cases than the city has candidates.",
                 v => MurderSelector.WorkplaceShare = v, R01());
-            BindApply("Motive Mix", "PropertyShare", 0.10f,
+            BindApply("Motive Mix", "PropertyShare", 0.18f,
                 "Relative weight of PROPERTY (eviction + rent-arrears) cases. NOTE: bounded by how many landlords exist — best kept rare; in small sandboxes landlords can run out.",
                 v => MurderSelector.PropertyShare = v, R01());
             BindApply("Motive Mix", "FeudShare", 0.35f,

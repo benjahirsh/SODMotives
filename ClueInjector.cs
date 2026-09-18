@@ -324,12 +324,18 @@ namespace SODMotives
                 if (treeId != null && InjectEmailClue(ev.a, ev.b, treeId, "affair", "affair love-letter email", lb, null, recList) > 0) return 1;
             }
             var pick = InfidelityTrees[_rng.Next(InfidelityTrees.Length)];
-            var note = PlaceClue(victim, ev.a, ev.b, pick.id);
+            // receiver=null: like the anon threat notes, spawn with NO recipient so the game never stamps a
+            // discovered "To" fact. Passing ev.b here previously created a stray "To" (which, when ev.b was the
+            // killer, pointed the note straight at them — and never matched the initialled body). The letter is
+            // latent by design (#22): handwriting + print are the leads, gossip names the lovers.
+            var note = PlaceClue(victim, ev.a, null, pick.id);
             if (note == null) { LogFail("affair", ev.a, ev.b); return 0; }
             // anonWriter: the love letter reads as anonymous (initialled body) — no discovered From/To that
             // would name the lovers in the connections tab (#22). Handwriting + print stay as the latent lead;
             // gossip still names the lovers, so the case is solvable without the note being a giveaway.
-            Finish(note, victim, ev.a, ev.b, pick.id, pick.name, $"affair {MotivesPlugin.Name(ev.a)}->{MotivesPlugin.Name(ev.b)}", recList, anonWriter: true);
+            // titleOverride: a GENERIC "MODCLUE Love Letter" name (not the "affair A->B" diagnostic label),
+            // so the note title doesn't surface the lovers' names even in ObviousNames test mode.
+            Finish(note, victim, ev.a, ev.b, pick.id, pick.name, $"affair {MotivesPlugin.Name(ev.a)}->{MotivesPlugin.Name(ev.b)}", recList, anonWriter: true, titleOverride: "Love Letter");
             return 1;
         }
 
@@ -1838,7 +1844,7 @@ namespace SODMotives
         }
 
         // Set writer/reciever, override the DDS tree, add the author's prints, name + verify + record.
-        private static void Finish(Interactable note, Human victim, Human writer, Human receiver, string treeId, string treeName, string label, List<string> recList, bool unsentDoc = false, bool anonWriter = false)
+        private static void Finish(Interactable note, Human victim, Human writer, Human receiver, string treeId, string treeName, string label, List<string> recList, bool unsentDoc = false, bool anonWriter = false, string titleOverride = null)
         {
             // "Linked" = the killer AUTHORED this clue, so their prints are on it (weapon-matchable).
             // Being merely the addressee of an UNSENT letter is not a forensic link (they never touched it).
@@ -1891,7 +1897,9 @@ namespace SODMotives
                 }
                 if (ObviousNames && ev != null)
                 {
-                    try { ev.AddOrSetCustomName(Evidence.DataKey.name, $"MODCLUE {label}"); } catch { }
+                    // titleOverride keeps the visible name generic (e.g. "Love Letter") while `label` stays the
+                    // names-carrying diagnostic used only for logs/HUD below.
+                    try { ev.AddOrSetCustomName(Evidence.DataKey.name, $"MODCLUE {titleOverride ?? label}"); } catch { }
                     try { note.UpdateName(true, Evidence.DataKey.name); } catch { note.UpdateName(); }
                 }
                 else note.UpdateName();

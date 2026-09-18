@@ -329,11 +329,12 @@ namespace SODMotives
                 if (treeId != null && InjectEmailClue(ev.a, ev.b, treeId, "affair", "affair love-letter email", lb, null, recList) > 0) return 1;
             }
             var pick = InfidelityTrees[_rng.Next(InfidelityTrees.Length)];
-            // receiver=null: like the anon threat notes, spawn with NO recipient so the game never stamps a
-            // discovered "To" fact. Passing ev.b here previously created a stray "To" (which, when ev.b was the
-            // killer, pointed the note straight at them — and never matched the initialled body). The letter is
-            // latent by design (#22): handwriting + print are the leads, gossip names the lovers.
-            var note = PlaceClue(victim, ev.a, null, pick.id);
+            // Spawn with receiver = ev.b so the vanilla love-letter's salutation — the recipient's INITIAL,
+            // a |receiver| token in the tree — renders. The discovered "To" fact this creates is stripped
+            // afterwards (AnonReceiverNoteIds -> the AutoCreateFacts postfix), so the letter stays latent
+            // (#22): no named From/To in the connections tab, but the initialled salutation reads correctly.
+            // (Passing null here left the token unresolved -> an invalid glyph on the first line.)
+            var note = PlaceClue(victim, ev.a, ev.b, pick.id);
             if (note == null) { LogFail("affair", ev.a, ev.b); return 0; }
             // anonWriter: the love letter reads as anonymous (initialled body) — no discovered From/To that
             // would name the lovers in the connections tab (#22). Handwriting + print stay as the latent lead;
@@ -592,6 +593,9 @@ namespace SODMotives
         // a Harmony postfix on Evidence.AutoCreateFacts (Plugin.cs) calls HideWriterConnection once per note.
         internal static readonly HashSet<int> AnonWriterNoteIds = new HashSet<int>();
         internal static readonly HashSet<int> WriterHiddenIds = new HashSet<int>();   // hidden-once guard
+        // Latent letters (affair love letter) whose discovered "To" fact must be stripped — the receiver
+        // FIELD stays set (so the salutation's recipient-initial token renders), only the board link goes.
+        internal static readonly HashSet<int> AnonReceiverNoteIds = new HashSet<int>();
 
         // REMOVE a placed note's WRITER "From" connection to `person`. isSeen=false does NOT hide it from the
         // Connections tab (proven: the From fact rendered with isSeen already false), so we drop the FactLink
@@ -634,6 +638,42 @@ namespace SODMotives
                 if (removed > 0) MotivesPlugin.Log.LogInfo($"[SODMotives] clue: removed {removed} writer 'From' fact(s) of {total} on note (handwriting/print kept).");
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: hide writer connection failed: {e.Message}"); }
+            return removed;
+        }
+
+        // REMOVE a placed note's RECEIVER "To" connection — the mirror of HideWriterConnection. The note keeps
+        // its receiver FIELD (so the salutation's recipient-initial token still renders), only the auto-created
+        // "To" board connection goes. Matches by preset "To" or GetOther==person; runs every AutoCreateFacts
+        // pass so a re-materialised "To" is re-removed.
+        internal static int HideReceiverConnection(Evidence docEv, Human person)
+        {
+            if (docEv == null) return 0;
+            int removed = 0;
+            try
+            {
+                Evidence pev = null;
+                if (person != null) { try { pev = person.evidenceEntry; } catch { } }
+                var facts = docEv.allFacts;
+                int total = facts != null ? facts.Count : 0;
+                var toRemove = new List<Fact>();
+                if (facts != null)
+                    for (int i = 0; i < total; i++)
+                    {
+                        try
+                        {
+                            var fl = facts[i]; if (fl == null) continue;
+                            var f = fl.fact; if (f == null) continue;
+                            bool isTo = false;
+                            try { if (f.preset != null && f.preset.name == "To") isTo = true; } catch { }
+                            if (!isTo && pev != null) { try { var other = f.GetOther(docEv); if (other != null && other.Pointer == pev.Pointer) isTo = true; } catch { } }
+                            if (isTo) toRemove.Add(f);
+                        }
+                        catch { }
+                    }
+                for (int i = 0; i < toRemove.Count; i++) { try { docEv.RemoveFactLink(toRemove[i]); removed++; } catch (Exception re) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: RemoveFactLink(To): {re.Message}"); } }
+                if (removed > 0) MotivesPlugin.Log.LogInfo($"[SODMotives] clue: removed {removed} receiver 'To' fact(s) of {total} on latent letter (salutation kept).");
+            }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] clue: hide receiver connection failed: {e.Message}"); }
             return removed;
         }
 
@@ -1871,15 +1911,17 @@ namespace SODMotives
             try
             {
                 if (writer != null) note.SetWriter(writer);
-                // anonWriter (e.g. an initialled love letter): keep the writer field as a LATENT handwriting/
-                // print lead, but suppress the discovered "From"/"To" facts that would name the author +
-                // recipient in the connections tab. Skipping SetReciever avoids the "To"; adding the note to
-                // AnonWriterNoteIds makes the AutoCreateFacts postfix strip the auto-created "From".
-                if (!anonWriter) { try { if (receiver != null) note.SetReciever(receiver); } catch { } }
+                // A latent letter (anonWriter, e.g. the initialled love letter) keeps its writer AND receiver
+                // FIELDS set — the handwriting/print lead needs the writer, and the salutation's recipient-
+                // initial |receiver| token needs the receiver — but suppresses the discovered "From"/"To"
+                // FACTS that would name the author + recipient in the connections tab. AnonWriterNoteIds +
+                // AnonReceiverNoteIds make the AutoCreateFacts postfix strip the auto-created "From"/"To"
+                // while the fields (and so the rendered text) stay intact.
+                if (receiver != null) { try { note.SetReciever(receiver); } catch { } }
                 note.SetDDSOverride(treeId);
                 var ev = note.evidence;
                 if (ev != null) { ev.SetOverrideDDS(treeId); if (writer != null) ev.SetWriter(writer); }
-                if (anonWriter) { try { int nid = note.id; if (nid >= 0) AnonWriterNoteIds.Add(nid); } catch { } }
+                if (anonWriter) { try { int nid = note.id; if (nid >= 0) { AnonWriterNoteIds.Add(nid); AnonReceiverNoteIds.Add(nid); } } catch { } }
                 // Prints. The affair love letter (anonWriter) carries exactly ONE participant's print,
                 // 50/50 by a sent/unsent flip: UNSENT (a draft the writer kept) -> the WRITER's print;
                 // SENT (delivered) -> the RECIPIENT held it -> the RECIPIENT's print. Handwriting stays the

@@ -468,6 +468,13 @@ namespace SODMotives
                 try { var pv = __instance.TryCast<EvidencePrintedVmail>(); if (pv != null) ClueInjector.ConnectPrintedVmail(pv); } catch { }
                 int id = -1;
                 try { var it = __instance.interactable; if (it != null) id = it.id; } catch { }
+                // Latent letters (affair): strip the auto-created "To" fact so the recipient isn't named — the
+                // receiver FIELD stays set (renders the salutation initial), only the board connection goes.
+                if (id >= 0 && ClueInjector.AnonReceiverNoteIds.Contains(id))
+                {
+                    Human r = null; try { r = __instance.reciever; } catch { }
+                    ClueInjector.HideReceiverConnection(__instance, r);
+                }
                 if (id < 0 || !ClueInjector.AnonWriterNoteIds.Contains(id)) return;
                 Human w = null; try { w = __instance.writer; } catch { }
                 ClueInjector.HideWriterConnection(__instance, w);   // removes the auto-created writer "From" fact (logs only if it removed any)

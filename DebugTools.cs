@@ -107,6 +107,8 @@ namespace SODMotives
                 // Invincibility: even if NPCs/cameras still aggro, don't let them kill you.
                 try { p.currentHealth = p.GetCurrentMaxHealth(); } catch { }
                 try { p.isStunned = false; } catch { }
+                // Let the player into echelon (high-security) zones so you can knock on tenants' doors.
+                EnsureEchelonAccess(true);
             }
             catch { }
         }
@@ -114,6 +116,45 @@ namespace SODMotives
         internal static void ClearGhost()
         {
             try { var p = Player.Instance; if (p != null) { try { p.unreportable = false; } catch { } } } catch { }
+            EnsureEchelonAccess(false);
+        }
+
+        // Grant/revoke ECHELON-ZONE ACCESS the same way the game's "allowedInEchelons" sync disk does: the
+        // echelon gate queries UpgradeEffectController for that passive effect, so we inject our OWN
+        // AppliedEffect into Instance.appliedEffects while ghost is on and remove exactly it when ghost is
+        // off — never touching a real installed sync-disk effect. Self-heals if the effect list is rebuilt.
+        // (If the player installs/uninstalls a real sync disk mid-ghost the list rebuilds; the next frame
+        // re-adds our grant.)
+        private static UpgradeEffectController.AppliedEffect _echelonGrant;
+        private static void EnsureEchelonAccess(bool on)
+        {
+            try
+            {
+                var uec = UpgradeEffectController.Instance;
+                if (uec == null) return;
+                var list = uec.appliedEffects;
+                if (list == null) return;
+                if (on)
+                {
+                    bool present;
+                    try { present = _echelonGrant != null && list.Contains(_echelonGrant); }
+                    catch { present = _echelonGrant != null; }
+                    if (present) return;
+                    var eff = new UpgradeEffectController.AppliedEffect();
+                    try { eff.effect = SyncDiskPreset.Effect.allowedInEchelons; } catch { }
+                    try { eff.value = 1f; } catch { }
+                    list.Add(eff);
+                    _echelonGrant = eff;
+                    MotivesPlugin.Log.LogInfo("[SODMotives] ghost: granted echelon access (allowedInEchelons effect).");
+                }
+                else if (_echelonGrant != null)
+                {
+                    try { list.Remove(_echelonGrant); } catch { }
+                    _echelonGrant = null;
+                    MotivesPlugin.Log.LogInfo("[SODMotives] ghost: revoked echelon access.");
+                }
+            }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] ghost: echelon access {(on ? "grant" : "revoke")} error: {e.Message}"); }
         }
 
         // F3: inject a test EMAIL (vmail) between two live citizens so inbox rendering + clickable links can

@@ -4,8 +4,7 @@ A BepInEx (IL2CPP) plugin for **Shadows of Doubt** that replaces procedurally-ge
 ones driven by **real NPC relationships and events**, so the player can reconstruct an actual motive
 from a discoverable trail — clues, gossip and interrogation — instead of chasing a random stranger.
 
-> **Status: pre-release (branch `v2`).** Feature-complete and being playtested at production balance.
-> The authoritative tracker is [`docs/pre-release-plan.md`](docs/pre-release-plan.md).
+> **Version 1.0.0 — first release.** Feature-complete and playtested at production balance.
 
 ## What it does
 
@@ -62,13 +61,13 @@ running). **Restart the game to load new code** (plugins load at startup). Logs:
 Toolchain: BepInEx 6 IL2CPP + Il2CppInterop + HarmonyX, referencing the game's interop assemblies under
 `<game>/BepInEx/interop`.
 
-## Dependency
+## Dependencies
 
-Configuration is edited through a **ConfigurationManager-style overlay**. The mod ships `ConfigEntry`s and
-relies on **BepInExConfigManager** (the ConfigurationManager overlay commonly used across Shadows of Doubt
-mods; GUID `com.sinai.BepInExConfigManager`) as an **optional/recommended dependency** — install it from
-Thunderstore. Open the overlay with the **`` ` ``** (backquote) key. Without it the mod still runs on the
-values in the `.cfg`.
+- **Required:** `BepInEx-BepInExPack_IL2CPP` (the IL2CPP BepInEx pack for Shadows of Doubt).
+- **Recommended:** `TeamSpyraxi-BepInExConfigManager` — a ConfigurationManager-style overlay used across
+  Shadows of Doubt mods (GUID `com.sinai.BepInExConfigManager`). It gives you an **in-game config screen**
+  for every knob below; open it with the **`` ` ``** (backquote) key. The mod ships plain `ConfigEntry`s, so
+  without the overlay it still runs — you just edit the values in the `.cfg` file by hand instead.
 
 ## Config
 
@@ -85,19 +84,27 @@ overlay; the `[Feud]` seeding caps apply at the next New Game):
 - **`[Feud]`** — `EnableFeuds`, `EnableDebts`, `MaxFeuds`, `MaxDebts`.
 - **`[Clues]`** — `MaxCluesPerCase`, `WorkplaceClueShare`, `EmailClueShare`.
 - **`[Troubleshooting]`** — `UnstickStalledMurders`, `StallGameHours`, `StripSignatures`, and the inverted
-  `DisableClueInjection` / `DisableInterrogation`, plus test aids `ObviousTestNames` / `ForceAllPrints`.
-- **`[Debug Keys]`** — rebindable hotkeys (below).
+  `DisableClueInjection` / `DisableInterrogation`, plus test aids `ObviousTestNames` / `ForceAllPrints`
+  (both off by default).
+- **`[Debug]`** — `EnableDebugKeys` (default **off**) — the developer-tooling master switch (see below).
+- **`[Debug Keys]`** — the rebindable hotkeys (only active when `EnableDebugKeys` is on).
 
-## Debug / testing keys (gated for release)
+## Diagnostics & developer tooling
 
-Rebindable in `[Debug Keys]`; defaults:
+Out of the box the mod adds **one** always-available key:
 
+- **F9** — a release-safe **case-diagnostics** overlay: case type (mod / vanilla), murder state, and which
+  motive clues were injected + where. Handy for a bug report; it does **not** reveal the killer or suspects.
+
+The full test loop is off by default. Turn on **`[Debug] EnableDebugKeys`** in the config overlay to enable
+it (rebindable in `[Debug Keys]`; defaults shown):
+
+- **F9** now shows the full case solution (killer / victim / suspect pool + the VICTIM / KILLER KNOWERS
+  interview lists), and verbose per-case logging is emitted.
 - **F4** — trigger the next murder now. **F6** — cycle the forced next-murder event type
   (off / affair / promotion / layoffs / eviction / rent-arrears / feud / debt).
-- **F9** — on-screen case solution (killer / victim / suspect pool / injected clues + locations, plus
-  VICTIM KNOWERS and KILLER KNOWERS interview lists).
-- **F3** — teleport to the nearest killer-knower. **F10** — teleport to the crime scene. **F11** — to the
-  victim's workplace. **F12** — to the nearest case-knower (victim's side).
+- **F3** — teleport to the nearest killer-knower. **F10** — crime scene. **F11** — victim's workplace.
+  **F12** — nearest case-knower (victim's side).
 - **F7** — ghost mode (invincible; NPCs ignore you). **F8** — always-answer (NPCs never refuse
   "do you know this person?").
 
@@ -132,8 +139,6 @@ Rebindable in `[Debug Keys]`; defaults:
 - "Do you know this person?" recognises a subject by acquaintance-edge **existence** (no `known`
   threshold), so gossip gating on `known` is always a subset of vanilla recognition.
 
-## Release cleanup (Phase D — see the pre-release plan)
+## License
 
-`ObviousTestNames → false`; gate the F-key debug tooling behind a flag (keeping one non-spoiler
-diagnostics key); strip diagnostic logging; declare BepInExConfigManager an optional dependency for
-Thunderstore.
+Personal project. See the repository for source.

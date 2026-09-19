@@ -1,0 +1,10 @@
+{
+  "name": "SODMotives",
+  "version_number": "1.0.0",
+  "website_url": "",
+  "description": "Murders driven by real NPC relationships - affairs, workplace rivalries, debts, feuds, evictions - leaving a traceable motive trail of clues, gossip and interrogation. Vanilla forensics still convicts.",
+  "dependencies": [
+    "BepInEx-BepInExPack_IL2CPP-6.0.755",
+    "TeamSpyraxi-BepInExConfigManager-1.3.1"
+  ]
+}

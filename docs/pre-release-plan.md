@@ -225,51 +225,49 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
 
 *(Rewritten 2026-09-19 for the current codebase. Re-check line numbers before editing — they drift.)*
 
-**Open decisions to make first (they shape D1/D5/D6):**
-1. **Release `MotiveCaseShare`.** Currently **1.0 = every case is a motive case, NO vanilla serial cases**
-   (the old `VanillaCaseEvery` knob was deleted in the redesign; vanilla mix is now purely
-   `MotiveCaseShare < 1` via `MurderSelector.ShouldForceVanilla`). Decide: keep 1.0, or lower (e.g. 0.8) to
-   leave some classic vanilla serial hunts.
-2. **Distribution channel.** User said *Steam Workshop*, but BepInEx code mods for SoD normally ship on
-   **Thunderstore** (Workshop is the game's native-content format and may not host a BepInEx plugin at all).
-   **Confirm feasibility before packaging** — this decides D5's format.
-3. **Case renaming (D6).** Rename motivated cases so they sound less serial-killer? Taste call; mild
-   consistency tell vs the occasional vanilla serial case. See D6.
+**Open decisions — ALL RESOLVED 2026-09-19 (user):**
+1. **Release `MotiveCaseShare` = 0.8** — leave ~1 in 5 as a classic vanilla serial hunt for variety
+   (vanilla mix is `MotiveCaseShare < 1` via `MurderSelector.ShouldForceVanilla`; `VanillaCaseEvery` was
+   deleted). Applied as both the config default (`Plugin.cs`) and the static default (`MurderSelector.cs`).
+2. **Distribution = Thunderstore** (+ GitHub as source home). **Confirmed:** SoD has NO Steam Workshop for
+   code mods — its native channels (in-game mod.io + DDSLoader) are text/content-only and cannot host a
+   BepInEx DLL. Every SoD BepInEx plugin ships on Thunderstore (installed via r2modman / Thunderstore Mod
+   Manager). (User initially said "Workshop"; corrected — the mod will not appear in Steam Workshop.)
+3. **Case renaming (D6) — SKIPPED** (user's call: ship as-is; the case-name tell is mild since the player
+   installed a motives mod). Can revisit post-release.
 
-- [ ] **D1 — Flip testing defaults** (S) ⚠️
-  - `[Troubleshooting] ObviousTestNames` default `true` → `false` (`Plugin.cs` BindApply).
-  - `[Troubleshooting] ForceAllPrints` — confirm default `false` (it is) and reset the live `.cfg` (a
-    playtest left it `true`).
-  - Apply the release `MotiveCaseShare` decision (see above).
-  - `DebugTools.ForceMotiveType` is already `None` at load (`Plugin.cs`), no change.
-  - **Delete the live `.cfg`** (`<game>/BepInEx/config/com.benhirsh.sodmotives.cfg`) so it regenerates at the
-    production code defaults — clears all playtest drift (ForceAllPrints, WorkplaceClueShare tweaks, etc.).
-- [ ] **D2 — Gate dev tooling behind a flag, KEEP ONE diagnostics key** (M) ⚠️ — put ALL debug hotkeys +
-  the `OnGUI` HUD (`DebugTools.cs`) behind a new `[Debug] EnableDebugKeys` flag (default **false**). Current
-  keys to gate: **F3** (killer-knower TP), **F4** (trigger murder), **F6** (force event), **F7** (ghost — incl.
-  echelon access), **F8** (always-answer), **F10/F11** (TP scene/work), **F12** (victim-knower TP). **Retain
-  ONE always-available diagnostics key** (reuse a TRIMMED `DebugTools.BuildSolution`/F9): show CASE TYPE +
-  INJECTED CLUES (+ locations) + murder state ONLY — **strip the KILLER / SUSPECT POOL / VICTIM+KILLER KNOWERS
-  lines** so it's not a solution spoiler. Small on-screen hint naming the key.
-- [ ] **D3 — Strip diagnostic logging** (S) ⚠️ — remove the pure-diagnostic `Patch_Evidence_AddFactLinkExe`
-  patch (the real writer-"From" removal is in the `AutoCreateFacts` postfix — leave that), the
-  `clue[diag]`/`email[diag]`/`email[ref]` lines, and trim the verbose per-suspect pool dump + `CityScan`
-  calibration dump to a sane release level.
-- [ ] **D4 — Final build + smoke test** (S) — fresh `.cfg` regenerates with all sections + correct defaults;
-  build clean; one clean sandbox → murder → solve with debug off; save/reload once.
-- [ ] **D5 — Packaging + publish** (M) — per the channel decision:
-  - **README.md** — DONE (rewritten for v2; Thunderstore-oriented).
-  - **manifest.json** (Thunderstore): name, version_number (1.0.0), website_url, description, dependencies —
-    incl. the exact **BepInExConfigManager** dep string (`Namespace-Name-x.y.z` from its Thunderstore page)
-    as an OPTIONAL/recommended dep. **CHANGELOG.md**. **icon.png** 256×256.
-  - Declare BepInExConfigManager the config-overlay dependency (the mod ships `ConfigEntry`s; overlay opens
-    with `` ` ``).
-- [ ] **D6 — (optional) Case renaming** — decide + (if yes) implement. Vanilla names the case via the moniker
-  system (`GenerateMoniker` → `ApplyMonikerToCaseCheck` → `caseName`); we already skip `GenerateMoniker`, but
-  the case NAME can still read serial. To rename: verify in-game + Cpp2IL `ApplyMonikerToCaseCheck`/`caseName`
-  to see what drives it, then set an override that stays WITHIN vanilla's naming vocabulary (so mod cases
-  don't visibly diverge from the occasional vanilla serial case). Low-stakes tell either way (player knows
-  they installed a motives mod).
+- [x] **D1 — Flip testing defaults** ✅ **DONE 2026-09-19** (`3749b00`) —
+  - `ObviousTestNames` default `true` → `false`; `ForceAllPrints` confirmed `false`; `ForceMotiveType` `None`.
+  - `MotiveCaseShare` `1.0` → **`0.8`** (config default in `Plugin.cs` + static default in `MurderSelector.cs`).
+  - **Live `.cfg` deleted** (backed up to the session scratchpad) so it regenerates at the new defaults on
+    next launch.
+- [x] **D2 — Gate dev tooling behind a flag, KEEP ONE diagnostics key** ✅ **DONE 2026-09-19** (`3749b00`) —
+  new `[Debug] EnableDebugKeys` (default **false**) → `DebugTools.EnableDebugKeys`. When off: every dev hotkey
+  (F3/F4/F6/F7/F8/F10/F11/F12) is inert, the FORCE/GHOST/ALWAYS-ANSWER `OnGUI` indicators are hidden, and the
+  stall-watchdog + the F9 diagnostics key still run. **F9 retained always-on, TRIMMED** in release: shows CASE
+  TYPE + MURDER STATE + INJECTED CLUES (+ locations) only; killer / suspect pool / VICTIM+KILLER KNOWERS show
+  only when `EnableDebugKeys` is on. A dim top-right hint names the diagnostics key in release.
+- [x] **D3 — Strip diagnostic logging** ✅ **DONE 2026-09-19** (`3749b00`) — removed the pure-diagnostic
+  `Patch_Evidence_AddFactLinkExe` (the real writer-"From" removal stays in the `AutoCreateFacts` postfix). The
+  `clue[diag]`/`email[diag]`/`email[ref]` lines were already gone (earlier cleanup). Verbose per-case dumps
+  (suspect pool, nearest-knowers, acquaintance dumps, motive-engine dry-run, one-time `CityScan`) now gated
+  behind `EnableDebugKeys`; the concise per-case summary still logs always. Also removed the unreachable
+  `SpawnTest*` debug scaffolding (2 in `DebugTools`, 3 in `ClueInjector`).
+- [~] **D4 — Final build + smoke test** — **build DONE** (clean, 0 warnings, deployed). **In-game smoke test
+  = USER TASK:** launch a fresh game, confirm the `.cfg` regenerates with all sections at the new defaults
+  (esp. `MotiveCaseShare=0.8`, `ObviousTestNames=false`, `EnableDebugKeys=false`), play one sandbox → murder →
+  solve with debug off (F9 shows only the trimmed diagnostics), then save/reload once.
+- [x] **D5 — Packaging** ✅ **DONE 2026-09-19** (`ed78ea4`) — per the Thunderstore decision:
+  - **README.md** — updated for release (v1.0.0; `[Debug] EnableDebugKeys` gate; exact dep strings).
+  - **manifest.json** — name `SODMotives`, version_number `1.0.0`, description (201 chars), dependencies =
+    `BepInEx-BepInExPack_IL2CPP-6.0.755` (required) + `TeamSpyraxi-BepInExConfigManager-1.3.1` (recommended
+    overlay). `website_url` left **blank** — user fills in the GitHub repo URL before upload.
+  - **CHANGELOG.md** (1.0.0) + **icon.png** (256×256).
+  - **Ready-to-upload ZIP built** in the session scratchpad (`SODMotives-1.0.0.zip`, forward-slash entries,
+    `BepInEx/plugins/SODMotives/SODMotives.dll` + the 4 root files). **Actual upload = USER TASK** (needs a
+    Thunderstore account; set `website_url` first). NOTE: verify `BepInExConfigManager` is still `1.3.1` and
+    the BepInEx pack version at upload time.
+- [~] **D6 — Case renaming — SKIPPED** (user, 2026-09-19). Ship as-is.
 
 ---
 
@@ -380,3 +378,14 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
   asymmetry). Decisions locked: fingerprint scene-bonus KEEP AS-IS; feud coworkers already covered.
   **Phase D section above REWRITTEN for the current codebase.** NEXT: finish C1b playtest, then Phase D
   (release gate) + packaging — a fresh-context task (this write-up is the handover).
+- 2026-09-19 — **Phase D DONE (code) + PACKAGED; awaiting the user's final smoke test + upload.** Open
+  decisions resolved: MotiveCaseShare **0.8**; distribution **Thunderstore** (SoD has no Steam Workshop for
+  code mods — confirmed); D6 renaming **skipped**. **D1** (`3749b00`): ObviousTestNames→false,
+  MotiveCaseShare→0.8 (code + static default), live .cfg deleted (backed up). **D2** (`3749b00`): all dev
+  hotkeys + OnGUI indicators + verbose logging gated behind new `[Debug] EnableDebugKeys` (default off);
+  F9 kept always-on as a TRIMMED, non-spoiler diagnostics view; dim on-screen hint. **D3** (`3749b00`):
+  removed `Patch_Evidence_AddFactLinkExe` (diag-only), gated verbose per-case dumps, removed unreachable
+  `SpawnTest*` scaffolding (−194 net lines). **D5** (`ed78ea4`): manifest.json / CHANGELOG.md / icon.png
+  (256²) / README-for-release; ready-to-upload ZIP built in scratchpad (forward-slash paths). Builds clean
+  (0 warn). **REMAINING (user):** D4 in-game smoke test on a fresh game; set manifest `website_url` to the
+  GitHub repo; create the GitHub repo/remote (none yet); upload the ZIP to Thunderstore.

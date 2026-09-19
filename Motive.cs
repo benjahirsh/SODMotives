@@ -33,10 +33,14 @@ namespace SODMotives
         // Minimum DIRECTED familiarity (Acquaintance.known, 0..1) for A to be treated as knowing B's
         // NAME — i.e. able to identify B from a photo. Verified from live data: real relationships
         // (friend/neighbor/coworker) sit ~0.6-0.9; casual familiar-residence/work edges ~0.1-0.2.
-        // Bound to config ([Selection] NameKnownThreshold). Lowered 0.35 -> 0.2 (2026-09-16) to widen
-        // gossip/knower coverage (more interactions); see the A2 discussion. Under review vs the vanilla
-        // "do you know this person" threshold.
-        internal static float NameKnownThreshold = 0.2f;
+        // Bound to config ([Selection] NameKnownThreshold). History: 0.35 -> 0.2 -> **0.0** (2026-09-19).
+        // Set to 0 so KnowsName == "a directed edge exists" == the game's OWN photo-recognition (which
+        // gates purely on acquaintance-edge existence, no `known` threshold). This fixes the asymmetry
+        // where a knower would name a feud when asked about the well-known party but stay silent when
+        // asked about the OTHER party they were only faintly (< 0.2) familiar with, even though the game
+        // let the player identify them: gossip now fires for anyone the player can actually name. Raise it
+        // to require CLOSER familiarity before an NPC will gossip about someone.
+        internal static float NameKnownThreshold = 0f;
 
         internal static bool Same(Human a, Human b)
             => a != null && b != null && a.humanID == b.humanID;

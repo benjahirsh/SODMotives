@@ -67,8 +67,8 @@ namespace SODMotives
             BindApply("Selection", "KillerPoolSize", 10,
                 "The real killer is picked uniformly at random from the victim's top-N strongest suspects.",
                 v => MurderSelector.KillerPoolSize = v);
-            BindApply("Selection", "NameKnownThreshold", 0.2f,
-                "Minimum directed familiarity (Acquaintance.known, 0..1) for an NPC to count as knowing a person's NAME (able to identify their photo). Gates interrogation gossip + the F9 knower list. Real relationships sit ~0.6-0.9; casual acquaintances ~0.1-0.2.",
+            BindApply("Selection", "NameKnownThreshold", 0f,
+                "Minimum directed familiarity (Acquaintance.known, 0..1) for an NPC to count as knowing a person's NAME. Gates interrogation gossip + the F9 knower lists. 0 = matches the game's own photo-recognition (any acquaintance edge), so a knower will gossip about ANYONE the player can identify. Raise it to require closer familiarity (real relationships sit ~0.6-0.9; casual ~0.1-0.2) before an NPC will gossip about someone.",
                 v => Motive.NameKnownThreshold = v, R01());
 
             // --- Workplace (built on-demand from live company rosters at murder time) ---

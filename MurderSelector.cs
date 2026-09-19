@@ -16,9 +16,10 @@ namespace SODMotives
         internal static int MinSuspects = 3;            // PREFER victims with at least this many real suspects
         internal static int KillerPoolSize = 10;        // killer = uniform-random among the victim's top-N suspects
         // THE MAIN MIX KNOB: probability [0..1] a case is a relationship-MOTIVE case; the rest are left
-        // entirely to vanilla (serial-killer, signature and all). 1 = all motive (current), 0 = all vanilla.
+        // entirely to vanilla (serial-killer, signature and all). 1 = all motive, 0 = all vanilla; the
+        // release default (0.8) leaves ~1 in 5 as a classic untraceable serial hunt for variety.
         // Read once per case, so an edit applies to the NEXT murder.
-        internal static float MotiveCaseShare = 1.0f;
+        internal static float MotiveCaseShare = 0.8f;
         // Per-motive-FAMILY weights (each 0..1), NORMALISED by their sum at selection so any combination
         // works. When the F6 force is OFF, a case's motive family is drawn by these relative weights.
         internal static float AffairShare = 0.35f;      // infidelity / love-triangle

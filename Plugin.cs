@@ -40,8 +40,8 @@ namespace SODMotives
                 v => MurderSelector.EnableOverride = v);
 
             // --- Motive Mix: how many cases are mod vs vanilla, and the blend of motive families ---
-            BindApply("Motive Mix", "MotiveCaseShare", 1.0f,
-                "MAIN KNOB: fraction (0..1) of murders that are relationship-MOTIVE cases; the rest are left as vanilla serial-killer cases. 1 = every case is a motive case, 0 = all vanilla. Applies to the next case.",
+            BindApply("Motive Mix", "MotiveCaseShare", 0.8f,
+                "MAIN KNOB: fraction (0..1) of murders that are relationship-MOTIVE cases; the rest are left as vanilla serial-killer cases. 1 = every case is a motive case, 0 = all vanilla. Default 0.8 leaves ~1 in 5 as a classic untraceable serial-killer hunt (with its signature) for variety. Applies to the next case.",
                 v => MurderSelector.MotiveCaseShare = v, R01(), Order(100));
             // The five motive families — each a 0..1 weight, NORMALISED together, so any mix works (they need
             // not sum to 1). Set one to 0 to drop that motive from the blend.
@@ -137,12 +137,17 @@ namespace SODMotives
             BindApply("Troubleshooting", "DisableInterrogation", false,
                 "Turn OFF mod interrogation gossip (the extra answer appended to 'do you know this person?'). Default off = interrogation ON.",
                 v => Interrogation.Enable = !v);
-            BindApply("Troubleshooting", "ObviousTestNames", true,
-                "TESTING: rename injected notes to 'MODCLUE ...' so they're easy to find. Set false for normal play.",
+            BindApply("Troubleshooting", "ObviousTestNames", false,
+                "TESTING: rename injected notes to 'MODCLUE ...' so they're easy to find. Leave false for normal play; set true only to locate mod clues while testing.",
                 v => ClueInjector.ObviousNames = v);
             BindApply("Troubleshooting", "ForceAllPrints", false,
                 "TESTING: force the author's fingerprint onto EVERY motive clue (overrides the per-type print policy, including the normally print-free rent/debt notes). Use to check whether a print on a clue at the scene aids the game's suspect scoring.",
                 v => ClueInjector.ForceAllPrints = v);
+
+            // --- Debug (developer tooling master switch) ---
+            BindApply("Debug", "EnableDebugKeys", false,
+                "Developer tooling. OFF (release default): all debug hotkeys are inert except the case-diagnostics key (CaseSolutionOverlay, default F9, which shows only case type + murder state + injected clues), the on-screen dev indicators are hidden, and verbose per-case logging is silenced. ON: enables the full test loop (force event, trigger murder, ghost, teleports, always-answer), the full F9 case solution, and verbose logs — turn this on to debug or gather a detailed bug report.",
+                v => DebugTools.EnableDebugKeys = v);
 
             // --- Debug Keys (rebindable hotkeys; KeyCode renders as a key-binder in the overlay) ---
             BindApply("Debug Keys", "TriggerMurder", UnityEngine.KeyCode.F4,
@@ -489,37 +494,6 @@ namespace SODMotives
         }
     }
 
-    // The choke point every fact-link passes through as it is CREATED (fires whenever/however the writer
-    // link is added, unlike AutoCreateFacts which only ran once with no matching fact). For the mod's
-    // tracked threat notes: hide the writer link the instant it appears (by GetOther==writer, key==handwriting,
-    // or the fromEvidence flag) and LOG every link so we can see how the "from" is actually keyed.
-    [HarmonyPatch]
-    internal static class Patch_Evidence_AddFactLinkExe
-    {
-        static System.Reflection.MethodBase TargetMethod() =>
-            AccessTools.Method(typeof(Evidence), "AddFactLinkExe",
-                new Type[] { typeof(Fact), typeof(Evidence.DataKey), typeof(bool) });
-
-        static void Postfix(Evidence __instance, Fact newFact, Evidence.DataKey newKey, bool thisIsTheFromEvidence)
-        {
-            try
-            {
-                if (__instance == null || newFact == null) return;
-                int id = -1;
-                try { var it = __instance.interactable; if (it != null) id = it.id; } catch { }
-                if (id < 0 || !ClueInjector.AnonWriterNoteIds.Contains(id)) return;
-
-                Human w = null; try { w = __instance.writer; } catch { }
-                Evidence wev = null; if (w != null) { try { wev = w.evidenceEntry; } catch { } }
-                bool matchOther = false;
-                try { var o = newFact.GetOther(__instance); if (o != null && wev != null && o.Pointer == wev.Pointer) matchOther = true; } catch { }
-                string pn = "?"; try { if (newFact.preset != null) pn = newFact.preset.name; } catch { }
-                MotivesPlugin.Log.LogInfo($"[SODMotives] hook: AddFactLinkExe note={id} key={newKey} fromEv={thisIsTheFromEvidence} matchWriter={matchOther} preset='{pn}' (removal handled after AutoCreateFacts).");
-            }
-            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] hook: AddFactLinkExe: {e.Message}"); }
-        }
-    }
-
     [HarmonyPatch(typeof(MurderController), nameof(MurderController.TriggerNextMurder))]
     internal static class Patch_TriggerNextMurder
     {
@@ -601,28 +575,33 @@ namespace SODMotives
                     MotivesPlugin.Log.LogInfo($"[SODMotives]   vanilla would have been: {MotivesPlugin.Name(newMurderer)} -> {MotivesPlugin.Name(newVictim)}");
                     MotivesPlugin.Log.LogInfo($"[SODMotives]   VICTIM: {MotivesPlugin.Name(v)}  ({(suspectPool != null ? suspectPool.Count : 0)} real suspect(s) in pool)");
                     MotivesPlugin.Log.LogInfo($"[SODMotives]   KILLER: {MotivesPlugin.Name(m)}  [{killerMotive.type}] {killerMotive.detail}");
-                    if (suspectPool != null)
+                    // Verbose diagnostics (full suspect pool + nearest case-knowers) only under [Debug]
+                    // EnableDebugKeys — a shipped build keeps the concise 3-line summary above.
+                    if (DebugTools.EnableDebugKeys)
                     {
-                        MotivesPlugin.Log.LogInfo("[SODMotives]   SUSPECT POOL (each a real red herring; forensics convicts the one):");
-                        for (int i = 0; i < suspectPool.Count; i++)
+                        if (suspectPool != null)
                         {
-                            var s = suspectPool[i];
-                            bool isKiller = s.suspect != null && m != null && s.suspect.humanID == m.humanID;
-                            MotivesPlugin.Log.LogInfo($"[SODMotives]       {(isKiller ? "* " : "  ")}{MotivesPlugin.F(s.score).PadLeft(6)}  {MotivesPlugin.Name(s.suspect)}  [{s.type}] {s.detail}");
+                            MotivesPlugin.Log.LogInfo("[SODMotives]   SUSPECT POOL (each a real red herring; forensics convicts the one):");
+                            for (int i = 0; i < suspectPool.Count; i++)
+                            {
+                                var s = suspectPool[i];
+                                bool isKiller = s.suspect != null && m != null && s.suspect.humanID == m.humanID;
+                                MotivesPlugin.Log.LogInfo($"[SODMotives]       {(isKiller ? "* " : "  ")}{MotivesPlugin.F(s.score).PadLeft(6)}  {MotivesPlugin.Name(s.suspect)}  [{s.type}] {s.detail}");
+                            }
                         }
-                    }
-                    // Log nearest case-knowers (ANY motive type) as an interrogation aid (F12 jumps there).
-                    try
-                    {
-                        if (MurderSelector.EventByVictim.TryGetValue(v.humanID, out var evt) && evt != null)
+                        // Log nearest case-knowers (ANY motive type) as an interrogation aid (F12 jumps there).
+                        try
                         {
-                            UnityEngine.Vector3 scenePos = default; string sceneName = "victim's home";
-                            try { if (v.home != null && v.home.anchorNode != null) { scenePos = v.home.anchorNode.position; sceneName = v.home.name; } } catch { }
-                            MotivesPlugin.Log.LogInfo($"[SODMotives]   nearest case-knowers to {sceneName}:");
-                            foreach (var ln in evt.NearestKnowers(scenePos, 6)) MotivesPlugin.Log.LogInfo($"[SODMotives]       {ln}");
+                            if (MurderSelector.EventByVictim.TryGetValue(v.humanID, out var evt) && evt != null)
+                            {
+                                UnityEngine.Vector3 scenePos = default; string sceneName = "victim's home";
+                                try { if (v.home != null && v.home.anchorNode != null) { scenePos = v.home.anchorNode.position; sceneName = v.home.name; } } catch { }
+                                MotivesPlugin.Log.LogInfo($"[SODMotives]   nearest case-knowers to {sceneName}:");
+                                foreach (var ln in evt.NearestKnowers(scenePos, 6)) MotivesPlugin.Log.LogInfo($"[SODMotives]       {ln}");
+                            }
                         }
+                        catch { }
                     }
-                    catch { }
                     MotivesPlugin.Log.LogInfo("[SODMotives] **********************************************************");
                 }
                 else
@@ -739,29 +718,35 @@ namespace SODMotives
             float vm = MotivesPlugin.DirectedLike(newVictim, newMurderer);
             log.LogInfo($"[SODMotives]   like(murderer->victim) = {MotivesPlugin.F(mv)}   like(victim->murderer) = {MotivesPlugin.F(vm)}");
             log.LogInfo($"[SODMotives]   (NaN like = no acquaintance edge exists between them)");
-            MotivesPlugin.Describe("MURDERER info", newMurderer);
-            MotivesPlugin.Describe("VICTIM   info", newVictim);
-            MotivesPlugin.LogTopNegative("MURDERER feelings", newMurderer);
-            MotivesPlugin.LogTopNegative("VICTIM feelings", newVictim);
 
-            // ---- DRY RUN: what the motive engine WOULD do (no behavior change yet) ----
-            log.LogInfo("[SODMotives]   ----- MOTIVE ENGINE DRY-RUN -----");
-            MotiveResult vanillaMotive = Motive.Score(newMurderer, newVictim);
-            log.LogInfo($"[SODMotives]   murderer's motive toward the ACTUAL victim: {(vanillaMotive.HasMotive ? vanillaMotive.ToString() : "NONE (vanilla picked an unmotivated victim)")}");
-            MotiveResult best = Motive.BestTarget(newMurderer);
-            if (best.HasMotive)
+            // Verbose calibration (acquaintance dumps + motive-engine dry-run + one-time citywide scan) only
+            // under [Debug] EnableDebugKeys — a shipped build keeps the concise summary above.
+            if (DebugTools.EnableDebugKeys)
             {
-                bool matches = best.target != null && Motive.Same(best.target, newVictim);
-                log.LogInfo($"[SODMotives]   engine would target: {best}");
-                log.LogInfo($"[SODMotives]   -> {(matches ? "SAME as vanilla victim" : "DIFFERENT from vanilla victim")}");
-            }
-            else
-            {
-                log.LogInfo("[SODMotives]   engine found NO strong motive for this murderer (would re-roll murderer in real mode).");
+                MotivesPlugin.Describe("MURDERER info", newMurderer);
+                MotivesPlugin.Describe("VICTIM   info", newVictim);
+                MotivesPlugin.LogTopNegative("MURDERER feelings", newMurderer);
+                MotivesPlugin.LogTopNegative("VICTIM feelings", newVictim);
+
+                // ---- DRY RUN: what the motive engine WOULD do ----
+                log.LogInfo("[SODMotives]   ----- MOTIVE ENGINE DRY-RUN -----");
+                MotiveResult vanillaMotive = Motive.Score(newMurderer, newVictim);
+                log.LogInfo($"[SODMotives]   murderer's motive toward the ACTUAL victim: {(vanillaMotive.HasMotive ? vanillaMotive.ToString() : "NONE (vanilla picked an unmotivated victim)")}");
+                MotiveResult best = Motive.BestTarget(newMurderer);
+                if (best.HasMotive)
+                {
+                    bool matches = best.target != null && Motive.Same(best.target, newVictim);
+                    log.LogInfo($"[SODMotives]   engine would target: {best}");
+                    log.LogInfo($"[SODMotives]   -> {(matches ? "SAME as vanilla victim" : "DIFFERENT from vanilla victim")}");
+                }
+                else
+                {
+                    log.LogInfo("[SODMotives]   engine found NO strong motive for this murderer (would re-roll murderer in real mode).");
+                }
+                // One-time citywide calibration dump on the first observed murder.
+                CityScan.RunOnce();
             }
             log.LogInfo("[SODMotives] ==================================================");
-            // One-time citywide calibration dump on the first observed murder.
-            CityScan.RunOnce();
         }
     }
 }

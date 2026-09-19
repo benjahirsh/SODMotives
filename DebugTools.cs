@@ -43,6 +43,14 @@ namespace SODMotives
         // ForceMotiveType to the mapped motive so the selector's existing motive filter + bucketing-skip still fire.
         internal static SocialEventType? ForceEventType = null;
 
+        // RELEASE GATE (D2): master switch for the developer tooling. Bound to [Debug] EnableDebugKeys
+        // (default FALSE for a shipped build). When OFF, every dev hotkey below is inert, the on-screen
+        // FORCE/GHOST/ALWAYS-ANSWER indicators are hidden, and the verbose per-case log dumps are silenced —
+        // only the release-safe F9 diagnostics view (case type + murder state + injected clues) and the
+        // gameplay stall-watchdog keep running. Flip it on (in the config overlay) to get the full test loop
+        // back for debugging or a bug report.
+        internal static bool EnableDebugKeys = false;
+
         // Configurable debug hotkeys — bound to the [Debug Keys] config section in Plugin.Load and
         // re-applied live from the in-game overlay (which renders KeyCode as a key-binder). Defaults are
         // the original F-keys (F5 left free for the game's quicksave + the config-menu toggle).
@@ -89,7 +97,10 @@ namespace SODMotives
                 GameObject.DontDestroyOnLoad(go);
                 go.hideFlags = HideFlags.HideAndDontSave;
                 go.AddComponent<DebugHotkey>();
-                MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys (defaults; rebindable in the config menu -> SOD Motives / Debug Keys): F3=teleport to nearest KILLER-knower, F4=trigger next murder NOW, F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=ghost, F8=always-answer, F9=case solution, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower (victim). (F5 unbound.)");
+                if (EnableDebugKeys)
+                    MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys ON (defaults; rebindable in the config menu -> SOD Motives / Debug Keys): F3=teleport to nearest KILLER-knower, F4=trigger next murder NOW, F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=ghost, F8=always-answer, F9=case diagnostics, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower (victim). (F5 unbound.)");
+                else
+                    MotivesPlugin.Log.LogInfo($"[SODMotives] Debug tooling OFF (release). Only {KeyCaseSolution} = case diagnostics (case type + state + injected clues) is active. Enable [Debug] EnableDebugKeys in the config overlay for the full test loop.");
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] hotkey register failed: {e.Message}"); }
         }
@@ -156,59 +167,6 @@ namespace SODMotives
                 }
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] ghost: echelon access {(on ? "grant" : "revoke")} error: {e.Message}"); }
-        }
-
-        // F3: inject a test EMAIL (vmail) between two live citizens so inbox rendering + clickable links can
-        // be verified without a murder (V2.6 email-clue recon). Read it on either participant's home computer.
-        internal static void SpawnTestEmail()
-        {
-            var log = MotivesPlugin.Log;
-            try
-            {
-                log.LogInfo("[SODMotives][F3] injecting a test email between two housed citizens...");
-                bool ok = ClueInjector.SpawnTestEmail();
-                log.LogInfo($"[SODMotives][F3] test email {(ok ? "injected — see the [F3] line for whose home computer to read it on (Messenger/vmail app)" : "FAILED")}.");
-            }
-            catch (Exception e) { log.LogWarning($"[SODMotives][F3] error: {e}"); }
-        }
-
-        // F4: drop the THREATENING debt note into the player's apartment right now (handwritten, landlord's
-        // hand + print, writer connection hidden) — iterate the real rent-arrears clue with no murder needed.
-        internal static void SpawnTestNote()
-        {
-            var log = MotivesPlugin.Log;
-            try
-            {
-                var player = Player.Instance;
-                if (player == null) { log.LogInfo("[SODMotives][F4] No player."); return; }
-                NewGameLocation loc = null;
-                try { loc = player.home; } catch { }
-                if (loc == null) { log.LogInfo("[SODMotives][F4] No player home — enable 'start with apartment' in gameplay settings."); return; }
-
-                // Pick any live citizen (not the player) to be the note's "landlord": its handwriting + print.
-                Human landlord = null;
-                try
-                {
-                    var dir = CityData.Instance != null ? CityData.Instance.citizenDirectory : null;
-                    if (dir != null)
-                        for (int i = 0; i < dir.Count; i++)
-                        {
-                            var c = dir[i]; if (c == null) continue;
-                            Human h = null; try { h = c.TryCast<Human>(); } catch { }
-                            if (h == null) continue;
-                            try { if (h.humanID == player.humanID) continue; } catch { }
-                            try { if (h.isDead) continue; } catch { }
-                            landlord = h; break;
-                        }
-                }
-                catch (Exception e) { log.LogWarning($"[SODMotives][F4] citizen gather: {e.Message}"); }
-
-                if (landlord == null) { log.LogInfo("[SODMotives][F4] No citizen found to use as the landlord."); return; }
-                log.LogInfo($"[SODMotives][F4] spawning THREATENING test note at {loc.name} — handwriting/print = {MotivesPlugin.Name(landlord)}...");
-                bool ok = ClueInjector.SpawnTestThreatNote(loc, landlord);
-                log.LogInfo($"[SODMotives][F4] test note {(ok ? "placed — read it; check it's handwritten, matches " + MotivesPlugin.Name(landlord) + "'s hand, and shows NO 'from' connection" : "FAILED")} (see [TEST] lines).");
-            }
-            catch (Exception e) { log.LogWarning($"[SODMotives][F4] error: {e}"); }
         }
 
         // F4: force the game to run its next murder NOW (testing) — combine with F6=<type> to get that
@@ -297,6 +255,10 @@ namespace SODMotives
         {
             Overlay.Clear();
             var log = MotivesPlugin.Log;
+            // Release-safe diagnostics unless the dev tooling is enabled. When OFF we show only whether the
+            // case is a mod case, its murder state, and which motive clues were injected + where (so a
+            // bug report can confirm the mod is working) — NOT the killer / suspects / knowers (the solution).
+            bool full = EnableDebugKeys;
             try
             {
                 if (!TryGetCase(out Human killer, out Human victim, out string scene))
@@ -310,33 +272,41 @@ namespace SODMotives
 
                 Overlay.Add(ours ? "CASE TYPE: motivated (mod)" : "CASE TYPE: vanilla / not overridden");
                 try { var mrd = MurderController.Instance != null ? MurderController.Instance.GetCurrentMurder() : null; if (mrd != null) Overlay.Add($"MURDER STATE: {mrd.state}"); } catch { }
-                Overlay.Add($"KILLER: {MotivesPlugin.Name(killer)}");
-                Overlay.Add($"VICTIM: {MotivesPlugin.Name(victim)}");
-                Overlay.Add($"SCENE : {scene}");
 
-                // MOTIVE + SUSPECT POOL now read the REAL event-backed pool the killer was drawn
-                // from (MurderSelector), not the retired like-based Motive.Score.
-                if (victim != null && MurderSelector.MotiveByVictim.TryGetValue(victim.humanID, out var kmot))
-                    Overlay.Add($"MOTIVE: [{kmot.type}] {kmot.detail} (score {MotivesPlugin.F(kmot.score)})");
-                else if (killer != null && victim != null)
-                    Overlay.Add("MOTIVE: (vanilla / not overridden)");
+                if (full)
+                {
+                    // DEV-ONLY (solution spoiler): killer / victim / scene / motive / suspect pool.
+                    Overlay.Add($"KILLER: {MotivesPlugin.Name(killer)}");
+                    Overlay.Add($"VICTIM: {MotivesPlugin.Name(victim)}");
+                    Overlay.Add($"SCENE : {scene}");
+
+                    // MOTIVE + SUSPECT POOL now read the REAL event-backed pool the killer was drawn
+                    // from (MurderSelector), not the retired like-based Motive.Score.
+                    if (victim != null && MurderSelector.MotiveByVictim.TryGetValue(victim.humanID, out var kmot))
+                        Overlay.Add($"MOTIVE: [{kmot.type}] {kmot.detail} (score {MotivesPlugin.F(kmot.score)})");
+                    else if (killer != null && victim != null)
+                        Overlay.Add("MOTIVE: (vanilla / not overridden)");
+
+                    if (victim != null)
+                    {
+                        if (MurderSelector.PoolByVictim.TryGetValue(victim.humanID, out var pool) && pool != null && pool.Count > 0)
+                        {
+                            Overlay.Add($"SUSPECT POOL ({pool.Count} real event-backed suspects; killer *):");
+                            int show = Math.Min(10, pool.Count);
+                            for (int i = 0; i < show; i++)
+                            {
+                                var ed = pool[i];
+                                bool isK = killer != null && ed.suspect != null && ed.suspect.humanID == killer.humanID;
+                                Overlay.Add($"  {(isK ? "*" : " ")}{MotivesPlugin.F(ed.score).PadLeft(6)}  {MotivesPlugin.Name(ed.suspect)}  [{ed.type}] {ed.detail}");
+                            }
+                        }
+                        else Overlay.Add("SUSPECT POOL: none recorded (vanilla case / not overridden).");
+                    }
+                }
 
                 if (victim != null)
                 {
-                    if (MurderSelector.PoolByVictim.TryGetValue(victim.humanID, out var pool) && pool != null && pool.Count > 0)
-                    {
-                        Overlay.Add($"SUSPECT POOL ({pool.Count} real event-backed suspects; killer *):");
-                        int show = Math.Min(10, pool.Count);
-                        for (int i = 0; i < show; i++)
-                        {
-                            var ed = pool[i];
-                            bool isK = killer != null && ed.suspect != null && ed.suspect.humanID == killer.humanID;
-                            Overlay.Add($"  {(isK ? "*" : " ")}{MotivesPlugin.F(ed.score).PadLeft(6)}  {MotivesPlugin.Name(ed.suspect)}  [{ed.type}] {ed.detail}");
-                        }
-                    }
-                    else Overlay.Add("SUSPECT POOL: none recorded (vanilla case / not overridden).");
-
-                    // Injected clues for this case.
+                    // Injected clues for this case — always shown (diagnostics: did our clues spawn, and where?).
                     try
                     {
                         if (ClueInjector.CluesByVictim.TryGetValue(victim.humanID, out var clues) && clues.Count > 0)
@@ -348,20 +318,19 @@ namespace SODMotives
                     }
                     catch { }
 
-                    // Combined interview list: NPCs who BOTH know the victim personally (can name them
-                    // from the face-only body profile) AND know a motive event about them — the only ones
-                    // who, shown the victim's photo, will identify them AND volunteer the gossip. Nearest
-                    // the scene first (F12 = jump to closest); shows which events each one knows.
-                    try { AddVictimKnowers(victim, ScenePos(victim)); } catch { }
-
-                    // The same, KILLER-side: who can you ask ABOUT THE KILLER (F3 jumps to the closest).
-                    try { AddKillerKnowers(killer, ScenePos(victim)); } catch { }
+                    if (full)
+                    {
+                        // DEV-ONLY: interview lists — NPCs who can name the victim/killer AND know a motive
+                        // event about them (F12 / F3 jump to the closest). Nearest the scene first.
+                        try { AddVictimKnowers(victim, ScenePos(victim)); } catch { }
+                        try { AddKillerKnowers(killer, ScenePos(victim)); } catch { }
+                    }
                 }
             }
             catch (Exception e) { Overlay.Add($"error: {e.Message}"); log.LogWarning($"[SODMotives][F9] {e}"); }
 
             // Mirror to log too.
-            log.LogInfo("[SODMotives][F9] ---- case solution ----");
+            log.LogInfo("[SODMotives][F9] ---- case diagnostics ----");
             foreach (var l in Overlay) log.LogInfo("[SODMotives][F9]   " + l);
         }
 
@@ -588,33 +557,40 @@ namespace SODMotives
         {
             try
             {
-                // Debug hotkeys are configurable (DebugTools.Key* — bound to [Debug Keys], live from the overlay).
+                // Release-safe diagnostics key — ALWAYS available (trimmed unless dev tooling is on).
+                // Configurable via [Debug Keys] CaseSolutionOverlay (DebugTools.KeyCaseSolution).
                 if (Input.GetKeyDown(DebugTools.KeyCaseSolution))
                 {
                     if (DebugTools.Show) { DebugTools.Show = false; }
                     else { DebugTools.BuildSolution(); DebugTools.Show = true; }
                 }
-                if (Input.GetKeyDown(DebugTools.KeyCycleForce)) DebugTools.CycleForceMotive();
-                if (Input.GetKeyDown(DebugTools.KeyTriggerMurder)) DebugTools.TriggerMurder();
-                if (Input.GetKeyDown(DebugTools.KeyTeleportScene)) DebugTools.TeleportToScene();
-                if (Input.GetKeyDown(DebugTools.KeyTeleportWork)) DebugTools.TeleportToWork();
-                if (Input.GetKeyDown(DebugTools.KeyTeleportKnower)) DebugTools.TeleportToNearestKnower();
-                if (Input.GetKeyDown(DebugTools.KeyTeleportKillerKnower)) DebugTools.TeleportToNearestKillerKnower();
-                if (Input.GetKeyDown(DebugTools.KeyAlwaysAnswer))
-                {
-                    DebugTools.AlwaysAnswer = !DebugTools.AlwaysAnswer;
-                    MotivesPlugin.Log.LogInfo($"[SODMotives] ALWAYS-ANSWER (no bribe) {(DebugTools.AlwaysAnswer ? "ON" : "OFF")} — while ON, the top-right HUD shows who you're talking to.");
-                }
-                if (Input.GetKeyDown(DebugTools.KeyGhost))
-                {
-                    DebugTools.Ghost = !DebugTools.Ghost;
-                    if (!DebugTools.Ghost) DebugTools.ClearGhost();
-                    MotivesPlugin.Log.LogInfo($"[SODMotives] GHOST MODE {(DebugTools.Ghost ? "ON" : "OFF")}");
-                }
-                if (DebugTools.Ghost) DebugTools.ApplyGhost();
 
-                // Recover a mod motive-murder stuck in 'executing' (killer whiffing forever). Scoped to
-                // our overridden cases + co-located killer only; no-op otherwise. See MurderWatchdog.
+                // Everything below is developer tooling — gated behind [Debug] EnableDebugKeys (default OFF).
+                if (DebugTools.EnableDebugKeys)
+                {
+                    if (Input.GetKeyDown(DebugTools.KeyCycleForce)) DebugTools.CycleForceMotive();
+                    if (Input.GetKeyDown(DebugTools.KeyTriggerMurder)) DebugTools.TriggerMurder();
+                    if (Input.GetKeyDown(DebugTools.KeyTeleportScene)) DebugTools.TeleportToScene();
+                    if (Input.GetKeyDown(DebugTools.KeyTeleportWork)) DebugTools.TeleportToWork();
+                    if (Input.GetKeyDown(DebugTools.KeyTeleportKnower)) DebugTools.TeleportToNearestKnower();
+                    if (Input.GetKeyDown(DebugTools.KeyTeleportKillerKnower)) DebugTools.TeleportToNearestKillerKnower();
+                    if (Input.GetKeyDown(DebugTools.KeyAlwaysAnswer))
+                    {
+                        DebugTools.AlwaysAnswer = !DebugTools.AlwaysAnswer;
+                        MotivesPlugin.Log.LogInfo($"[SODMotives] ALWAYS-ANSWER (no bribe) {(DebugTools.AlwaysAnswer ? "ON" : "OFF")} — while ON, the top-right HUD shows who you're talking to.");
+                    }
+                    if (Input.GetKeyDown(DebugTools.KeyGhost))
+                    {
+                        DebugTools.Ghost = !DebugTools.Ghost;
+                        if (!DebugTools.Ghost) DebugTools.ClearGhost();
+                        MotivesPlugin.Log.LogInfo($"[SODMotives] GHOST MODE {(DebugTools.Ghost ? "ON" : "OFF")}");
+                    }
+                    if (DebugTools.Ghost) DebugTools.ApplyGhost();
+                }
+
+                // Gameplay feature (NOT debug) — recover a mod motive-murder stuck in 'executing' (killer
+                // whiffing forever). Scoped to our overridden cases + co-located killer only; no-op
+                // otherwise. Always runs. See MurderWatchdog.
                 MurderWatchdog.Tick();
             }
             catch { }
@@ -622,8 +598,7 @@ namespace SODMotives
 
         void OnGUI()
         {
-            // Debug-key indicators (F6/F7/F8) + injected-clue locations (F4/F5): TOP-RIGHT,
-            // right-aligned, stacked top-down with no gaps when an indicator is off.
+            // TOP-RIGHT status area, right-aligned, stacked top-down with no gaps.
             try
             {
                 if (_hudStyle == null)
@@ -633,36 +608,44 @@ namespace SODMotives
                 float x = Screen.width - w - rm;
                 float y = 8f;
 
-                // Force-motive (F6) — shown ONLY when a force is active (hidden when OFF).
-                bool fm = DebugTools.ForceEventType.HasValue || DebugTools.ForceMotiveType != MotiveType.None;
-                if (fm)
+                if (DebugTools.EnableDebugKeys)
                 {
-                    _hudStyle.normal.textColor = Color.yellow;
-                    GUI.Label(new Rect(x, y, w, 20), $"FORCE: {DebugTools.ForceLabel()} (F6)", _hudStyle);
-                    y += 20f;
-                }
-
-                // Always-answer (F8) + who-you're-talking-to readout.
-                if (DebugTools.AlwaysAnswer)
-                {
-                    _hudStyle.normal.textColor = Color.cyan;
-                    GUI.Label(new Rect(x, y, w, 20), "ALWAYS-ANSWER ON (F8) - NPCs never refuse 'do you know this person?'", _hudStyle);
-                    y += 20f;
-                    if (!string.IsNullOrEmpty(DebugTools.TalkingToLabel))
+                    // Dev-tooling indicators (F6 force / F8 always-answer / F7 ghost) — only while dev tooling
+                    // is enabled. Each is shown only when its state is active, so a clean screen means "off".
+                    bool fm = DebugTools.ForceEventType.HasValue || DebugTools.ForceMotiveType != MotiveType.None;
+                    if (fm)
                     {
-                        GUI.Label(new Rect(x, y, w, 20), "TALKING TO: " + DebugTools.TalkingToLabel, _hudStyle);
+                        _hudStyle.normal.textColor = Color.yellow;
+                        GUI.Label(new Rect(x, y, w, 20), $"FORCE: {DebugTools.ForceLabel()} (F6)", _hudStyle);
+                        y += 20f;
+                    }
+
+                    if (DebugTools.AlwaysAnswer)
+                    {
+                        _hudStyle.normal.textColor = Color.cyan;
+                        GUI.Label(new Rect(x, y, w, 20), "ALWAYS-ANSWER ON (F8) - NPCs never refuse 'do you know this person?'", _hudStyle);
+                        y += 20f;
+                        if (!string.IsNullOrEmpty(DebugTools.TalkingToLabel))
+                        {
+                            GUI.Label(new Rect(x, y, w, 20), "TALKING TO: " + DebugTools.TalkingToLabel, _hudStyle);
+                            y += 20f;
+                        }
+                    }
+
+                    if (DebugTools.Ghost)
+                    {
+                        _hudStyle.normal.textColor = Color.green;
+                        GUI.Label(new Rect(x, y, w, 20), "GHOST MODE ON (F7) - NPCs ignore you", _hudStyle);
                         y += 20f;
                     }
                 }
-
-                // Ghost (F7).
-                if (DebugTools.Ghost)
+                else if (!DebugTools.Show)
                 {
-                    _hudStyle.normal.textColor = Color.green;
-                    GUI.Label(new Rect(x, y, w, 20), "GHOST MODE ON (F7) - NPCs ignore you", _hudStyle);
-                    y += 20f;
+                    // RELEASE: one dim, unobtrusive hint naming the diagnostics key (D2), hidden while the
+                    // overlay itself is open.
+                    _hudStyle.normal.textColor = new Color(1f, 1f, 1f, 0.35f);
+                    GUI.Label(new Rect(x, y, w, 20), $"SOD Motives — {DebugTools.KeyCaseSolution} for case diagnostics", _hudStyle);
                 }
-
             }
             catch { }
 
@@ -680,7 +663,10 @@ namespace SODMotives
                 GUI.color = new Color(0f, 0f, 0f, 0.8f);
                 GUI.Box(new Rect(8, 8, w, h), GUIContent.none);
                 GUI.color = Color.white;
-                GUI.Label(new Rect(18, 14, w - 20, lineH), "SOD MOTIVES — case solution (F9 to hide, F10 to teleport)", _style);
+                string header = DebugTools.EnableDebugKeys
+                    ? $"SOD MOTIVES — case solution ({DebugTools.KeyCaseSolution} to hide)"
+                    : $"SOD MOTIVES — case diagnostics ({DebugTools.KeyCaseSolution} to hide)";
+                GUI.Label(new Rect(18, 14, w - 20, lineH), header, _style);
                 for (int i = 0; i < count; i++)
                     GUI.Label(new Rect(18, 14 + lineH * (i + 1.4f), w - 20, lineH), DebugTools.Overlay[i], _style);
             }

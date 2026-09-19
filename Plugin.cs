@@ -148,6 +148,9 @@ namespace SODMotives
             BindApply("Debug Keys", "TriggerMurder", UnityEngine.KeyCode.F4,
                 "Force the game's next murder to run NOW (fast test loop). Combine with the forced event type to get a specific case quickly. Set to None to disable.",
                 v => DebugTools.KeyTriggerMurder = v);
+            BindApply("Debug Keys", "TeleportToKillerKnower", UnityEngine.KeyCode.F3,
+                "Teleport to the nearest NPC who can name the KILLER and knows a motive event about them, so you can test interrogating knowers about the killer (the F9 'KILLER KNOWERS' list).",
+                v => DebugTools.KeyTeleportKillerKnower = v);
             BindApply("Debug Keys", "CaseSolutionOverlay", UnityEngine.KeyCode.F9,
                 "Toggle the on-screen case-solution overlay (killer / victim / suspect pool / injected clues).",
                 v => DebugTools.KeyCaseSolution = v);

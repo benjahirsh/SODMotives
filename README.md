@@ -94,9 +94,10 @@ Rebindable in `[Debug Keys]`; defaults:
 
 - **F4** — trigger the next murder now. **F6** — cycle the forced next-murder event type
   (off / affair / promotion / layoffs / eviction / rent-arrears / feud / debt).
-- **F9** — on-screen case solution (killer / victim / suspect pool / injected clues + locations).
-- **F10** — teleport to the crime scene. **F11** — to the victim's workplace. **F12** — to the nearest
-  case-knower.
+- **F9** — on-screen case solution (killer / victim / suspect pool / injected clues + locations, plus
+  VICTIM KNOWERS and KILLER KNOWERS interview lists).
+- **F3** — teleport to the nearest killer-knower. **F10** — teleport to the crime scene. **F11** — to the
+  victim's workplace. **F12** — to the nearest case-knower (victim's side).
 - **F7** — ghost mode (invincible; NPCs ignore you). **F8** — always-answer (NPCs never refuse
   "do you know this person?").
 

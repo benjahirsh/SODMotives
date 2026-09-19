@@ -54,6 +54,7 @@ namespace SODMotives
         internal static KeyCode KeyTeleportWork   = KeyCode.F11;
         internal static KeyCode KeyTeleportKnower = KeyCode.F12;
         internal static KeyCode KeyTriggerMurder  = KeyCode.F4;   // force the game's next murder NOW (fast test loop)
+        internal static KeyCode KeyTeleportKillerKnower = KeyCode.F3;   // jump to the nearest knower of the KILLER
 
         // Each SocialEventType maps to exactly one MotiveType — used to keep ForceMotiveType in sync with F6.
         internal static MotiveType MotiveOf(SocialEventType t)
@@ -88,7 +89,7 @@ namespace SODMotives
                 GameObject.DontDestroyOnLoad(go);
                 go.hideFlags = HideFlags.HideAndDontSave;
                 go.AddComponent<DebugHotkey>();
-                MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys (defaults; rebindable in the config menu -> SOD Motives / Debug Keys): F4=trigger next murder NOW, F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=ghost, F8=always-answer, F9=case solution, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower. (F3/F5 unbound.)");
+                MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys (defaults; rebindable in the config menu -> SOD Motives / Debug Keys): F3=teleport to nearest KILLER-knower, F4=trigger next murder NOW, F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=ghost, F8=always-answer, F9=case solution, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower (victim). (F5 unbound.)");
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] hotkey register failed: {e.Message}"); }
         }
@@ -353,8 +354,8 @@ namespace SODMotives
                     // the scene first (F12 = jump to closest); shows which events each one knows.
                     try { AddVictimKnowers(victim, ScenePos(victim)); } catch { }
 
-                    // City-wide multi-span subjects to interview about (a guaranteed multi-event target).
-                    try { AddKnowerBreakdown(victim); } catch { }
+                    // The same, KILLER-side: who can you ask ABOUT THE KILLER (F3 jumps to the closest).
+                    try { AddKillerKnowers(killer, ScenePos(victim)); } catch { }
                 }
             }
             catch (Exception e) { Overlay.Add($"error: {e.Message}"); log.LogWarning($"[SODMotives][F9] {e}"); }
@@ -414,74 +415,80 @@ namespace SODMotives
             for (int i = 0; i < rows.Count && i < 8; i++) Overlay.Add("  " + rows[i].line);
         }
 
-        // A guaranteed multi-span subject to interview about: city-wide subjects who appear in >=2
-        // events, so multi-span gossip is always testable even when the victim is in only one event.
-        private static void AddKnowerBreakdown(Human victim)
+        // KILLER-side interview list — the mirror of AddVictimKnowers: every NPC who KNOWS THE KILLER'S
+        // NAME (can identify the face-only body profile) AND knows a motive event involving the killer, so
+        // (shown the killer's photo) they'll name them AND volunteer gossip. Lets you test killer-side
+        // gossip, not just victim-side. Nearest the scene first (F3 = jump to closest).
+        private static void AddKillerKnowers(Human killer, Vector3 scenePos)
         {
-            if (victim == null) return;
-            var dir = CityData.Instance != null ? CityData.Instance.citizenDirectory : null;
+            if (killer == null) return;
+            int kid = killer.humanID;
 
-            // City-wide subjects in >=2 events (any) — a guaranteed multi-span subject to test.
-            var subj = new Dictionary<int, Dictionary<SocialEventType, int>>();
+            // events involving the killer, tallied per knower and per type (participants aren't knowers).
+            var perKnower = new Dictionary<int, Dictionary<SocialEventType, int>>();
             foreach (var e in EventStore.All)
             {
-                TallySubj(subj, e.a, e.type);
-                TallySubj(subj, e.b, e.type);
-                for (int i = 0; i < e.group.Count; i++) TallySubj(subj, e.group[i], e.type);
+                if (!e.InvolvesHuman(kid)) continue;
+                foreach (var knid in e.knownBy)
+                {
+                    if (e.InvolvesHuman(knid)) continue;
+                    if (!perKnower.TryGetValue(knid, out var m)) { m = new Dictionary<SocialEventType, int>(); perKnower[knid] = m; }
+                    m.TryGetValue(e.type, out int c); m[e.type] = c + 1;
+                }
             }
+
+            var dir = CityData.Instance != null ? CityData.Instance.citizenDirectory : null;
+            var rows = new List<(float d, string line)>();
             if (dir != null)
-            {
-                var multi = new List<(int total, string line)>();
                 for (int i = 0; i < dir.Count; i++)
                 {
                     var h = dir[i]; if (h == null) continue;
-                    if (!subj.TryGetValue(h.humanID, out var m)) continue;
-                    int total = 0; foreach (var kv in m) total += kv.Value;
-                    if (total < 2) continue;
-                    multi.Add((total, $"{MotivesPlugin.Name(h)} — {FmtTypes(m)} — {BestKnowerLabel(h.humanID)}"));
+                    if (!perKnower.TryGetValue(h.humanID, out var m)) continue;   // knows no event about the killer
+                    if (!Motive.KnowsName(h, killer)) continue;                    // can't name the killer -> skip
+                    NewAddress home = null; try { home = h.home; } catch { }
+                    float dist = float.MaxValue; bool hasPos = false; string addr = "?"; int floor = 0, bld = -1;
+                    if (home != null)
+                    {
+                        try { var an = home.anchorNode; if (an != null) { dist = Vector3.Distance(scenePos, an.position); hasPos = true; } } catch { }
+                        try { addr = home.name; } catch { }
+                        try { if (home.floor != null) floor = home.floor.floor; } catch { }
+                        try { if (home.building != null) bld = home.building.buildingID; } catch { }
+                    }
+                    string dtxt = hasPos ? $"{dist:0}m" : "?m";
+                    rows.Add((dist, $"{MotivesPlugin.Name(h)} — {addr} (bldg {bld}/floor {floor}) — {dtxt} — [{FmtTypes(m)}]"));
                 }
-                if (multi.Count > 0)
-                {
-                    multi.Sort((x, y) => y.total.CompareTo(x.total));
-                    Overlay.Add("MULTI-EVENT SUBJECTS (ask a knower about one of THESE to test multi-span):");
-                    for (int i = 0; i < multi.Count && i < 5; i++) Overlay.Add("  " + multi[i].line);
-                }
-            }
+            rows.Sort((x, y) => x.d.CompareTo(y.d));
+            Overlay.Add("KILLER KNOWERS — know the killer + a motive event (F3 = jump to closest):");
+            if (rows.Count == 0) Overlay.Add("  (nobody both knows the killer's name AND a motive event about them)");
+            for (int i = 0; i < rows.Count && i < 8; i++) Overlay.Add("  " + rows[i].line);
         }
 
-        // The NPC who knows the MOST events involving `subjectId` (>=2), for a one-step multi-span
-        // test ("ask <name> about <subject>"). Returns a hint when no single knower knows 2+.
-        private static string BestKnowerLabel(int subjectId)
+        // Nearest NPC (to scenePos) who can name `subject` AND knows a non-participant motive event about
+        // them — shared by the killer-knower teleport (F3). Returns null if none.
+        private static Human NearestKnowerHumanOf(Human subject, Vector3 scenePos)
         {
-            var perK = new Dictionary<int, int>();
+            if (subject == null) return null;
+            int sid = subject.humanID;
+            var knowerIds = new HashSet<int>();
             foreach (var e in EventStore.All)
             {
-                if (!e.InvolvesHuman(subjectId)) continue;
-                foreach (var kid in e.knownBy)
-                {
-                    if (e.InvolvesHuman(kid)) continue;   // participants aren't knowers (subsumes kid==subjectId)
-                    perK.TryGetValue(kid, out int c); perK[kid] = c + 1;
-                }
+                if (!e.InvolvesHuman(sid)) continue;
+                foreach (var kid in e.knownBy) if (!e.InvolvesHuman(kid)) knowerIds.Add(kid);
             }
-            int bestId = -1, best = 0;
-            foreach (var kv in perK) if (kv.Value > best) { best = kv.Value; bestId = kv.Key; }
-            if (bestId < 0 || best < 2) return "(no single knower knows 2+)";
             var dir = CityData.Instance != null ? CityData.Instance.citizenDirectory : null;
+            Human best = null; float bestD = float.MaxValue;
             if (dir != null)
                 for (int i = 0; i < dir.Count; i++)
                 {
-                    var h = dir[i];
-                    if (h != null && h.humanID == bestId) return $"ask {MotivesPlugin.Name(h)} (knows {best})";
+                    var h = dir[i]; if (h == null) continue;
+                    if (!knowerIds.Contains(h.humanID)) continue;
+                    if (!Motive.KnowsName(h, subject)) continue;
+                    NewAddress home = null; try { home = h.home; } catch { }
+                    if (home == null) continue;
+                    float dist = float.MaxValue; try { var an = home.anchorNode; if (an != null) dist = Vector3.Distance(scenePos, an.position); } catch { }
+                    if (dist < bestD) { bestD = dist; best = h; }
                 }
-            return $"(knower id {bestId}, knows {best})";
-        }
-
-        private static void TallySubj(Dictionary<int, Dictionary<SocialEventType, int>> map, Human h, SocialEventType t)
-        {
-            if (h == null) return;
-            int id; try { id = h.humanID; } catch { return; }
-            if (!map.TryGetValue(id, out var m)) { m = new Dictionary<SocialEventType, int>(); map[id] = m; }
-            m.TryGetValue(t, out int c); m[t] = c + 1;
+            return best;
         }
 
         private static string FmtTypes(Dictionary<SocialEventType, int> m)
@@ -529,6 +536,27 @@ namespace SODMotives
             catch (Exception e) { log.LogWarning($"[SODMotives][F12] nearest-knower teleport error: {e}"); }
         }
 
+        // F3: teleport to the KILLER-knower nearest the scene — someone who can name the killer AND knows a
+        // motive event about them — so you can interview a killer-side gossip (test asking about the killer,
+        // not just the victim) without hunting.
+        internal static void TeleportToNearestKillerKnower()
+        {
+            var log = MotivesPlugin.Log;
+            try
+            {
+                if (!TryGetCase(out Human killer, out Human victim, out _) || killer == null)
+                { log.LogInfo("[SODMotives][F3] No killer."); return; }
+                Human k = NearestKnowerHumanOf(killer, ScenePos(victim));
+                if (k == null || k.home == null) { log.LogInfo("[SODMotives][F3] No killer-knower with a home found (killer may be too peripheral to be named)."); return; }
+                var player = Player.Instance;
+                NewNode node = player.FindSafeTeleport(k.home, false, true);
+                if (node == null) { log.LogInfo("[SODMotives][F3] No safe spot at the knower's home."); return; }
+                player.Teleport(node, null, true, false, true);
+                log.LogInfo($"[SODMotives][F3] Teleported to nearest killer-knower {MotivesPlugin.Name(k)} @ {k.home.name}.");
+            }
+            catch (Exception e) { log.LogWarning($"[SODMotives][F3] nearest killer-knower teleport error: {e}"); }
+        }
+
         internal static void TeleportToScene()
         {
             var log = MotivesPlugin.Log;
@@ -571,6 +599,7 @@ namespace SODMotives
                 if (Input.GetKeyDown(DebugTools.KeyTeleportScene)) DebugTools.TeleportToScene();
                 if (Input.GetKeyDown(DebugTools.KeyTeleportWork)) DebugTools.TeleportToWork();
                 if (Input.GetKeyDown(DebugTools.KeyTeleportKnower)) DebugTools.TeleportToNearestKnower();
+                if (Input.GetKeyDown(DebugTools.KeyTeleportKillerKnower)) DebugTools.TeleportToNearestKillerKnower();
                 if (Input.GetKeyDown(DebugTools.KeyAlwaysAnswer))
                 {
                     DebugTools.AlwaysAnswer = !DebugTools.AlwaysAnswer;

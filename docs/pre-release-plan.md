@@ -204,8 +204,9 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
     layoffs ⇒ **Promotion ~19.1%** / Layoffs ~8.2% of all cases).
   - `[Property]` EnableProperty true · MaxTenantSuspects 6 · **EvictionShare 0.30** (⇒ 30% evictions / 70%
     rent-arrears ⇒ Eviction ~3.2% / **RentArrears ~7.5%** of all cases).
-  - `[Selection]` MinSuspects 3 · KillerPoolSize 10 · **NameKnownThreshold 0.2** (supersedes the stale
-    0.35 in earlier drafts — Cpp2IL-confirmed a subset of vanilla recognition, a pure taste dial).
+  - `[Selection]` MinSuspects 3 · KillerPoolSize 10 · **NameKnownThreshold 0** (2026-09-19: 0.2→0 so gossip
+    fires for anyone the player can NAME = the game's own photo-recognition; raise to require closer
+    familiarity).
   - `[Feud]` EnableFeuds/EnableDebts true · MaxFeuds 40 · MaxDebts 40 (seed at New Game).
   - `[Clues]` MaxCluesPerCase 8 · WorkplaceClueShare 0.5 · EmailClueShare 0.5. (FingerprintChance REMOVED —
     prints are now an absolute per-type policy; see the playtest-2 log below.)
@@ -222,29 +223,53 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
 
 ## Phase D — Release gate (END-STAGE — do LAST; this removes the test loop) ⚠️
 
+*(Rewritten 2026-09-19 for the current codebase. Re-check line numbers before editing — they drift.)*
+
+**Open decisions to make first (they shape D1/D5/D6):**
+1. **Release `MotiveCaseShare`.** Currently **1.0 = every case is a motive case, NO vanilla serial cases**
+   (the old `VanillaCaseEvery` knob was deleted in the redesign; vanilla mix is now purely
+   `MotiveCaseShare < 1` via `MurderSelector.ShouldForceVanilla`). Decide: keep 1.0, or lower (e.g. 0.8) to
+   leave some classic vanilla serial hunts.
+2. **Distribution channel.** User said *Steam Workshop*, but BepInEx code mods for SoD normally ship on
+   **Thunderstore** (Workshop is the game's native-content format and may not host a BepInEx plugin at all).
+   **Confirm feasibility before packaging** — this decides D5's format.
+3. **Case renaming (D6).** Rename motivated cases so they sound less serial-killer? Taste call; mild
+   consistency tell vs the occasional vanilla serial case. See D6.
+
 - [ ] **D1 — Flip testing defaults** (S) ⚠️
-  - `DebugTools.ForceMotiveType = Money` → `None` (`Plugin.cs:103`); ideally make it config-driven
-    (a `[Debug]` string, default `None`) so F6 layers on top.
-  - `ObviousTestNames` default `true` → `false` (`Plugin.cs:90`).
-  - `VanillaCaseEvery` default `0` → `3` (`Plugin.cs:55`).
-  - Reset the live `.cfg` `MaxCluesPerCase` 4 → 8 (code default is already 8) — or delete the `.cfg`
-    so it regenerates at defaults.
-- [ ] **D2 — Gate/remove dev tooling, but KEEP ONE diagnostics key** (M) ⚠️ — put the F3–F12 hotkeys +
-  the always-on `OnGUI` HUD (`DebugTools.cs` / `DebugHotkey`) behind a `[Debug] EnableDebugKeys` flag
-  (default false), or compile them out — **except retain one always-available diagnostics key** so a
-  user who hits a problem can relay **what event/motive type the case is + which clues were injected**
-  (and where). `DebugTools.BuildSolution` (F9) already assembles CASE TYPE + `INJECTED CLUES`, so reuse
-  it (or a trimmed variant) as the retained key.
-  - **Sub-decision:** strip the KILLER / SUSPECT POOL / knower lines from the retained readout so it is
-    NOT a solution-spoiler — event type + injected clues (+ locations) + murder state are enough for a
-    bug report. Keep a small on-screen hint naming the key.
-  - Un-repurpose F4 as part of the gating.
-- [ ] **D3 — Strip diagnostic logging** (S) ⚠️ — remove the pure-diagnostic
-  `Patch_Evidence_AddFactLinkExe` patch (`Plugin.cs:357-382`; the real removal is in the
-  `AutoCreateFacts` postfix, untouched), the `clue[diag]`/`email[diag]`/`email[ref]` lines, and trim the
-  verbose per-suspect pool + `CityScan` dumps to a sane release level.
-- [ ] **D4 — Final build + smoke test** (S) — confirm a fresh `.cfg` regenerates with all sections +
-  correct defaults; build clean; one clean sandbox → murder → solve with debug off; save/reload once.
+  - `[Troubleshooting] ObviousTestNames` default `true` → `false` (`Plugin.cs` BindApply).
+  - `[Troubleshooting] ForceAllPrints` — confirm default `false` (it is) and reset the live `.cfg` (a
+    playtest left it `true`).
+  - Apply the release `MotiveCaseShare` decision (see above).
+  - `DebugTools.ForceMotiveType` is already `None` at load (`Plugin.cs`), no change.
+  - **Delete the live `.cfg`** (`<game>/BepInEx/config/com.benhirsh.sodmotives.cfg`) so it regenerates at the
+    production code defaults — clears all playtest drift (ForceAllPrints, WorkplaceClueShare tweaks, etc.).
+- [ ] **D2 — Gate dev tooling behind a flag, KEEP ONE diagnostics key** (M) ⚠️ — put ALL debug hotkeys +
+  the `OnGUI` HUD (`DebugTools.cs`) behind a new `[Debug] EnableDebugKeys` flag (default **false**). Current
+  keys to gate: **F3** (killer-knower TP), **F4** (trigger murder), **F6** (force event), **F7** (ghost — incl.
+  echelon access), **F8** (always-answer), **F10/F11** (TP scene/work), **F12** (victim-knower TP). **Retain
+  ONE always-available diagnostics key** (reuse a TRIMMED `DebugTools.BuildSolution`/F9): show CASE TYPE +
+  INJECTED CLUES (+ locations) + murder state ONLY — **strip the KILLER / SUSPECT POOL / VICTIM+KILLER KNOWERS
+  lines** so it's not a solution spoiler. Small on-screen hint naming the key.
+- [ ] **D3 — Strip diagnostic logging** (S) ⚠️ — remove the pure-diagnostic `Patch_Evidence_AddFactLinkExe`
+  patch (the real writer-"From" removal is in the `AutoCreateFacts` postfix — leave that), the
+  `clue[diag]`/`email[diag]`/`email[ref]` lines, and trim the verbose per-suspect pool dump + `CityScan`
+  calibration dump to a sane release level.
+- [ ] **D4 — Final build + smoke test** (S) — fresh `.cfg` regenerates with all sections + correct defaults;
+  build clean; one clean sandbox → murder → solve with debug off; save/reload once.
+- [ ] **D5 — Packaging + publish** (M) — per the channel decision:
+  - **README.md** — DONE (rewritten for v2; Thunderstore-oriented).
+  - **manifest.json** (Thunderstore): name, version_number (1.0.0), website_url, description, dependencies —
+    incl. the exact **BepInExConfigManager** dep string (`Namespace-Name-x.y.z` from its Thunderstore page)
+    as an OPTIONAL/recommended dep. **CHANGELOG.md**. **icon.png** 256×256.
+  - Declare BepInExConfigManager the config-overlay dependency (the mod ships `ConfigEntry`s; overlay opens
+    with `` ` ``).
+- [ ] **D6 — (optional) Case renaming** — decide + (if yes) implement. Vanilla names the case via the moniker
+  system (`GenerateMoniker` → `ApplyMonikerToCaseCheck` → `caseName`); we already skip `GenerateMoniker`, but
+  the case NAME can still read serial. To rename: verify in-game + Cpp2IL `ApplyMonikerToCaseCheck`/`caseName`
+  to see what drives it, then set an override that stays WITHIN vanilla's naming vocabulary (so mod cases
+  don't visibly diverge from the occasional vanilla serial case). Low-stakes tell either way (player knows
+  they installed a motives mod).
 
 ---
 
@@ -346,3 +371,12 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
   0.6→0.30. (Workplace tuned 0.25→0.30→0.46 for Promotion ≈20%; then Property 0.10→0.18 to lift RentArrears
   into 5–10% by raising Property alone — normalisation lowers the other four uniformly, nudging Promotion
   20.0→19.1%.) Eviction/layoffs still comparatively rare — F6 in C1b.
+- 2026-09-19 — **C1b playtesting (in progress) + fixes, all committed on v2:** affair salutation glyph fixed
+  (`eb20d3d`, verified); rent-arrears landlord-victim overkill capped (`MaxArrearsPerLandlord`=3) + gossip
+  collapsed to a count (`55ee9e3`, verified); README rewritten for v2 (`d1da85f`); independent review of the
+  session's changes = no gameplay bugs; ghost-mode (F7) now grants ECHELON access (`35b38b2`, verified);
+  F9 MULTI-EVENT SUBJECTS replaced with **KILLER KNOWERS** + **F3** teleport (`fcc55e9`);
+  **NameKnownThreshold 0.2→0** so gossip fires for anyone the player can name (`3cd5d3d`, fixes the feud
+  asymmetry). Decisions locked: fingerprint scene-bonus KEEP AS-IS; feud coworkers already covered.
+  **Phase D section above REWRITTEN for the current codebase.** NEXT: finish C1b playtest, then Phase D
+  (release gate) + packaging — a fresh-context task (this write-up is the handover).

@@ -20,6 +20,7 @@ namespace SODMotives
         internal static bool Enable = true;
         internal static int MaxTenantSuspects = 6;        // cap eviction suspects per building
         internal static float EvictionShare = 0.3f;       // of eligible buildings, fraction that are eviction (rest = rent arrears)
+        internal static int MaxArrearsPerLandlord = 3;    // cap rent-arrears events per landlord (bidirectional => bounds the landlord-victim pool + "chasing N tenants" gossip)
 
         private static readonly Random _rng = new Random();
 
@@ -54,6 +55,7 @@ namespace SODMotives
                 }
 
                 var landlordsUsed = new HashSet<int>();   // dedupe eviction candidates per landlord (a landlord can own several buildings)
+                var arrearsByLandlord = new Dictionary<int, int>();   // cap rent-arrears events per landlord (bounds the bidirectional landlord-victim pool)
 
                 foreach (var kv in byBuilding)
                 {
@@ -99,9 +101,18 @@ namespace SODMotives
                         else
                         {
                             // RENT ARREARS: one random tenant is killed; the landlord is the lone suspect.
+                            // Cap arrears events per landlord: rent-arrears is BIDIRECTIONAL, so every event a
+                            // landlord is in also makes them a candidate VICTIM with that tenant as a suspect.
+                            // Without a cap a landlord owning many buildings aggregates a huge tenant pool (and
+                            // a knower repeats "chasing a tenant for rent" once per event). Bound it so the
+                            // landlord-victim case stays a tight set of real red herrings.
+                            int lid = landlord.humanID;
+                            int have; arrearsByLandlord.TryGetValue(lid, out have);
+                            if (have >= Math.Max(1, MaxArrearsPerLandlord)) continue;
                             Human victimTenant = tenants[_rng.Next(tenants.Count)];
                             var e = new SocialEvent { type = SocialEventType.RentArrears, a = victimTenant, b = landlord, placeName = place, time = 0f, companyId = -1, buildingId = bid };
                             outList.Add(e);
+                            arrearsByLandlord[lid] = have + 1;
                         }
                     }
                     catch { }

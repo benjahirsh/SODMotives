@@ -219,6 +219,8 @@ namespace SODMotives
             var owedTo = new List<Human>();   // subject is the debtor; these are their creditors
             var owedBy = new List<Human>();   // subject is the creditor; these are their debtors
             var feudOthers = new List<Human>();   // feud counterparties of the subject (collapsed like affairs/debt)
+            var rentChasing = new List<Human>();  // subject is a LANDLORD: the tenants they're chasing for rent (collapse to a COUNT)
+            bool rentBehind = false;              // subject is a TENANT behind on their rent
             var workLines = new List<string>();
             foreach (var e in EventStore.KnownBy(npc.humanID))
             {
@@ -252,6 +254,15 @@ namespace SODMotives
                     if (e.a != null && Motive.Same(e.a, subject)) { if (e.b != null && !ContainsHuman(feudOthers, e.b)) feudOthers.Add(e.b); }
                     else if (e.b != null && Motive.Same(e.b, subject)) { if (e.a != null && !ContainsHuman(feudOthers, e.a)) feudOthers.Add(e.a); }
                 }
+                else if (e.type == SocialEventType.RentArrears)
+                {
+                    // a = tenant, b = landlord. Bidirectional arrears means a landlord can be party to several
+                    // events, so COLLAPSE like debt/feud: a landlord subject -> a COUNT of tenants chased
+                    // ("chasing three tenants for rent"), a tenant subject -> one "behind on rent" line —
+                    // never one "chasing a tenant" line per event. (Party-knowers already skipped above.)
+                    if (e.b != null && Motive.Same(e.b, subject)) { if (e.a != null && !ContainsHuman(rentChasing, e.a)) rentChasing.Add(e.a); }
+                    else if (e.a != null && Motive.Same(e.a, subject)) rentBehind = true;
+                }
                 else if (e.type == SocialEventType.Promotion && e.a != null && Motive.Same(e.a, npc)
                          && e.b != null && Motive.Same(e.b, subject))
                 {
@@ -280,6 +291,8 @@ namespace SODMotives
             if (owedTo.Count > 0) lines.Add(DebtOwedLine(owedTo, seed));
             if (owedBy.Count > 0) lines.Add(DebtOwedToThemLine(owedBy, seed + 1));
             if (feudOthers.Count > 0) lines.Add(FeudLine(feudOthers, seed + 2));
+            if (rentChasing.Count > 0) lines.Add(RentChaseLine(rentChasing.Count, seed + 3));
+            if (rentBehind) lines.Add(RentBehindLine(seed + 4));
             for (int i = 0; i < workLines.Count && lines.Count < MaxGossipBubbles; i++) lines.Add(workLines[i]);
 
             // Naturalise a multi-bubble answer so it never reads as several identically-shaped sentences:
@@ -342,6 +355,49 @@ namespace SODMotives
                 "They're the one who promoted me. A few people weren't best pleased, I can tell you.",
                 "I got my promotion from them. Not everyone took it well.",
                 "They gave me the promotion. I don't think it went down well with everyone.");
+
+        // Rent-arrears gossip, collapsed to a COUNT (naming the tenants is pointless — the game exposes no
+        // landlord->tenant trail to follow anyway). Subject = the LANDLORD; `count` = tenants they're chasing.
+        private static string RentChaseLine(int count, int seed)
+        {
+            if (count <= 1)
+                return Pick(seed,
+                    "Word is one of their tenants had stopped paying rent.",
+                    "Apparently they'd been chasing a tenant for unpaid rent.",
+                    "Heard they had a tenant who wouldn't pay up.",
+                    "I think one of their tenants had fallen behind on the rent.");
+            string n = NumWord(count);
+            return Pick(seed,
+                $"Word is {n} of their tenants had stopped paying rent.",
+                $"Apparently they'd been chasing {n} tenants for unpaid rent.",
+                $"Heard {n} of their tenants had fallen behind on the rent.",
+                $"I think they were chasing {n} tenants over unpaid rent.");
+        }
+
+        // Rent-arrears gossip when the subject is the TENANT who fell behind (they have one landlord).
+        private static string RentBehindLine(int seed)
+            => Pick(seed,
+                "Apparently they'd fallen behind on their rent.",
+                "Heard they'd been struggling to pay their rent.",
+                "I think money had been tight and they'd missed rent.",
+                "Word is they were behind on the rent.");
+
+        // Spell small counts for natural gossip ("three tenants"); digits for larger.
+        private static string NumWord(int n)
+        {
+            switch (n)
+            {
+                case 2: return "two";
+                case 3: return "three";
+                case 4: return "four";
+                case 5: return "five";
+                case 6: return "six";
+                case 7: return "seven";
+                case 8: return "eight";
+                case 9: return "nine";
+                default: return n.ToString();
+            }
+        }
 
         // Deterministic variant pick (stable per seed; never negative-indexes).
         private static string Pick(int seed, params string[] variants)

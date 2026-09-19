@@ -89,6 +89,9 @@ namespace SODMotives
             BindApply("Property", "MaxTenantSuspects", 6,
                 "Maximum tenant suspects per eviction case (the aggrieved tenants being cleared out for redevelopment).",
                 v => PropertySim.MaxTenantSuspects = v);
+            BindApply("Property", "MaxArrearsPerLandlord", 3,
+                "Cap on rent-arrears cases per landlord. Rent-arrears is bidirectional, so a landlord-victim aggregates one delinquent tenant per case into the suspect pool; this bounds that (and the 'chasing N tenants' gossip) so a big landlord doesn't produce an overkill pool.",
+                v => PropertySim.MaxArrearsPerLandlord = v);
             BindApply("Property", "EvictionShare", 0.3f,
                 "Of property cases, the fraction that are evictions (a landlord victim, many aggrieved tenant suspects); the rest are rent-arrears (bidirectional — landlord OR tenant can be the victim). NOTE: bounded by landlord count.",
                 v => PropertySim.EvictionShare = v, R01());

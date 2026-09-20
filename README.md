@@ -1,4 +1,4 @@
-# Better Motives and Leads
+# Better Leads and Motives
 
 *A mod for Shadows of Doubt.*
 
@@ -17,6 +17,10 @@ Two things worth knowing before you start:
 
 - **Required:** the BepInEx pack for IL2CPP (mod managers install this for you automatically).
 - **Recommended:** BepInExConfigManager, an in-game settings overlay you open with the `` ` `` (backquote) key.
+
+## Compatibility
+
+This mod has not been tested alongside other mods yet. It should coexist with most, but if you run into a conflict (or confirm it works well with something), a quick report is very welcome and helps me make it a good neighbour in your mod list.
 
 ## Installation
 

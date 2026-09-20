@@ -16,7 +16,7 @@ Two things worth knowing before you start:
 ## Requirements
 
 - **Required:** the BepInEx pack for IL2CPP (mod managers install this for you automatically).
-- **Recommended:** BepInExConfigManager, an in-game settings overlay you open with the `` ` `` (backquote) key.
+- **Recommended:** BepInExConfigManager, an in-game settings overlay you open with the `` ` `` (backquote) key. (If it does not open, that overlay's own toggle may have defaulted to F5; you can rebind it to backquote in its settings.)
 
 ## Compatibility
 

@@ -141,4 +141,4 @@ it (rebindable in `[Debug Keys]`; defaults shown):
 
 ## License
 
-Personal project. See the repository for source.
+Released under the [MIT License](LICENSE).

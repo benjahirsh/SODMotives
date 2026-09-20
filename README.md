@@ -93,20 +93,21 @@ overlay; the `[Feud]` seeding caps apply at the next New Game):
 
 Out of the box the mod adds **one** always-available key:
 
-- **F9** — a release-safe **case-diagnostics** overlay: case type (mod / vanilla), murder state, and which
-  motive clues were injected + where. Handy for a bug report; it does **not** reveal the killer or suspects.
+- **F9** — the **case-solution** overlay: case type (mod / vanilla), murder state, killer / victim / scene,
+  motive + suspect pool, injected clues (+ locations), and the VICTIM / KILLER KNOWERS interview lists. It's
+  a full spoiler pane — press it only if you want the answer. Don't want it? Set `CaseSolutionOverlay` to
+  `None` in `[Debug Keys]` (via the `` ` `` config overlay) to disable it entirely.
 
-The full test loop is off by default. Turn on **`[Debug] EnableDebugKeys`** in the config overlay to enable
-it (rebindable in `[Debug Keys]`; defaults shown):
+The rest of the test loop is off by default. Turn on **`[Debug] EnableDebugKeys`** in the config overlay to
+enable it (rebindable in `[Debug Keys]`; defaults shown). It does **not** change F9 — only these:
 
-- **F9** now shows the full case solution (killer / victim / suspect pool + the VICTIM / KILLER KNOWERS
-  interview lists), and verbose per-case logging is emitted.
 - **F4** — trigger the next murder now. **F6** — cycle the forced next-murder event type
   (off / affair / promotion / layoffs / eviction / rent-arrears / feud / debt).
 - **F3** — teleport to the nearest killer-knower. **F10** — crime scene. **F11** — victim's workplace.
   **F12** — nearest case-knower (victim's side).
 - **F7** — ghost mode (invincible; NPCs ignore you). **F8** — always-answer (NPCs never refuse
   "do you know this person?").
+- Plus the on-screen dev indicators and verbose per-case logging.
 
 ## Architecture
 

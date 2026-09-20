@@ -98,9 +98,9 @@ namespace SODMotives
                 go.hideFlags = HideFlags.HideAndDontSave;
                 go.AddComponent<DebugHotkey>();
                 if (EnableDebugKeys)
-                    MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys ON (defaults; rebindable in the config menu -> SOD Motives / Debug Keys): F3=teleport to nearest KILLER-knower, F4=trigger next murder NOW, F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=ghost, F8=always-answer, F9=case diagnostics, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower (victim). (F5 unbound.)");
+                    MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys ON (defaults; rebindable in the config menu -> SOD Motives / Debug Keys): F3=teleport to nearest KILLER-knower, F4=trigger next murder NOW, F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=ghost, F8=always-answer, F9=case solution overlay, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower (victim). (F5 unbound.)");
                 else
-                    MotivesPlugin.Log.LogInfo($"[SODMotives] Debug tooling OFF (release). Only {KeyCaseSolution} = case diagnostics (case type + state + injected clues) is active. Enable [Debug] EnableDebugKeys in the config overlay for the full test loop.");
+                    MotivesPlugin.Log.LogInfo($"[SODMotives] Debug tooling OFF. {KeyCaseSolution} = case-solution overlay is always available (set it to None in [Debug Keys] to disable); enable [Debug] EnableDebugKeys in the config overlay for the full test loop (force event, teleports, ghost, etc.).");
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] hotkey register failed: {e.Message}"); }
         }
@@ -255,10 +255,9 @@ namespace SODMotives
         {
             Overlay.Clear();
             var log = MotivesPlugin.Log;
-            // Release-safe diagnostics unless the dev tooling is enabled. When OFF we show only whether the
-            // case is a mod case, its murder state, and which motive clues were injected + where (so a
-            // bug report can confirm the mod is working) — NOT the killer / suspects / knowers (the solution).
-            bool full = EnableDebugKeys;
+            // The FULL case-solution overlay — always the same pane whether or not [Debug] EnableDebugKeys is
+            // on (that flag gates the OTHER dev hotkeys, not this one). A player who doesn't want a solution
+            // pane can set the CaseSolutionOverlay key to None in the config overlay to disable it.
             try
             {
                 if (!TryGetCase(out Human killer, out Human victim, out string scene))
@@ -273,40 +272,33 @@ namespace SODMotives
                 Overlay.Add(ours ? "CASE TYPE: motivated (mod)" : "CASE TYPE: vanilla / not overridden");
                 try { var mrd = MurderController.Instance != null ? MurderController.Instance.GetCurrentMurder() : null; if (mrd != null) Overlay.Add($"MURDER STATE: {mrd.state}"); } catch { }
 
-                if (full)
-                {
-                    // DEV-ONLY (solution spoiler): killer / victim / scene / motive / suspect pool.
-                    Overlay.Add($"KILLER: {MotivesPlugin.Name(killer)}");
-                    Overlay.Add($"VICTIM: {MotivesPlugin.Name(victim)}");
-                    Overlay.Add($"SCENE : {scene}");
+                Overlay.Add($"KILLER: {MotivesPlugin.Name(killer)}");
+                Overlay.Add($"VICTIM: {MotivesPlugin.Name(victim)}");
+                Overlay.Add($"SCENE : {scene}");
 
-                    // MOTIVE + SUSPECT POOL now read the REAL event-backed pool the killer was drawn
-                    // from (MurderSelector), not the retired like-based Motive.Score.
-                    if (victim != null && MurderSelector.MotiveByVictim.TryGetValue(victim.humanID, out var kmot))
-                        Overlay.Add($"MOTIVE: [{kmot.type}] {kmot.detail} (score {MotivesPlugin.F(kmot.score)})");
-                    else if (killer != null && victim != null)
-                        Overlay.Add("MOTIVE: (vanilla / not overridden)");
-
-                    if (victim != null)
-                    {
-                        if (MurderSelector.PoolByVictim.TryGetValue(victim.humanID, out var pool) && pool != null && pool.Count > 0)
-                        {
-                            Overlay.Add($"SUSPECT POOL ({pool.Count} real event-backed suspects; killer *):");
-                            int show = Math.Min(10, pool.Count);
-                            for (int i = 0; i < show; i++)
-                            {
-                                var ed = pool[i];
-                                bool isK = killer != null && ed.suspect != null && ed.suspect.humanID == killer.humanID;
-                                Overlay.Add($"  {(isK ? "*" : " ")}{MotivesPlugin.F(ed.score).PadLeft(6)}  {MotivesPlugin.Name(ed.suspect)}  [{ed.type}] {ed.detail}");
-                            }
-                        }
-                        else Overlay.Add("SUSPECT POOL: none recorded (vanilla case / not overridden).");
-                    }
-                }
+                // MOTIVE + SUSPECT POOL read the REAL event-backed pool the killer was drawn from
+                // (MurderSelector), not the retired like-based Motive.Score.
+                if (victim != null && MurderSelector.MotiveByVictim.TryGetValue(victim.humanID, out var kmot))
+                    Overlay.Add($"MOTIVE: [{kmot.type}] {kmot.detail} (score {MotivesPlugin.F(kmot.score)})");
+                else if (killer != null && victim != null)
+                    Overlay.Add("MOTIVE: (vanilla / not overridden)");
 
                 if (victim != null)
                 {
-                    // Injected clues for this case — always shown (diagnostics: did our clues spawn, and where?).
+                    if (MurderSelector.PoolByVictim.TryGetValue(victim.humanID, out var pool) && pool != null && pool.Count > 0)
+                    {
+                        Overlay.Add($"SUSPECT POOL ({pool.Count} real event-backed suspects; killer *):");
+                        int show = Math.Min(10, pool.Count);
+                        for (int i = 0; i < show; i++)
+                        {
+                            var ed = pool[i];
+                            bool isK = killer != null && ed.suspect != null && ed.suspect.humanID == killer.humanID;
+                            Overlay.Add($"  {(isK ? "*" : " ")}{MotivesPlugin.F(ed.score).PadLeft(6)}  {MotivesPlugin.Name(ed.suspect)}  [{ed.type}] {ed.detail}");
+                        }
+                    }
+                    else Overlay.Add("SUSPECT POOL: none recorded (vanilla case / not overridden).");
+
+                    // Injected clues for this case (did our clues spawn, and where?).
                     try
                     {
                         if (ClueInjector.CluesByVictim.TryGetValue(victim.humanID, out var clues) && clues.Count > 0)
@@ -318,19 +310,16 @@ namespace SODMotives
                     }
                     catch { }
 
-                    if (full)
-                    {
-                        // DEV-ONLY: interview lists — NPCs who can name the victim/killer AND know a motive
-                        // event about them (F12 / F3 jump to the closest). Nearest the scene first.
-                        try { AddVictimKnowers(victim, ScenePos(victim)); } catch { }
-                        try { AddKillerKnowers(killer, ScenePos(victim)); } catch { }
-                    }
+                    // Interview lists — NPCs who can name the victim/killer AND know a motive event about
+                    // them (F12 / F3 jump to the closest when debug keys are on). Nearest the scene first.
+                    try { AddVictimKnowers(victim, ScenePos(victim)); } catch { }
+                    try { AddKillerKnowers(killer, ScenePos(victim)); } catch { }
                 }
             }
             catch (Exception e) { Overlay.Add($"error: {e.Message}"); log.LogWarning($"[SODMotives][F9] {e}"); }
 
             // Mirror to log too.
-            log.LogInfo("[SODMotives][F9] ---- case diagnostics ----");
+            log.LogInfo("[SODMotives][F9] ---- case solution ----");
             foreach (var l in Overlay) log.LogInfo("[SODMotives][F9]   " + l);
         }
 
@@ -639,13 +628,8 @@ namespace SODMotives
                         y += 20f;
                     }
                 }
-                else if (!DebugTools.Show)
-                {
-                    // RELEASE: one dim, unobtrusive hint naming the diagnostics key (D2), hidden while the
-                    // overlay itself is open.
-                    _hudStyle.normal.textColor = new Color(1f, 1f, 1f, 0.35f);
-                    GUI.Label(new Rect(x, y, w, 20), $"SOD Motives — {DebugTools.KeyCaseSolution} for case diagnostics", _hudStyle);
-                }
+                // No persistent on-screen hint in release: the case-solution key (F9) is discoverable and
+                // disable-able in the config overlay's [Debug Keys] section, so the screen stays clean.
             }
             catch { }
 
@@ -663,10 +647,7 @@ namespace SODMotives
                 GUI.color = new Color(0f, 0f, 0f, 0.8f);
                 GUI.Box(new Rect(8, 8, w, h), GUIContent.none);
                 GUI.color = Color.white;
-                string header = DebugTools.EnableDebugKeys
-                    ? $"SOD MOTIVES — case solution ({DebugTools.KeyCaseSolution} to hide)"
-                    : $"SOD MOTIVES — case diagnostics ({DebugTools.KeyCaseSolution} to hide)";
-                GUI.Label(new Rect(18, 14, w - 20, lineH), header, _style);
+                GUI.Label(new Rect(18, 14, w - 20, lineH), $"SOD MOTIVES — case solution ({DebugTools.KeyCaseSolution} to hide)", _style);
                 for (int i = 0; i < count; i++)
                     GUI.Label(new Rect(18, 14 + lineH * (i + 1.4f), w - 20, lineH), DebugTools.Overlay[i], _style);
             }

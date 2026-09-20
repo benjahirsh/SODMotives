@@ -226,9 +226,12 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
 *(Rewritten 2026-09-19 for the current codebase. Re-check line numbers before editing — they drift.)*
 
 **Open decisions — ALL RESOLVED 2026-09-19 (user):**
-1. **Release `MotiveCaseShare` = 0.8** — leave ~1 in 5 as a classic vanilla serial hunt for variety
-   (vanilla mix is `MotiveCaseShare < 1` via `MurderSelector.ShouldForceVanilla`; `VanillaCaseEvery` was
-   deleted). Applied as both the config default (`Plugin.cs`) and the static default (`MurderSelector.cs`).
+1. **Release `MotiveCaseShare` = 1.0** (revised 2026-09-20 from an initial 0.8) — every case is a motive
+   case so the mod always shows (a "Motives" mod whose first case is vanilla reads as broken; an
+   unexplained vanilla case mid-game reads as a hiccup). Lowering it (`< 1`, via
+   `MurderSelector.ShouldForceVanilla`; `VanillaCaseEvery` was deleted) mixes in vanilla serial hunts for
+   variety — kept as a player slider, not the default. Applied as both the config default (`Plugin.cs`) and
+   the static default (`MurderSelector.cs`).
 2. **Distribution = Thunderstore** (+ GitHub as source home). **Confirmed:** SoD has NO Steam Workshop for
    code mods — its native channels (in-game mod.io + DDSLoader) are text/content-only and cannot host a
    BepInEx DLL. Every SoD BepInEx plugin ships on Thunderstore (installed via r2modman / Thunderstore Mod
@@ -238,7 +241,8 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
 
 - [x] **D1 — Flip testing defaults** ✅ **DONE 2026-09-19** (`3749b00`) —
   - `ObviousTestNames` default `true` → `false`; `ForceAllPrints` confirmed `false`; `ForceMotiveType` `None`.
-  - `MotiveCaseShare` `1.0` → **`0.8`** (config default in `Plugin.cs` + static default in `MurderSelector.cs`).
+  - `MotiveCaseShare` set to **`1.0`** (config default in `Plugin.cs` + static default in `MurderSelector.cs`;
+    briefly 0.8, revised to 1.0 on 2026-09-20 — see the open-decisions note).
   - **Live `.cfg` deleted** (backed up to the session scratchpad) so it regenerates at the new defaults on
     next launch.
 - [x] **D2 — Gate dev tooling behind a flag, KEEP ONE diagnostics key** ✅ **DONE 2026-09-19** (`3749b00`) —
@@ -255,7 +259,7 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
   `SpawnTest*` debug scaffolding (2 in `DebugTools`, 3 in `ClueInjector`).
 - [~] **D4 — Final build + smoke test** — **build DONE** (clean, 0 warnings, deployed). **In-game smoke test
   = USER TASK:** launch a fresh game, confirm the `.cfg` regenerates with all sections at the new defaults
-  (esp. `MotiveCaseShare=0.8`, `ObviousTestNames=false`, `EnableDebugKeys=false`), play one sandbox → murder →
+  (esp. `MotiveCaseShare=1.0`, `ObviousTestNames=false`, `EnableDebugKeys=false`), play one sandbox → murder →
   solve with debug off (F9 shows only the trimmed diagnostics), then save/reload once.
 - [x] **D5 — Packaging** ✅ **DONE 2026-09-19** (`ed78ea4`) — per the Thunderstore decision:
   - **README.md** — updated for release (v1.0.0; `[Debug] EnableDebugKeys` gate; exact dep strings).
@@ -389,3 +393,16 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
   (256²) / README-for-release; ready-to-upload ZIP built in scratchpad (forward-slash paths). Builds clean
   (0 warn). **REMAINING (user):** D4 in-game smoke test on a fresh game; set manifest `website_url` to the
   GitHub repo; create the GitHub repo/remote (none yet); upload the ZIP to Thunderstore.
+- 2026-09-20 — **Published to GitHub + MotiveCaseShare revised to 1.0.**
+  - **MotiveCaseShare 0.8 → 1.0** (config + static default). Rationale: a "Motives" mod whose first case is
+    vanilla reads as broken, and an unexplained vanilla case mid-game reads as a hiccup (players can't tell
+    intended-vanilla from a mod failure); 1.0 is on-brand and the slider still lets users add vanilla.
+    README + CHANGELOG wording updated.
+  - **GitHub: repo is PUBLIC at https://github.com/benjahirsh/SODMotives** (default branch `v2`; `main` = old
+    v1 pointer also pushed). **History rewritten to strip all 99 `Co-Authored-By: Claude` trailers**
+    (`git filter-branch --msg-filter`; tree byte-identical, 103 commits preserved; pre-strip originals kept
+    locally under `refs/original/`, NOT pushed). Stale trailered `v1.0.0` tag deleted. **MIT LICENSE** added
+    (Ben Hirsh); manifest `website_url` set to the repo. All new commits are trailer-free (per the user's
+    decision to remove AI attribution before going public).
+  - **STILL REMAINING (user):** D4 in-game smoke test; upload the (rebuilt) ZIP to Thunderstore; re-verify
+    the dep versions at upload time. Optional: fast-forward/retire the stale `main` branch.

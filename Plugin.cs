@@ -40,8 +40,8 @@ namespace SODMotives
                 v => MurderSelector.EnableOverride = v);
 
             // --- Motive Mix: how many cases are mod vs vanilla, and the blend of motive families ---
-            BindApply("Motive Mix", "MotiveCaseShare", 0.8f,
-                "MAIN KNOB: fraction (0..1) of murders that are relationship-MOTIVE cases; the rest are left as vanilla serial-killer cases. 1 = every case is a motive case, 0 = all vanilla. Default 0.8 leaves ~1 in 5 as a classic untraceable serial-killer hunt (with its signature) for variety. Applies to the next case.",
+            BindApply("Motive Mix", "MotiveCaseShare", 1.0f,
+                "MAIN KNOB: fraction (0..1) of murders that are relationship-MOTIVE cases; the rest are left as vanilla serial-killer cases. Default 1 = every case is a motive case (so the mod always shows). Lower it to mix in some classic untraceable serial-killer hunts (with their signatures) for variety; 0 = all vanilla. Applies to the next case.",
                 v => MurderSelector.MotiveCaseShare = v, R01(), Order(100));
             // The five motive families — each a 0..1 weight, NORMALISED together, so any mix works (they need
             // not sum to 1). Set one to 0 to drop that motive from the blend.

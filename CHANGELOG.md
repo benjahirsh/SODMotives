@@ -11,8 +11,9 @@ chasing a random stranger. Special cases (kidnap / sniper) and story murders are
   pool** — every suspect is a genuine red herring and the killer looks no guiltier than the rest. Vanilla
   physical forensics (weapon prints / CCTV / alibi) still convicts the one; the motive layer only
   supplements it.
-- By default **~80%** of generated murders are motive cases; the rest are left as classic vanilla
-  serial-killer hunts (with their signatures) for variety. Tunable via `MotiveCaseShare`.
+- By default **every** generated murder is a motive case (`MotiveCaseShare` = 1.0), so the mod always
+  shows. Lower `MotiveCaseShare` to mix in classic vanilla serial-killer hunts (with their signatures)
+  for variety.
 
 **Motive families** (all traceable, drawn from simulated social events rather than the static `like` value)
 - **Affair** — infidelity / love-triangle.

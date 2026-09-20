@@ -1,8 +1,8 @@
 {
-  "name": "SODMotives",
+  "name": "Better_Motives_and_Leads",
   "version_number": "1.0.0",
   "website_url": "https://github.com/benjahirsh/SODMotives",
-  "description": "Murders driven by real NPC relationships - affairs, workplace rivalries, debts, feuds, evictions - leaving a traceable motive trail of clues, gossip and interrogation. Vanilla forensics still convicts.",
+  "description": "Figuring out WHY someone was killed is now a valid lead to WHO killed them. This mod gives murders believable, traceable motives that can be uncovered through deduction and NPC interrogation. Kept vague to avoid spoilers. The README reveals more.",
   "dependencies": [
     "BepInEx-BepInExPack_IL2CPP-6.0.755",
     "TeamSpyraxi-BepInExConfigManager-1.3.1"

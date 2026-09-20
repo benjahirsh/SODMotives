@@ -144,10 +144,13 @@ namespace SODMotives
                 "TESTING: force the author's fingerprint onto EVERY motive clue (overrides the per-type print policy, including the normally print-free rent/debt notes). Use to check whether a print on a clue at the scene aids the game's suspect scoring.",
                 v => ClueInjector.ForceAllPrints = v);
 
-            // --- Debug (developer tooling master switch) ---
+            // --- Debug (developer tooling) ---
             BindApply("Debug", "EnableDebugKeys", false,
-                "Developer tooling. OFF (release default): all debug hotkeys are inert except the case-diagnostics key (CaseSolutionOverlay, default F9, which shows only case type + murder state + injected clues), the on-screen dev indicators are hidden, and verbose per-case logging is silenced. ON: enables the full test loop (force event, trigger murder, ghost, teleports, always-answer), the full F9 case solution, and verbose logs — turn this on to debug or gather a detailed bug report.",
+                "Developer tooling. OFF (default): all debug hotkeys are inert EXCEPT the case-solution overlay (CaseSolutionOverlay, default F9), the on-screen dev indicators are hidden, and verbose per-case logging is silenced. ON: enables the full test loop (force event, trigger murder, ghost, teleports, always-answer) plus verbose logs. Does NOT affect the F9 overlay. Set CaseSolutionOverlay to None in [Debug Keys] if you don't want F9 at all.",
                 v => DebugTools.EnableDebugKeys = v);
+            BindApply("Debug", "ShowSuspectPoolAndKnowers", false,
+                "In the F9 case-solution overlay, also list the full SUSPECT POOL (with the killer marked) and the victim/killer KNOWER interview lists. Off (default): F9 shows just the core solution (case type, state, killer, victim, scene, motive, injected clues). Independent of EnableDebugKeys.",
+                v => DebugTools.ShowSuspectPoolAndKnowers = v);
 
             // --- Debug Keys (rebindable hotkeys; KeyCode renders as a key-binder in the overlay) ---
             BindApply("Debug Keys", "TriggerMurder", UnityEngine.KeyCode.F4,

@@ -86,7 +86,8 @@ overlay; the `[Feud]` seeding caps apply at the next New Game):
 - **`[Troubleshooting]`** — `UnstickStalledMurders`, `StallGameHours`, `StripSignatures`, and the inverted
   `DisableClueInjection` / `DisableInterrogation`, plus test aids `ObviousTestNames` / `ForceAllPrints`
   (both off by default).
-- **`[Debug]`** — `EnableDebugKeys` (default **off**) — the developer-tooling master switch (see below).
+- **`[Debug]`** — `EnableDebugKeys` (default **off**, the developer-tooling switch) and
+  `ShowSuspectPoolAndKnowers` (default **off**, adds the suspect pool + knower lists to the F9 overlay).
 - **`[Debug Keys]`** — the rebindable hotkeys (only active when `EnableDebugKeys` is on).
 
 ## Diagnostics & developer tooling
@@ -94,9 +95,10 @@ overlay; the `[Feud]` seeding caps apply at the next New Game):
 Out of the box the mod adds **one** always-available key:
 
 - **F9** — the **case-solution** overlay: case type (mod / vanilla), murder state, killer / victim / scene,
-  motive + suspect pool, injected clues (+ locations), and the VICTIM / KILLER KNOWERS interview lists. It's
-  a full spoiler pane — press it only if you want the answer. Don't want it? Set `CaseSolutionOverlay` to
-  `None` in `[Debug Keys]` (via the `` ` `` config overlay) to disable it entirely.
+  motive, and injected clues (+ locations). It's a spoiler pane — press it only if you want the answer.
+  Don't want it at all? Set `CaseSolutionOverlay` to `None` in `[Debug Keys]` (via the `` ` `` config
+  overlay). For the fuller investigator breakdown — the whole **suspect pool** (killer marked) plus the
+  **victim / killer knower** interview lists — turn on `[Debug] ShowSuspectPoolAndKnowers`.
 
 The rest of the test loop is off by default. Turn on **`[Debug] EnableDebugKeys`** in the config overlay to
 enable it (rebindable in `[Debug Keys]`; defaults shown). It does **not** change F9 — only these:

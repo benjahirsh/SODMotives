@@ -245,15 +245,17 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
     briefly 0.8, revised to 1.0 on 2026-09-20 — see the open-decisions note).
   - **Live `.cfg` deleted** (backed up to the session scratchpad) so it regenerates at the new defaults on
     next launch.
-- [x] **D2 — Gate dev tooling behind a flag; F9 always shows the FULL solution** ✅ **DONE 2026-09-19**
-  (`3749b00`); **F9 un-trimmed 2026-09-20** (user's call). New `[Debug] EnableDebugKeys` (default **false**) →
+- [x] **D2 — Gate dev tooling behind a flag; F9 = always-on case-solution overlay** ✅ **DONE 2026-09-19**
+  (`3749b00`); **F9 reworked 2026-09-20** (user's calls). New `[Debug] EnableDebugKeys` (default **false**) →
   `DebugTools.EnableDebugKeys`. When off: every dev hotkey (F3/F4/F6/F7/F8/F10/F11/F12) is inert, the
   FORCE/GHOST/ALWAYS-ANSWER `OnGUI` indicators are hidden, verbose per-case logging is silenced, and the
-  stall-watchdog + F9 still run. **F9 shows the FULL case-solution pane always** (killer / victim / scene /
-  motive / suspect pool / injected clues / VICTIM+KILLER KNOWERS) — identical whether or not `EnableDebugKeys`
-  is on; a player who doesn't want it sets `CaseSolutionOverlay` to `None` in `[Debug Keys]` via the `` ` ``
-  overlay. (Earlier this was a trimmed release view that switched on the flag; the user chose one consistent
-  full pane + no persistent on-screen hint.)
+  stall-watchdog + F9 still run. **F9 is a single always-on pane** (same whether or not `EnableDebugKeys` is
+  on; no persistent on-screen hint). By DEFAULT it shows the core solution — case type, murder state, killer,
+  victim, scene, motive, injected clues. A separate knob **`[Debug] ShowSuspectPoolAndKnowers`** (default
+  false) adds the full SUSPECT POOL (killer marked) + the VICTIM/KILLER KNOWER interview lists. A player who
+  wants no F9 at all sets `CaseSolutionOverlay` to `None` in `[Debug Keys]`. (History: was first a
+  flag-switched trimmed/full view; user chose one always-full pane, then split the suspect-pool/knowers out
+  behind their own toggle.)
 - [x] **D3 — Strip diagnostic logging** ✅ **DONE 2026-09-19** (`3749b00`) — removed the pure-diagnostic
   `Patch_Evidence_AddFactLinkExe` (the real writer-"From" removal stays in the `AutoCreateFacts` postfix). The
   `clue[diag]`/`email[diag]`/`email[ref]` lines were already gone (earlier cleanup). Verbose per-case dumps
@@ -401,11 +403,11 @@ Legend: `[ ]` todo · size **S/M/L** · ⚠️ = disturbs the test loop (defer t
     vanilla reads as broken, and an unexplained vanilla case mid-game reads as a hiccup (players can't tell
     intended-vanilla from a mod failure); 1.0 is on-brand and the slider still lets users add vanilla.
     README + CHANGELOG wording updated.
-  - **F9 un-trimmed** (user's call): F9 now shows the SAME full case-solution pane regardless of
-    `EnableDebugKeys` (no release/debug switch, no trimmed diagnostics view), and the persistent on-screen
-    release hint was removed. Discovery/opt-out is via the `` ` `` overlay's `[Debug Keys]` section (set
-    `CaseSolutionOverlay` to None to disable). `EnableDebugKeys` still gates the other hotkeys, the dev
-    indicators, and verbose logging.
+  - **F9 reworked** (user's calls): F9 is one always-on pane regardless of `EnableDebugKeys` (no release/debug
+    switch, no persistent on-screen hint). It shows the core solution by default (case type, state, killer,
+    victim, scene, motive, injected clues); a new **`[Debug] ShowSuspectPoolAndKnowers`** (default false) adds
+    the full suspect pool + victim/killer knower lists. Opt out of F9 entirely by setting `CaseSolutionOverlay`
+    to None in `[Debug Keys]`. `EnableDebugKeys` still gates the other hotkeys, dev indicators, and verbose logs.
   - **GitHub: repo is PUBLIC at https://github.com/benjahirsh/SODMotives** (default branch `v2`; `main` = old
     v1 pointer also pushed). **History rewritten to strip all 99 `Co-Authored-By: Claude` trailers**
     (`git filter-branch --msg-filter`; tree byte-identical, 103 commits preserved; pre-strip originals kept

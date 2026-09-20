@@ -51,6 +51,12 @@ namespace SODMotives
         // back for debugging or a bug report.
         internal static bool EnableDebugKeys = false;
 
+        // F9 detail toggle: when true, the case-solution overlay ALSO lists the full SUSPECT POOL and the
+        // victim/killer KNOWER interview lists. Default false = F9 shows just the core solution (case type,
+        // state, killer, victim, scene, motive, injected clues). Bound to [Debug] ShowSuspectPoolAndKnowers;
+        // independent of EnableDebugKeys.
+        internal static bool ShowSuspectPoolAndKnowers = false;
+
         // Configurable debug hotkeys — bound to the [Debug Keys] config section in Plugin.Load and
         // re-applied live from the in-game overlay (which renders KeyCode as a key-binder). Defaults are
         // the original F-keys (F5 left free for the game's quicksave + the config-menu toggle).
@@ -285,20 +291,25 @@ namespace SODMotives
 
                 if (victim != null)
                 {
-                    if (MurderSelector.PoolByVictim.TryGetValue(victim.humanID, out var pool) && pool != null && pool.Count > 0)
+                    // SUSPECT POOL — the full event-backed breakdown (with the killer marked *) is extra
+                    // detail, shown only when [Debug] ShowSuspectPoolAndKnowers is on.
+                    if (ShowSuspectPoolAndKnowers)
                     {
-                        Overlay.Add($"SUSPECT POOL ({pool.Count} real event-backed suspects; killer *):");
-                        int show = Math.Min(10, pool.Count);
-                        for (int i = 0; i < show; i++)
+                        if (MurderSelector.PoolByVictim.TryGetValue(victim.humanID, out var pool) && pool != null && pool.Count > 0)
                         {
-                            var ed = pool[i];
-                            bool isK = killer != null && ed.suspect != null && ed.suspect.humanID == killer.humanID;
-                            Overlay.Add($"  {(isK ? "*" : " ")}{MotivesPlugin.F(ed.score).PadLeft(6)}  {MotivesPlugin.Name(ed.suspect)}  [{ed.type}] {ed.detail}");
+                            Overlay.Add($"SUSPECT POOL ({pool.Count} real event-backed suspects; killer *):");
+                            int show = Math.Min(10, pool.Count);
+                            for (int i = 0; i < show; i++)
+                            {
+                                var ed = pool[i];
+                                bool isK = killer != null && ed.suspect != null && ed.suspect.humanID == killer.humanID;
+                                Overlay.Add($"  {(isK ? "*" : " ")}{MotivesPlugin.F(ed.score).PadLeft(6)}  {MotivesPlugin.Name(ed.suspect)}  [{ed.type}] {ed.detail}");
+                            }
                         }
+                        else Overlay.Add("SUSPECT POOL: none recorded (vanilla case / not overridden).");
                     }
-                    else Overlay.Add("SUSPECT POOL: none recorded (vanilla case / not overridden).");
 
-                    // Injected clues for this case (did our clues spawn, and where?).
+                    // Injected clues for this case (did our clues spawn, and where?) — always shown.
                     try
                     {
                         if (ClueInjector.CluesByVictim.TryGetValue(victim.humanID, out var clues) && clues.Count > 0)
@@ -312,8 +323,12 @@ namespace SODMotives
 
                     // Interview lists — NPCs who can name the victim/killer AND know a motive event about
                     // them (F12 / F3 jump to the closest when debug keys are on). Nearest the scene first.
-                    try { AddVictimKnowers(victim, ScenePos(victim)); } catch { }
-                    try { AddKillerKnowers(killer, ScenePos(victim)); } catch { }
+                    // Extra detail, shown only when ShowSuspectPoolAndKnowers is on.
+                    if (ShowSuspectPoolAndKnowers)
+                    {
+                        try { AddVictimKnowers(victim, ScenePos(victim)); } catch { }
+                        try { AddKillerKnowers(killer, ScenePos(victim)); } catch { }
+                    }
                 }
             }
             catch (Exception e) { Overlay.Add($"error: {e.Message}"); log.LogWarning($"[SODMotives][F9] {e}"); }

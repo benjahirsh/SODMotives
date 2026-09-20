@@ -35,6 +35,8 @@ Serial-killer dressing (calling card / moniker / graffiti) is stripped from moti
 **Configuration**
 - All knobs live-editable in the **BepInExConfigManager** overlay (open with `` ` ``); the mod also runs
   without it, reading the `.cfg` directly.
-- Developer/testing tooling ships **disabled**; a single always-available **F9** case-diagnostics overlay
-  (case type + murder state + injected clues, no spoilers) remains for bug reports. Enable the full test
-  loop via `[Debug] EnableDebugKeys`.
+- Developer/testing tooling ships **disabled**. One always-available key remains: **F9**, a case-solution
+  overlay (case type, murder state, killer, victim, motive, injected clues) — unbind it in `[Debug Keys]`
+  if you don't want it. Add the full suspect pool + knower interview lists with `[Debug]
+  ShowSuspectPoolAndKnowers`, and enable the full test loop (force event, teleports, ghost) with `[Debug]
+  EnableDebugKeys`.

@@ -287,7 +287,7 @@ namespace SODMotives
             // One affair bubble + up to two debt bubbles (owed-to / owed-by) + one per other event line,
             // capped only by the safety backstop (so future motive types still surface alongside these).
             // Distinct seed offsets so back-to-back bubbles don't land on the identically-shaped variant.
-            if (lovers.Count > 0) lines.Add(AffairLine(subject, lovers, seed));
+            if (lovers.Count > 0) lines.Add(AffairLine(npc, subject, lovers, seed));
             if (owedTo.Count > 0) lines.Add(DebtOwedLine(owedTo, seed));
             if (owedBy.Count > 0) lines.Add(DebtOwedToThemLine(owedBy, seed + 1));
             if (feudOthers.Count > 0) lines.Add(FeudLine(feudOthers, seed + 2));
@@ -305,15 +305,19 @@ namespace SODMotives
 
         // Affair gossip about the subject (subject = "they"), naming each distinct lover once. The
         // betrayed-partner clause is appended ONLY when the subject actually has a partner (the
-        // variants themselves never assume one, so they read correctly for a single subject too).
-        private static string AffairLine(Human subject, List<Human> lovers, int seed)
+        // variants themselves never assume one, so they read correctly for a single subject too) AND
+        // that partner isn't the SPEAKER — otherwise the betrayed spouse, when asked about their own
+        // cheating partner, would refer to themselves in the third person ("Can't imagine <their own
+        // name> took that well"). When the speaker IS the betrayed partner, drop the clause entirely.
+        private static string AffairLine(Human npc, Human subject, List<Human> lovers, int seed)
         {
             Human sp = SafePartner(subject);
             string ln = Pick(seed,
                 $"I think they've been having an affair with {JoinNames(lovers)}.",
                 $"Apparently they have something going on with {JoinNames(lovers)}.",
                 $"Rumour has it they've been seeing {JoinNames(lovers)} in secret.");
-            if (sp != null) ln += Pick(seed + 5,
+            bool speakerIsBetrayed = sp != null && npc != null && sp.humanID == npc.humanID;
+            if (sp != null && !speakerIsBetrayed) ln += Pick(seed + 5,
                 $" Can't imagine {Name(sp)} took that well.",
                 $" {Name(sp)} can't have been happy about it.",
                 $" Don't think {Name(sp)} knew.");

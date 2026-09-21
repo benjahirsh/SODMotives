@@ -81,6 +81,9 @@ namespace SODMotives
         internal static KeyCode KeyTeleportKillerKnower = KeyCode.F8;   // jump to the nearest knower of the KILLER
         internal static KeyCode KeyForceSniper    = KeyCode.F3;   // CREATE a motivated sniper case immediately (bypasses the scheduler)
         internal static KeyCode KeyForceKidnap    = KeyCode.F2;   // CREATE a motivated kidnap case immediately (bypasses the scheduler); F1 is reserved by the game
+        internal static KeyCode KeyTeleportCityHall = KeyCode.Home;   // teleport to City Hall (fixed landmark)
+        internal static KeyCode KeyTimeBoost      = KeyCode.End;   // toggle fast-forward (game 'simulation' time speed) for testing
+        private static bool _timeBoost = false;
 
         // Each SocialEventType maps to exactly one MotiveType — used to keep ForceMotiveType in sync with F6.
         internal static MotiveType MotiveOf(SocialEventType t)
@@ -116,7 +119,7 @@ namespace SODMotives
                 go.hideFlags = HideFlags.HideAndDontSave;
                 go.AddComponent<DebugHotkey>();
                 if (EnableDebugKeys)
-                    MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys ON (defaults; rebindable in the config menu -> SOD Motives / Debug Keys): F2=FORCE a motivated KIDNAP case now, F3=FORCE a motivated SNIPER case now, F4=trigger next murder NOW, F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=TEST ACCESS (ghost + always-answer together), F8=teleport to nearest KILLER-knower, F9=case solution overlay, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower (victim). (F1 reserved by the game, F5 unbound.)");
+                    MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys ON (defaults; rebindable in the config menu -> SOD Motives / Debug Keys): F2=FORCE a motivated KIDNAP case now, F3=FORCE a motivated SNIPER case now, F4=trigger next murder NOW, F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=TEST ACCESS (ghost + always-answer together), F8=teleport to nearest KILLER-knower, F9=case solution overlay, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower (victim), Home=teleport to City Hall, End=toggle fast-forward (simulation speed). (F1 reserved by the game, F5 unbound.)");
                 else
                     MotivesPlugin.Log.LogInfo($"[SODMotives] Debug tooling OFF. {KeyCaseSolution} = case-solution overlay is always available (set it to None in [Debug Keys] to disable); enable [Debug] EnableDebugKeys in the config overlay for the full test loop (force event, teleports, ghost, etc.).");
             }
@@ -350,6 +353,51 @@ namespace SODMotives
                 log.LogInfo($"[SODMotives][F11] Teleported to victim's workplace: {work.name}");
             }
             catch (Exception e) { log.LogWarning($"[SODMotives][F11] work teleport error: {e}"); }
+        }
+
+        // Teleport to City Hall — a fixed central landmark (handy when a case's scene is unresolved, e.g. a
+        // kidnap stuck at waitForLocation with no den). Scans the city's locations for one named "City Hall".
+        internal static void TeleportToCityHall()
+        {
+            var log = MotivesPlugin.Log;
+            try
+            {
+                var cd = CityData.Instance; var player = Player.Instance;
+                if (cd == null || player == null) { log.LogInfo("[SODMotives][cityhall] No city/player."); return; }
+                NewGameLocation hall = null;
+                var dir = cd.gameLocationDirectory;
+                if (dir != null)
+                    for (int i = 0; i < dir.Count; i++)
+                    {
+                        var loc = dir[i]; if (loc == null) continue;
+                        string n = null; try { n = loc.name; } catch { }
+                        if (!string.IsNullOrEmpty(n) && n.IndexOf("City Hall", StringComparison.OrdinalIgnoreCase) >= 0) { hall = loc; break; }
+                    }
+                if (hall == null) { log.LogInfo("[SODMotives][cityhall] City Hall location not found in this city."); return; }
+                NewNode node = player.FindSafeTeleport(hall, false, true);
+                if (node == null) { log.LogInfo("[SODMotives][cityhall] No safe spot at City Hall."); return; }
+                player.Teleport(node, null, true, false, true);
+                log.LogInfo($"[SODMotives][cityhall] Teleported to {hall.name}.");
+            }
+            catch (Exception e) { log.LogWarning($"[SODMotives][cityhall] teleport error: {e}"); }
+        }
+
+        // Toggle fast-forward for testing: on = the game's 'simulation' time speed (its fastest — the same
+        // pace used when waiting/sleeping), so slow phases (research/acquire) and the 24h stall watchdog play
+        // out quickly; off = back to normal speed. One-shot per press (doesn't fight the game's own speed
+        // buttons or pause afterwards).
+        internal static void ToggleTimeBoost()
+        {
+            var log = MotivesPlugin.Log;
+            try
+            {
+                var sd = SessionData.Instance;
+                if (sd == null) { log.LogInfo("[SODMotives][time] No SessionData."); return; }
+                _timeBoost = !_timeBoost;
+                sd.SetTimeSpeed(_timeBoost ? SessionData.TimeSpeed.simulation : SessionData.TimeSpeed.normal);
+                log.LogInfo($"[SODMotives][time] Fast-forward {(_timeBoost ? "ON (simulation speed)" : "OFF (normal speed)")}. Use the game's own speed buttons/pause any time to override.");
+            }
+            catch (Exception e) { log.LogWarning($"[SODMotives][time] error: {e}"); }
         }
 
         private static bool TryGetCase(out Human killer, out Human victim, out string scene)
@@ -698,6 +746,8 @@ namespace SODMotives
                     if (Input.GetKeyDown(DebugTools.KeyTriggerMurder)) DebugTools.TriggerMurder();
                     if (Input.GetKeyDown(DebugTools.KeyForceSniper)) DebugTools.ForceSniperCase();
                     if (Input.GetKeyDown(DebugTools.KeyForceKidnap)) DebugTools.ForceKidnapCase();
+                    if (Input.GetKeyDown(DebugTools.KeyTeleportCityHall)) DebugTools.TeleportToCityHall();
+                    if (Input.GetKeyDown(DebugTools.KeyTimeBoost)) DebugTools.ToggleTimeBoost();
                     if (Input.GetKeyDown(DebugTools.KeyTeleportScene)) DebugTools.TeleportToScene();
                     if (Input.GetKeyDown(DebugTools.KeyTeleportWork)) DebugTools.TeleportToWork();
                     if (Input.GetKeyDown(DebugTools.KeyTeleportKnower)) DebugTools.TeleportToNearestKnower();

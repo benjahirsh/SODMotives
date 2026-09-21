@@ -180,6 +180,12 @@ namespace SODMotives
             BindApply("Debug Keys", "TestAccess", UnityEngine.KeyCode.F7,
                 "Toggle TEST ACCESS: ghost mode (NPCs ignore you; invincible) AND always-answer (NPCs never refuse 'do you know this person?') together, since they're used as a pair. Set to None to disable.",
                 v => DebugTools.KeyTestAccess = v);
+            BindApply("Debug Keys", "TeleportToCityHall", UnityEngine.KeyCode.Home,
+                "Teleport to City Hall (a fixed central landmark — handy when a case scene is unresolved). Set to None to disable.",
+                v => DebugTools.KeyTeleportCityHall = v);
+            BindApply("Debug Keys", "TimeBoost", UnityEngine.KeyCode.End,
+                "Toggle fast-forward: ON = the game's 'simulation' time speed (fastest) so slow phases and the 24h stall watchdog play out quickly; OFF = normal speed. Set to None to disable.",
+                v => DebugTools.KeyTimeBoost = v);
             BindApply("Debug Keys", "TeleportToScene", UnityEngine.KeyCode.F10,
                 "Teleport to the current crime scene.",
                 v => DebugTools.KeyTeleportScene = v);

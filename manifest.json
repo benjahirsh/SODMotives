@@ -1,8 +1,8 @@
 {
   "name": "Better_Leads_and_Motives",
-  "version_number": "1.0.1",
+  "version_number": "1.0.2",
   "website_url": "https://github.com/benjahirsh/SODMotives",
-  "description": "Figuring out WHY someone was killed is now a valid lead to WHO killed them. This mod gives murders believable, traceable motives that can be uncovered through deduction and NPC interrogation. Kept vague to avoid spoilers. The README reveals more.",
+  "description": "Adds believable, traceable motives that can be uncovered through deduction and NPC interrogation. Figuring out why someone was killed is now a valid lead to who killed them.",
   "dependencies": [
     "BepInEx-BepInExPack_IL2CPP-6.0.755",
     "TeamSpyraxi-BepInExConfigManager-1.3.1"

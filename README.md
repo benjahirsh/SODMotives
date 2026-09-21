@@ -1,18 +1,20 @@
 # Better Leads and Motives
 
-*A mod for Shadows of Doubt.*
+*A vanilla+ mod for Shadows of Doubt*
 
-I made this mod to bring the vanilla experience more meaning beyond random murders by serial killers. It orchestrates murders with believable and traceable motives, with bespoke clue generation and NPC gossip that the player can extract from them.
+Murders are now built around believable, traceable motives, with bespoke clues and NPC gossip that the player can interrogate through the game's dialog system. I made this because I wanted the generated cases to grow deeper narratives the player can piece together and follow as leads. I hope this brings the vanilla experience to its full potential.
+
+**Please leave a comment on the [Steam guide](https://steamcommunity.com/sharedfiles/filedetails/?id=3804929108).** Feedback and bug reports are very welcome.
 
 I'm keeping this vague on purpose so as not to spoil the experience. The rest of this page is structured to reveal more and more about how the mod works the further down you read, so you can choose how much you'd like to know. Each section says how spoilery it is, so stop wherever you're comfortable.
 
 ## How to play
 
-Two things worth knowing before you start:
+Some things to know before starting:
 
 - **Asking "Do you know this person?" now tells you more.** On top of the usual reply, an NPC will also share what they know about that person's involvement in events around town. This is your main tool for building a suspect list, and it is easy to miss, so lean on it.
 - **By default every murder will be a motive case.** You can configure this (`` ` `` key) to mix motive murders in with the classic vanilla cases.
-- **Sniper and kidnapping cases stay vanilla.** The mod adds motives to the game's ordinary murders. If you enable sniper or kidnapper killers in your sandbox settings, those specific cases still play out as the classic roaming-specialist crimes — the motive layer doesn't apply to them (yet).
+- **"Procedural Murders" in the Gameplay settings must be turned ON (default)** for the mod to generate motives. Sniper and kidnapping still occur as vanilla cases; I'm working on adding motives for them also.
 
 ## Requirements
 
@@ -27,7 +29,7 @@ This mod has not been tested alongside other mods yet. It should coexist with mo
 
 Easiest is a mod manager (r2modman or the Thunderstore Mod Manager): install the mod and launch through the manager. Manual install works too: put the plugin in `BepInEx/plugins`.
 
-**You can add the mod to a game already in progress** — it doesn't need a fresh save. Any murder currently underway finishes as a normal vanilla case, and every new murder from then on gets the motive treatment. (Only the sandbox murder-type settings themselves, like enabling snipers, are fixed when a city is created.)
+**Works with existing saves, no need to start a new game.**
 
 That is everything you need to play. If you want to discover the rest yourself, stop reading here.
 
@@ -47,7 +49,7 @@ Traces left behind by the motivated murder:
 - **Emails.** Emails are now useful leads too.
 - **Questioning people.** As noted above, the "Do you know this person?" option now surfaces gossip about that person's involvement in events, so you build your suspect pool by asking around.
 
-The mod deliberately does not hand you the answer. The leads point; the vanilla forensics convict.
+The mod deliberately does not hand you the answer.
 
 ---
 
@@ -83,6 +85,8 @@ Everything is tunable, live, through the BepInExConfigManager overlay (`` ` `` t
 ## Running into problems?
 
 There is a built-in diagnostics view to help me fix issues. Press **F9** to open a panel showing what the mod thinks is going on for the current case: the case type, its current state, the killer and victim, the motive, and which clues were placed. If you hit a bug, open this panel and include what it says (a screenshot is perfect) in your report, and it will help me track the problem down. Note it reveals the answer to the current case, so it doubles as a spoiler. If you would rather never see it, set `CaseSolutionOverlay` to `None` in the config; turning on `ShowSuspectPoolAndKnowers` adds even more detail for a report.
+
+**Please leave a comment on the [Steam guide](https://steamcommunity.com/sharedfiles/filedetails/?id=3804929108).** Feedback and bug reports are very welcome.
 
 ---
 

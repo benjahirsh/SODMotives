@@ -128,6 +128,9 @@ namespace SODMotives
             BindApply("Troubleshooting", "StallGameHours", 24f,
                 "In-game hours a mod murder may sit stalled in 'executing' before the watchdog force-finishes it (only if killer is present and no damage is landing).",
                 v => MurderWatchdog.StallGameHours = v);
+            BindApply("Troubleshooting", "WaitLocationStallHours", 12f,
+                "In-game hours a mod case may sit stalled in 'waitForLocation' (no seatable location — e.g. a kidnap with no valid holding den) before the watchdog CANCELS it so it can't hang the case indefinitely. A one-time IsValidLocation den probe is logged the moment it stalls.",
+                v => MurderWatchdog.WaitLocationStallHours = v);
             BindApply("Troubleshooting", "StripSignatures", true,
                 "Remove serial-killer calling card / moniker / graffiti from motivated cases so they read as personal crimes. (Off = motive cases keep the vanilla serial-killer signatures.)",
                 v => MurderSelector.StripSignatures = v);

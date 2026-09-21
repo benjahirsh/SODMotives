@@ -35,6 +35,11 @@ namespace SODMotives
         // co-location + full-health gates already guarantee it's a true stall, so this is just a
         // generous margin so a legitimately slow enact (which completes in game-minutes) is never cut.
         internal static float StallGameHours = 24f;
+        // In-game hours stuck in 'waitForLocation' before we cancel an overridden case. Unlike 'executing',
+        // waitForLocation has NO natural resolution when the game can't seat a location (a kidnap with no
+        // valid holding den, a sniper with no vantage site), so such a case hangs forever. We cancel it so
+        // the player is never soft-locked. Kept modest since the stall is permanent once it happens.
+        internal static float WaitLocationStallHours = 12f;
 
         private static int _watchVictimId = -1;        // the overridden victim currently in 'executing'
         private static float _executingSince = 0f;     // gameTime it entered 'executing'
@@ -42,10 +47,16 @@ namespace SODMotives
         private static readonly HashSet<int> _loggedNoReach = new HashSet<int>();  // stalls we logged but chose not to act on (once each)
         private static int _awaitingPost = -1;         // a victim we've killed, waiting to flip the case to 'post'
 
+        private static int _waitLocVictimId = -1;      // the overridden victim currently in 'waitForLocation'
+        private static float _waitLocSince = 0f;       // gameTime it entered 'waitForLocation'
+        private static readonly HashSet<int> _probed = new HashSet<int>();         // cases we've run the location probe on (once each)
+        private static readonly HashSet<int> _waitRecovered = new HashSet<int>();  // cases we've cancelled out of a waitForLocation hang
+
         internal static void ResetForNewGame()
         {
             _watchVictimId = -1; _executingSince = 0f;
             _intervened.Clear(); _loggedNoReach.Clear(); _awaitingPost = -1;
+            _waitLocVictimId = -1; _waitLocSince = 0f; _probed.Clear(); _waitRecovered.Clear();
         }
 
         // Called from Patch_MurderStateInject (our existing SetMurderState postfix, already gated to
@@ -84,6 +95,23 @@ namespace SODMotives
                 if (victim == null || killer == null) return;
                 int vid = victim.humanID;
                 if (!MurderSelector.OverriddenVictimIds.Contains(vid)) return;   // OURS only — vanilla cases never reach here
+
+                // waitForLocation stall (a kidnap with no seatable holding 'den', a sniper with no vantage
+                // site): this state has no natural resolution, so the case would hang forever. Probe the
+                // game's OWN IsValidLocation once (diagnostics — reveals what a valid den is), then cancel the
+                // case if it stays stuck past WaitLocationStallHours so the player is never soft-locked.
+                if (murder.state == MurderController.MurderState.waitForLocation)
+                {
+                    if (_probed.Add(vid)) ProbeValidLocations(murder, killer, victim);
+                    if (_waitLocVictimId != vid) { _waitLocVictimId = vid; _waitLocSince = NowHours(); return; }
+                    if (_waitRecovered.Contains(vid)) return;
+                    float wstuck = NowHours() - _waitLocSince;
+                    if (wstuck < WaitLocationStallHours) return;
+                    try { murder.CancelCurrentMurder(); } catch (Exception ce) { MotivesPlugin.Log.LogWarning($"[SODMotives][watchdog] waitForLocation cancel error: {ce.Message}"); }
+                    _waitRecovered.Add(vid);
+                    MotivesPlugin.Log.LogWarning($"[SODMotives][watchdog] RECOVERED: {MotivesPlugin.Name(killer)} -> {MotivesPlugin.Name(victim)} stuck in 'waitForLocation' {wstuck:F1}h (no seatable location — e.g. a kidnap with no valid den) — cancelled the case so it can't hang. See the [den probe] above for why.");
+                    return;
+                }
 
                 // Phase B: we've force-killed the victim; flip the case to 'post' if it didn't self-advance.
                 if (_awaitingPost == vid)
@@ -139,6 +167,47 @@ namespace SODMotives
             }
             catch { }
         }
+
+        // DIAGNOSTIC: when an overridden case parks in waitForLocation, ask the game's OWN
+        // Murder.IsValidLocation which places it would accept. Probes the killer/victim homes explicitly
+        // (are they cohabiting? is a home a valid den?) and scans every city location to count how many
+        // qualify right now. This reveals the real den predicate empirically — far more reliable than
+        // decoding the 1300-call Update() by hand — and tells us how to constrain the kidnap victim pool.
+        private static void ProbeValidLocations(MurderController.Murder murder, Human killer, Human victim)
+        {
+            var log = MotivesPlugin.Log;
+            try
+            {
+                NewGameLocation kh = null, vh = null;
+                try { kh = killer.home; } catch { }
+                try { vh = victim.home; } catch { }
+                bool cohab = false; try { cohab = kh != null && vh != null && kh.Pointer == vh.Pointer; } catch { }
+                string mo = "?"; try { if (murder.mo != null) mo = murder.mo.name; } catch { }
+                string preset = "?"; try { if (murder.preset != null) preset = murder.preset.name; } catch { }
+                log.LogInfo($"[SODMotives][den probe] {MotivesPlugin.Name(killer)} -> {MotivesPlugin.Name(victim)}  preset={preset} mo={mo}");
+                log.LogInfo($"[SODMotives][den probe]   killer.home={LName(kh)} valid={ValidLoc(murder, kh)} ; victim.home={LName(vh)} valid={ValidLoc(murder, vh)} ; cohabiting={cohab}");
+
+                var cd = CityData.Instance;
+                var dir = cd != null ? cd.gameLocationDirectory : null;
+                int total = 0, valid = 0; var sample = new List<string>();
+                if (dir != null)
+                    for (int i = 0; i < dir.Count; i++)
+                    {
+                        var loc = dir[i]; if (loc == null) continue;
+                        total++;
+                        bool ok = false; try { ok = murder.IsValidLocation(loc); } catch { }
+                        if (ok) { valid++; if (sample.Count < 10) sample.Add(LName(loc)); }
+                    }
+                log.LogInfo($"[SODMotives][den probe]   IsValidLocation over {total} city locations -> {valid} VALID. first valid: {string.Join(" | ", sample)}");
+                log.LogInfo($"[SODMotives][den probe]   (0 valid = predicate rejects everything for this pair; some valid but case still stuck = the game isn't sourcing dens from that pool for this pair)");
+            }
+            catch (Exception e) { log.LogWarning($"[SODMotives][den probe] error: {e.Message}"); }
+        }
+
+        private static bool ValidLoc(MurderController.Murder m, NewGameLocation l)
+        { if (l == null) return false; try { return m.IsValidLocation(l); } catch { return false; } }
+
+        private static string LName(NewGameLocation l) { try { return l != null ? l.name : "<null>"; } catch { return "?"; } }
 
         private static bool IsDead(Human h) { try { return h.isDead; } catch { return false; } }
 

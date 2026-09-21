@@ -83,6 +83,31 @@ fires for forced-kidnap victims (they're in `OverriddenVictimIds` via `TryPickVi
    - watch F9 MURDER STATE the same way.
 4. Report back: which preset/MO was used, its `pickDen`/`allowDen` values, and the last state reached.
 
+## EMPIRICAL RESULTS — playtest 2026-09-21 (CONFIRMED: den never seats)
+
+Two forced kidnaps (F2) + observation, all with preset `Kidnapper` / MO `FinancialKidnapper`
+(`allowDen=True` and every other allow-flag False, `pickDen=True`, `blockVictimFromLeavingLocation=True`,
+`killerMeetsVicim=True`, research+acquire phases required, occupancy caps 99/99 = not the blocker):
+
+- **Marta Castillo#177 → Riku Shimizu#260:** `acquireEuipment → research → waitForLocation` then **stuck**
+  (`loc=<null>` the whole time). Never reached `travellingTo`/`executing`. F9 SCENE stayed `?` (no location),
+  so scene teleport was impossible. User manually solved the case to move on (→ `solved`, still `loc=<null>`).
+- **Breonia Frazier#219 → Rina Takagi#218:** same path, stuck at `waitForLocation`, `loc=<null>`. **Killer and
+  victim were COHABITING** — so "killer has no home" is NOT the cause. A kidnap den almost certainly cannot be
+  the victim's own residence (you can't hold someone where they can't leave *at their own home*), and when the
+  pair cohabit the killer's only private residence is also the victim's → disqualified → no seatable den.
+- **Contrast — a regular mod murder worked (with a watchdog assist):** `Matthaiso#249 → Sóley#36`
+  (`TheCoporateKiller`) went `… → waitForLocation → travellingTo(Queensworth & Associates) → executing`, then
+  **soft-locked in `executing`** (killer chased with a hammer, victim HP 100% after 24h) until the **stall
+  watchdog intervened at 24.0h and force-finished the kill** → post → solved. So the watchdog works; 24h is
+  just slow (hence the new End = fast-forward key).
+
+⇒ **The blocker is den SEATING at `waitForLocation`, confirmed.** The location resolver (Update →
+`IsValidLocation` gate) never finds a valid den for the motive-chosen kidnapper. Next: find the den-selection
+code path (where the kidnap `location` candidate is generated) and either (a) constrain the kidnap victim pool
+to killers who own a den-eligible private residence that ISN'T the victim's home, or (b) seat a den ourselves,
+always with a vanilla fallback (never hang).
+
 ## Expected outcome + the fix if it hangs
 
 Most likely: it parks at `waitForLocation` because the motive-chosen kidnapper has no seatable den.

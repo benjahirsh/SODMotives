@@ -128,6 +128,9 @@ namespace SODMotives
             BindApply("Troubleshooting", "StallGameHours", 24f,
                 "In-game hours a mod murder may sit stalled in 'executing' before the watchdog force-finishes it (only if killer is present and no damage is landing).",
                 v => MurderWatchdog.StallGameHours = v);
+            BindApply("Troubleshooting", "TimeBoostMultiplier", 5f,
+                "Fast-forward strength: the multiplier applied to the engine clock (Time.timeScale) while the fast-forward key (End) is ON. Higher = faster but rougher physics/AI. 1 = no boost.",
+                v => DebugTools.TimeBoostMultiplier = v);
             BindApply("Troubleshooting", "WaitLocationStallHours", 12f,
                 "In-game hours a mod case may sit stalled in 'waitForLocation' (no seatable location — e.g. a kidnap with no valid holding den) before the watchdog CANCELS it so it can't hang the case indefinitely. A one-time IsValidLocation den probe is logged the moment it stalls.",
                 v => MurderWatchdog.WaitLocationStallHours = v);

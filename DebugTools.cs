@@ -82,8 +82,12 @@ namespace SODMotives
         internal static KeyCode KeyForceSniper    = KeyCode.F3;   // CREATE a motivated sniper case immediately (bypasses the scheduler)
         internal static KeyCode KeyForceKidnap    = KeyCode.F2;   // CREATE a motivated kidnap case immediately (bypasses the scheduler); F1 is reserved by the game
         internal static KeyCode KeyTeleportCityHall = KeyCode.Home;   // teleport to City Hall (fixed landmark)
-        internal static KeyCode KeyTimeBoost      = KeyCode.End;   // toggle fast-forward (game 'simulation' time speed) for testing
+        internal static KeyCode KeyTimeBoost      = KeyCode.End;   // toggle fast-forward (Time.timeScale multiplier) for testing
         private static bool _timeBoost = false;
+        // Multiplier applied to Unity's Time.timeScale while fast-forward is ON. The game's own 'simulation'
+        // speed turned out to be no faster than normal pass-time, so we scale the whole engine clock instead.
+        // Configurable ([Troubleshooting] TimeBoostMultiplier); higher = faster but rougher physics/AI.
+        internal static float TimeBoostMultiplier = 5f;
 
         // Each SocialEventType maps to exactly one MotiveType — used to keep ForceMotiveType in sync with F6.
         internal static MotiveType MotiveOf(SocialEventType t)
@@ -374,30 +378,55 @@ namespace SODMotives
                         if (!string.IsNullOrEmpty(n) && n.IndexOf("City Hall", StringComparison.OrdinalIgnoreCase) >= 0) { hall = loc; break; }
                     }
                 if (hall == null) { log.LogInfo("[SODMotives][cityhall] City Hall location not found in this city."); return; }
-                NewNode node = player.FindSafeTeleport(hall, false, true);
-                if (node == null) { log.LogInfo("[SODMotives][cityhall] No safe spot at City Hall."); return; }
+                // FindSafeTeleport can fail for a large public building (returns null); fall back to the
+                // location's own anchor node, then to any of its rooms' nodes, so we always land somewhere.
+                NewNode node = null;
+                try { node = player.FindSafeTeleport(hall, false, true); } catch { }
+                if (node == null) { try { node = hall.anchorNode; } catch { } }
+                if (node == null) { log.LogInfo($"[SODMotives][cityhall] Found '{hall.name}' but no reachable node to teleport to."); return; }
                 player.Teleport(node, null, true, false, true);
                 log.LogInfo($"[SODMotives][cityhall] Teleported to {hall.name}.");
             }
             catch (Exception e) { log.LogWarning($"[SODMotives][cityhall] teleport error: {e}"); }
         }
 
-        // Toggle fast-forward for testing: on = the game's 'simulation' time speed (its fastest — the same
-        // pace used when waiting/sleeping), so slow phases (research/acquire) and the 24h stall watchdog play
-        // out quickly; off = back to normal speed. One-shot per press (doesn't fight the game's own speed
-        // buttons or pause afterwards).
+        // Toggle fast-forward for testing. The game's own 'simulation' speed is no faster than normal
+        // pass-time, so ON multiplies Unity's Time.timeScale (the whole engine clock, incl. the sim clock)
+        // by TimeBoostMultiplier — everything runs that many times faster. OFF restores 1x. ApplyTimeBoost()
+        // re-asserts the multiplier every frame while ON but never overrides a pause (Time.timeScale == 0),
+        // so the game's pause still works.
         internal static void ToggleTimeBoost()
         {
             var log = MotivesPlugin.Log;
             try
             {
-                var sd = SessionData.Instance;
-                if (sd == null) { log.LogInfo("[SODMotives][time] No SessionData."); return; }
                 _timeBoost = !_timeBoost;
-                sd.SetTimeSpeed(_timeBoost ? SessionData.TimeSpeed.simulation : SessionData.TimeSpeed.normal);
-                log.LogInfo($"[SODMotives][time] Fast-forward {(_timeBoost ? "ON (simulation speed)" : "OFF (normal speed)")}. Use the game's own speed buttons/pause any time to override.");
+                if (_timeBoost)
+                {
+                    if (Time.timeScale > 0.01f) Time.timeScale = TimeBoostMultiplier;
+                    log.LogInfo($"[SODMotives][time] Fast-forward ON — Time.timeScale x{TimeBoostMultiplier:0.#}. Press again for normal; the game's pause still works. Tune with [Troubleshooting] TimeBoostMultiplier.");
+                }
+                else
+                {
+                    Time.timeScale = 1f;
+                    log.LogInfo("[SODMotives][time] Fast-forward OFF — Time.timeScale restored to 1x.");
+                }
             }
             catch (Exception e) { log.LogWarning($"[SODMotives][time] error: {e}"); }
+        }
+
+        // Re-assert the fast-forward multiplier each frame while ON, but leave a pause alone: if the game
+        // paused (timeScale ~0) we don't fight it; when it resumes (game sets timeScale back to ~1) we bump
+        // it back to the multiplier. No-op when off. Called every frame from Update.
+        internal static void ApplyTimeBoost()
+        {
+            try
+            {
+                if (!_timeBoost) return;
+                float ts = Time.timeScale;
+                if (ts > 0.01f && Math.Abs(ts - TimeBoostMultiplier) > 0.01f) Time.timeScale = TimeBoostMultiplier;
+            }
+            catch { }
         }
 
         private static bool TryGetCase(out Human killer, out Human victim, out string scene)
@@ -773,6 +802,9 @@ namespace SODMotives
                 // Testing accelerator (config-gated, default off; independent of EnableDebugKeys) — hold the
                 // murder cadence low while on, restore on off. Self-gates on FastMurderCadence.
                 DebugTools.ApplyFastCadence();
+
+                // Testing fast-forward: re-assert Time.timeScale multiplier while ON (never overrides a pause).
+                DebugTools.ApplyTimeBoost();
             }
             catch { }
         }

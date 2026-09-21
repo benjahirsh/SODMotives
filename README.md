@@ -10,7 +10,7 @@ I'm keeping this vague on purpose so as not to spoil the experience. The rest of
 
 ## How to play
 
-Two things worth knowing before you start:
+Some things to know before starting:
 
 - **Asking "Do you know this person?" now tells you more.** On top of the usual reply, an NPC will also share what they know about that person's involvement in events around town. This is your main tool for building a suspect list, and it is easy to miss, so lean on it.
 - **By default every murder will be a motive case.** You can configure this (`` ` `` key) to mix motive murders in with the classic vanilla cases.

@@ -107,6 +107,7 @@ namespace SODMotives
                     if (_waitRecovered.Contains(vid)) return;
                     float wstuck = NowHours() - _waitLocSince;
                     if (wstuck < WaitLocationStallHours) return;
+                    LogKidnapState(murder, killer, victim, "stall");   // final state before we give up — did the meet ever set up?
                     try { murder.CancelCurrentMurder(); } catch (Exception ce) { MotivesPlugin.Log.LogWarning($"[SODMotives][watchdog] waitForLocation cancel error: {ce.Message}"); }
                     _waitRecovered.Add(vid);
                     MotivesPlugin.Log.LogWarning($"[SODMotives][watchdog] RECOVERED: {MotivesPlugin.Name(killer)} -> {MotivesPlugin.Name(victim)} stuck in 'waitForLocation' {wstuck:F1}h (no seatable location — e.g. a kidnap with no valid den) — cancelled the case so it can't hang. See the [den probe] above for why.");
@@ -199,9 +200,33 @@ namespace SODMotives
                         if (ok) { valid++; if (sample.Count < 10) sample.Add(LName(loc)); }
                     }
                 log.LogInfo($"[SODMotives][den probe]   IsValidLocation over {total} city locations -> {valid} VALID. first valid: {string.Join(" | ", sample)}");
-                log.LogInfo($"[SODMotives][den probe]   (0 valid = predicate rejects everything for this pair; some valid but case still stuck = the game isn't sourcing dens from that pool for this pair)");
+                LogKidnapState(murder, killer, victim, "entry");
             }
             catch (Exception e) { log.LogWarning($"[SODMotives][den probe] error: {e.Message}"); }
+        }
+
+        // Kidnap abduction state — was the MEET set up (the thing that brings killer+victim together so the
+        // killer can knock out + restrain + carry the victim to the den)? And where is the pair? This tells us
+        // WHERE in the flow a stuck kidnap is stalling. Cheap; safe to call more than once.
+        private static void LogKidnapState(MurderController.Murder murder, Human killer, Human victim, string tag)
+        {
+            var log = MotivesPlugin.Log;
+            try
+            {
+                string mr = "<null>"; int mrid = -1;
+                try { if (murder.meetRestaurant != null) mr = murder.meetRestaurant.name; } catch { }
+                try { mrid = murder.meetRestaurantID; } catch { }
+                bool g1 = false, g2 = false;
+                try { g1 = murder.meetGoal1 != null; } catch { }
+                try { g2 = murder.meetGoal2 != null; } catch { }
+                string loc = "<null>"; try { if (murder.location != null) loc = murder.location.name; } catch { }
+                string kloc = "?", vloc = "?";
+                try { if (killer.currentGameLocation != null) kloc = killer.currentGameLocation.name; } catch { }
+                try { if (victim.currentGameLocation != null) vloc = victim.currentGameLocation.name; } catch { }
+                NewAddress den = null; try { den = killer.den; } catch { }
+                log.LogInfo($"[SODMotives][kidnap {tag}]   meet: restaurant={mr}(id={mrid}) goal1set={g1} goal2set={g2}; location={loc}; killer.den={LName(den)}; killer@{kloc}; victim@{vloc}");
+            }
+            catch (Exception e) { log.LogWarning($"[SODMotives][kidnap {tag}] state log error: {e.Message}"); }
         }
 
         private static bool ValidLoc(MurderController.Murder m, NewGameLocation l)

@@ -81,6 +81,7 @@ namespace SODMotives
         internal static KeyCode KeyTriggerMurder  = KeyCode.F4;   // force the game's next murder NOW (fast test loop)
         internal static KeyCode KeyTeleportKillerKnower = KeyCode.F3;   // jump to the nearest knower of the KILLER
         internal static KeyCode KeyForceSniper    = KeyCode.F2;   // CREATE a motivated sniper case immediately (bypasses the scheduler)
+        internal static KeyCode KeyForceKidnap    = KeyCode.F1;   // CREATE a motivated kidnap case immediately (bypasses the scheduler)
 
         // Each SocialEventType maps to exactly one MotiveType — used to keep ForceMotiveType in sync with F6.
         internal static MotiveType MotiveOf(SocialEventType t)
@@ -116,7 +117,7 @@ namespace SODMotives
                 go.hideFlags = HideFlags.HideAndDontSave;
                 go.AddComponent<DebugHotkey>();
                 if (EnableDebugKeys)
-                    MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys ON (defaults; rebindable in the config menu -> SOD Motives / Debug Keys): F2=FORCE a motivated SNIPER case now, F3=teleport to nearest KILLER-knower, F4=trigger next murder NOW, F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=ghost, F8=always-answer, F9=case solution overlay, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower (victim). (F5 unbound.)");
+                    MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys ON (defaults; rebindable in the config menu -> SOD Motives / Debug Keys): F1=FORCE a motivated KIDNAP case now, F2=FORCE a motivated SNIPER case now, F3=teleport to nearest KILLER-knower, F4=trigger next murder NOW, F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=ghost, F8=always-answer, F9=case solution overlay, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower (victim). (F5 unbound.)");
                 else
                     MotivesPlugin.Log.LogInfo($"[SODMotives] Debug tooling OFF. {KeyCaseSolution} = case-solution overlay is always available (set it to None in [Debug Keys] to disable); enable [Debug] EnableDebugKeys in the config overlay for the full test loop (force event, teleports, ghost, etc.).");
             }
@@ -212,6 +213,28 @@ namespace SODMotives
         // waitForLocation (the vantage/target-site question). Generalised to any case type for kidnap later.
         internal static void ForceSniperCase() => ForceCase(MurderPreset.CaseType.sniper, "F2");
 
+        // F1 (testing): CREATE a motivated KIDNAP case RIGHT NOW, same mechanism as the sniper force key.
+        // The override honours kidnap only when [Troubleshooting] MotivateKidnaps is ON; the force key works
+        // regardless (it calls ExecuteNewMurder directly with a motivated pair), so it's the way to probe the
+        // waitForLocation/den hang. Watch the F9 MURDER STATE + LogOutput.log [trace] lines: reaching
+        // 'executing'/'post' = the motive-chosen pair supports a kidnap; stuck at 'waitForLocation' = the game
+        // can't seat a holding "den" for this kidnapper (then we constrain the victim pool + fall back).
+        internal static void ForceKidnapCase() => ForceCase(MurderPreset.CaseType.kidnap, "F1");
+
+        // Dump the case-defining fields of a preset/MO so a playtest reveals what a kidnap actually requires
+        // (den? where can it happen? occupancy caps? research/acquire phases?). These are ScriptableObject
+        // asset data — only readable at runtime — so logging them here is how we learn the real requirements.
+        private static void LogCaseAssetDetails(MurderPreset p, MurderMO mo, string tag)
+        {
+            var log = MotivesPlugin.Log;
+            try
+            {
+                log.LogInfo($"[SODMotives][force:{tag}] preset '{(p != null ? p.name : "<null>")}': caseType={p?.caseType}, pickDen={p?.pickDen}, blockVictimFromLeavingLocation={p?.blockVictimFromLeavingLocation}, killerMeetsVicim={p?.killerMeetsVicim}, requiresResearchPhase={p?.requiresResearchPhase}, requiresAcquirePhase={p?.requiresAcquirePhase}, nonHomeMaxOccupants trigger/cancel={p?.nonHomeMaximumOccupantsTrigger}/{p?.nonHomeMaximumOccupantsCancel}");
+                log.LogInfo($"[SODMotives][force:{tag}] MO '{(mo != null ? mo.name : "<null>")}': allow home/work/public/streets/den/anywhere = {mo?.allowHome}/{mo?.allowWork}/{mo?.allowPublic}/{mo?.allowStreets}/{mo?.allowDen}/{mo?.allowAnywhere}, requiresSniperVantageAtHome={mo?.requiresSniperVantageAtHome}");
+            }
+            catch (Exception e) { log.LogWarning($"[SODMotives][force:{tag}] asset-detail dump error: {e.Message}"); }
+        }
+
         internal static void ForceCase(MurderPreset.CaseType caseType, string tag)
         {
             var log = MotivesPlugin.Log;
@@ -237,6 +260,9 @@ namespace SODMotives
                     }
                 if (useMo == null || usePreset == null)
                 { log.LogInfo($"[SODMotives][force:{tag}] no {caseType} preset/MO found among loaded assets."); return; }
+
+                // Log the case-defining asset fields (den? occupancy caps? phases?) — the playtest signal.
+                LogCaseAssetDetails(usePreset, useMo, tag);
 
                 // A motivated (killer -> victim) pair from the mod's own selector (also marks the victim as
                 // ours, so F9 shows the motive). No motivated pair -> abort with a clear note.
@@ -666,6 +692,7 @@ namespace SODMotives
                     if (Input.GetKeyDown(DebugTools.KeyCycleForce)) DebugTools.CycleForceMotive();
                     if (Input.GetKeyDown(DebugTools.KeyTriggerMurder)) DebugTools.TriggerMurder();
                     if (Input.GetKeyDown(DebugTools.KeyForceSniper)) DebugTools.ForceSniperCase();
+                    if (Input.GetKeyDown(DebugTools.KeyForceKidnap)) DebugTools.ForceKidnapCase();
                     if (Input.GetKeyDown(DebugTools.KeyTeleportScene)) DebugTools.TeleportToScene();
                     if (Input.GetKeyDown(DebugTools.KeyTeleportWork)) DebugTools.TeleportToWork();
                     if (Input.GetKeyDown(DebugTools.KeyTeleportKnower)) DebugTools.TeleportToNearestKnower();

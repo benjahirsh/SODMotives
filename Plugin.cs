@@ -146,6 +146,9 @@ namespace SODMotives
             BindApply("Troubleshooting", "FastMurderCadence", false,
                 "TESTING: force the pause between murders to 0 so cases chain back-to-back with no gap. NOTE: this only compresses the wait BETWEEN murders — it does not speed the current murder's planning/enactment, and it does NOT force a sniper/kidnap case (those are picked by the game and can't be forced without a dev trigger). Leave false for normal play; restores the original cadence when turned off.",
                 v => DebugTools.FastMurderCadence = v);
+            BindApply("Troubleshooting", "MotivateKidnaps", false,
+                "EXPERIMENTAL: also motivate KIDNAP cases (swap in a motivated killer -> victim pair) instead of leaving them fully vanilla. Default OFF — motivated kidnaps are unproven and may stall the case at waitForLocation while the game hunts a viable holding 'den' for the motive-chosen kidnapper. Sniper cases always stay vanilla. Use with the F1 force-kidnap key + F9 overlay to test.",
+                v => MurderSelector.MotivateKidnaps = v);
 
             // --- Debug (developer tooling) ---
             BindApply("Debug", "EnableDebugKeys", false,
@@ -165,6 +168,9 @@ namespace SODMotives
             BindApply("Debug Keys", "ForceSniperCase", UnityEngine.KeyCode.F2,
                 "TESTING: immediately create a motivated SNIPER case (killer + victim from the mod's selector, a loaded sniper preset/MO), bypassing the game's slow scheduler. Watch the F9 MURDER STATE to see whether it executes or stalls at waitForLocation. Set to None to disable.",
                 v => DebugTools.KeyForceSniper = v);
+            BindApply("Debug Keys", "ForceKidnapCase", UnityEngine.KeyCode.F1,
+                "TESTING: immediately create a motivated KIDNAP case (killer + victim from the mod's selector, a loaded kidnap preset/MO), bypassing the game's slow scheduler. Works regardless of MotivateKidnaps. Watch the F9 MURDER STATE + LogOutput.log [trace] lines: 'executing'/'post' = works; stuck at 'waitForLocation' = the kidnapper has no viable holding den. Set to None to disable.",
+                v => DebugTools.KeyForceKidnap = v);
             BindApply("Debug Keys", "CaseSolutionOverlay", UnityEngine.KeyCode.F9,
                 "Toggle the on-screen case-solution overlay (killer / victim / suspect pool / injected clues).",
                 v => DebugTools.KeyCaseSolution = v);
@@ -556,8 +562,16 @@ namespace SODMotives
                 }
                 if (preset != null && preset.caseType != MurderPreset.CaseType.murder)
                 {
-                    MotivesPlugin.Log.LogInfo($"[SODMotives] override: special case type '{preset.caseType}' (kidnap/sniper) — leaving vanilla, untouched.");
-                    return;
+                    // Kidnap is opt-in via [Troubleshooting] MotivateKidnaps (EXPERIMENTAL — may stall at
+                    // waitForLocation while the game hunts a viable holding "den" for the motive-chosen
+                    // kidnapper). Sniper always stays vanilla (its motivated form stalls in a travellingTo loop).
+                    bool allowKidnap = MurderSelector.MotivateKidnaps && preset.caseType == MurderPreset.CaseType.kidnap;
+                    if (!allowKidnap)
+                    {
+                        MotivesPlugin.Log.LogInfo($"[SODMotives] override: special case type '{preset.caseType}' (kidnap/sniper) — leaving vanilla, untouched.");
+                        return;
+                    }
+                    MotivesPlugin.Log.LogInfo("[SODMotives] override: MotivateKidnaps ON — motivating a KIDNAP case (EXPERIMENTAL; watch the F9 MURDER STATE for a waitForLocation stall).");
                 }
                 if (MurderSelector.ShouldForceVanilla())
                 {

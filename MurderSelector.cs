@@ -13,6 +13,12 @@ namespace SODMotives
     {
         // Tunables (bound to BepInEx config in Plugin.Load).
         internal static bool EnableOverride = true;
+        // EXPERIMENTAL ([Troubleshooting] MotivateKidnaps): when true, the override ALSO motivates KIDNAP
+        // cases (swaps in a motivated killer -> victim pair) instead of leaving them fully vanilla. Default
+        // OFF — motivated kidnaps are UNPROVEN and may stall the case at waitForLocation while the game looks
+        // for a viable holding "den" for the motive-chosen kidnapper. Sniper cases always stay vanilla. See
+        // docs/extensions/motivated-kidnap-handover.md. Flip on only for testing (F1 force-kidnap + F9 trace).
+        internal static bool MotivateKidnaps = false;
         internal static int MinSuspects = 3;            // PREFER victims with at least this many real suspects
         internal static int KillerPoolSize = 10;        // killer = uniform-random among the victim's top-N suspects
         // THE MAIN MIX KNOB: probability [0..1] a case is a relationship-MOTIVE case; the rest are left

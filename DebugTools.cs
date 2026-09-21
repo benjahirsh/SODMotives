@@ -82,12 +82,14 @@ namespace SODMotives
         internal static KeyCode KeyForceSniper    = KeyCode.F3;   // CREATE a motivated sniper case immediately (bypasses the scheduler)
         internal static KeyCode KeyForceKidnap    = KeyCode.F2;   // CREATE a motivated kidnap case immediately (bypasses the scheduler); F1 is reserved by the game
         internal static KeyCode KeyTeleportCityHall = KeyCode.Home;   // teleport to City Hall (fixed landmark)
-        internal static KeyCode KeyTimeBoost      = KeyCode.End;   // toggle fast-forward (Time.timeScale multiplier) for testing
+        internal static KeyCode KeyTimeBoost      = KeyCode.End;   // toggle fast-forward for testing
         private static bool _timeBoost = false;
-        // Multiplier applied to Unity's Time.timeScale while fast-forward is ON. The game's own 'simulation'
-        // speed turned out to be no faster than normal pass-time, so we scale the whole engine clock instead.
-        // Configurable ([Troubleshooting] TimeBoostMultiplier); higher = faster but rougher physics/AI.
-        internal static float TimeBoostMultiplier = 5f;
+        private static float _simBase = 0f;   // currentTimeMultiplier captured at the game's 'simulation' speed
+        // EXTRA multiple applied ON TOP of the game's fastest built-in speed ('simulation'), by pushing the
+        // game's OWN currentTimeMultiplier (NOT Time.timeScale — that brute-forces full-detail updates and
+        // tanks the frame rate, running SLOWER). 1 = just use simulation speed. Configurable
+        // ([Troubleshooting] TimeBoostMultiplier). The game may clamp/ignore values it can't keep up with.
+        internal static float TimeBoostMultiplier = 2f;
 
         // Each SocialEventType maps to exactly one MotiveType — used to keep ForceMotiveType in sync with F6.
         internal static MotiveType MotiveOf(SocialEventType t)
@@ -393,41 +395,48 @@ namespace SODMotives
             catch (Exception e) { log.LogWarning($"[SODMotives][cityhall] teleport error: {e}"); }
         }
 
-        // Toggle fast-forward for testing. The game's own 'simulation' speed is no faster than normal
-        // pass-time, so ON multiplies Unity's Time.timeScale (the whole engine clock, incl. the sim clock)
-        // by TimeBoostMultiplier — everything runs that many times faster. OFF restores 1x. ApplyTimeBoost()
-        // re-asserts the multiplier every frame while ON but never overrides a pause (Time.timeScale == 0),
-        // so the game's pause still works.
+        // Toggle fast-forward for testing. ON sets the game's fastest built-in speed ('simulation') and, if
+        // TimeBoostMultiplier > 1, pushes the game's OWN currentTimeMultiplier to that multiple of simulation's
+        // base each frame (ApplyTimeBoost). This uses the game's efficient fast-sim path rather than
+        // Time.timeScale (which overloaded physics and ran slower). OFF restores normal speed.
         internal static void ToggleTimeBoost()
         {
             var log = MotivesPlugin.Log;
             try
             {
+                var sd = SessionData.Instance;
+                if (sd == null) { log.LogInfo("[SODMotives][time] No SessionData."); return; }
                 _timeBoost = !_timeBoost;
+                try { Time.timeScale = 1f; } catch { }   // undo any prior Time.timeScale experiment
                 if (_timeBoost)
                 {
-                    if (Time.timeScale > 0.01f) Time.timeScale = TimeBoostMultiplier;
-                    log.LogInfo($"[SODMotives][time] Fast-forward ON — Time.timeScale x{TimeBoostMultiplier:0.#}. Press again for normal; the game's pause still works. Tune with [Troubleshooting] TimeBoostMultiplier.");
+                    try { sd.SetTimeSpeed(SessionData.TimeSpeed.simulation); } catch { }
+                    _simBase = 0f; try { _simBase = sd.currentTimeMultiplier; } catch { }
+                    log.LogInfo($"[SODMotives][time] Fast-forward ON — game 'simulation' speed (base multiplier x{_simBase:0.##}); pushing to x{(_simBase * TimeBoostMultiplier):0.##} (TimeBoostMultiplier {TimeBoostMultiplier:0.#}). Press again for normal. (Time.timeScale intentionally NOT used — it ran slower.)");
                 }
                 else
                 {
-                    Time.timeScale = 1f;
-                    log.LogInfo("[SODMotives][time] Fast-forward OFF — Time.timeScale restored to 1x.");
+                    _simBase = 0f;
+                    try { sd.SetTimeSpeed(SessionData.TimeSpeed.normal); } catch { }
+                    log.LogInfo("[SODMotives][time] Fast-forward OFF — normal speed.");
                 }
             }
             catch (Exception e) { log.LogWarning($"[SODMotives][time] error: {e}"); }
         }
 
-        // Re-assert the fast-forward multiplier each frame while ON, but leave a pause alone: if the game
-        // paused (timeScale ~0) we don't fight it; when it resumes (game sets timeScale back to ~1) we bump
-        // it back to the multiplier. No-op when off. Called every frame from Update.
+        // While ON, keep pushing the game's own currentTimeMultiplier up to (simulation base x multiplier),
+        // re-asserting it each frame in case the game recomputes it. Never touches a pause (multiplier ~0).
+        // No-op when off, when the multiplier is 1, or if we couldn't capture a base. Called every frame.
         internal static void ApplyTimeBoost()
         {
             try
             {
-                if (!_timeBoost) return;
-                float ts = Time.timeScale;
-                if (ts > 0.01f && Math.Abs(ts - TimeBoostMultiplier) > 0.01f) Time.timeScale = TimeBoostMultiplier;
+                if (!_timeBoost || TimeBoostMultiplier <= 1.01f || _simBase <= 0.01f) return;
+                var sd = SessionData.Instance;
+                if (sd == null) return;
+                float target = _simBase * TimeBoostMultiplier;
+                float cur = 0f; try { cur = sd.currentTimeMultiplier; } catch { return; }
+                if (cur > 0.01f && cur < target - 0.01f) { try { sd.currentTimeMultiplier = target; } catch { } }
             }
             catch { }
         }

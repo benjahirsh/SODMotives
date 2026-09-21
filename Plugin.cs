@@ -143,6 +143,9 @@ namespace SODMotives
             BindApply("Troubleshooting", "ForceAllPrints", false,
                 "TESTING: force the author's fingerprint onto EVERY motive clue (overrides the per-type print policy, including the normally print-free rent/debt notes). Use to check whether a print on a clue at the scene aids the game's suspect scoring.",
                 v => ClueInjector.ForceAllPrints = v);
+            BindApply("Troubleshooting", "FastMurderCadence", false,
+                "TESTING: force the pause between murders to 0 so cases chain back-to-back with no gap. NOTE: this only compresses the wait BETWEEN murders — it does not speed the current murder's planning/enactment, and it does NOT force a sniper/kidnap case (those are picked by the game and can't be forced without a dev trigger). Leave false for normal play; restores the original cadence when turned off.",
+                v => DebugTools.FastMurderCadence = v);
 
             // --- Debug (developer tooling) ---
             BindApply("Debug", "EnableDebugKeys", false,
@@ -159,6 +162,9 @@ namespace SODMotives
             BindApply("Debug Keys", "TeleportToKillerKnower", UnityEngine.KeyCode.F3,
                 "Teleport to the nearest NPC who can name the KILLER and knows a motive event about them, so you can test interrogating knowers about the killer (the F9 'KILLER KNOWERS' list).",
                 v => DebugTools.KeyTeleportKillerKnower = v);
+            BindApply("Debug Keys", "ForceSniperCase", UnityEngine.KeyCode.F2,
+                "TESTING: immediately create a motivated SNIPER case (killer + victim from the mod's selector, a loaded sniper preset/MO), bypassing the game's slow scheduler. Watch the F9 MURDER STATE to see whether it executes or stalls at waitForLocation. Set to None to disable.",
+                v => DebugTools.KeyForceSniper = v);
             BindApply("Debug Keys", "CaseSolutionOverlay", UnityEngine.KeyCode.F9,
                 "Toggle the on-screen case-solution overlay (killer / victim / suspect pool / injected clues).",
                 v => DebugTools.KeyCaseSolution = v);

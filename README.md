@@ -12,6 +12,7 @@ Two things worth knowing before you start:
 
 - **Asking "Do you know this person?" now tells you more.** On top of the usual reply, an NPC will also share what they know about that person's involvement in events around town. This is your main tool for building a suspect list, and it is easy to miss, so lean on it.
 - **By default every murder will be a motive case.** You can configure this (`` ` `` key) to mix motive murders in with the classic vanilla cases.
+- **Sniper and kidnapping cases stay vanilla.** The mod adds motives to the game's ordinary murders. If you enable sniper or kidnapper killers in your sandbox settings, those specific cases still play out as the classic roaming-specialist crimes — the motive layer doesn't apply to them (yet).
 
 ## Requirements
 
@@ -25,6 +26,8 @@ This mod has not been tested alongside other mods yet. It should coexist with mo
 ## Installation
 
 Easiest is a mod manager (r2modman or the Thunderstore Mod Manager): install the mod and launch through the manager. Manual install works too: put the plugin in `BepInEx/plugins`.
+
+**You can add the mod to a game already in progress** — it doesn't need a fresh save. Any murder currently underway finishes as a normal vanilla case, and every new murder from then on gets the motive treatment. (Only the sandbox murder-type settings themselves, like enabling snipers, are fixed when a city is created.)
 
 That is everything you need to play. If you want to discover the rest yourself, stop reading here.
 

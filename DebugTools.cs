@@ -57,6 +57,17 @@ namespace SODMotives
         // independent of EnableDebugKeys.
         internal static bool ShowSuspectPoolAndKnowers = false;
 
+        // TESTING accelerator ([Troubleshooting] FastMurderCadence): while ON, forces
+        // MurderController.pauseBetweenMurders to 0 so the game does NOT wait between murders — subsequent
+        // cases schedule back-to-back. (Verified in-game the field's natural value is 0, so 0 is the safe
+        // "fastest" setting; a positive value would only ADD a gap and, if the field is a countdown, could
+        // stall the loop.) NOTE this compresses the pause BETWEEN murders — it does NOT speed the current
+        // murder's planning/enactment (murderer research -> weapon -> opportunity), nor force a sniper case.
+        // Self-heals every frame; restores the original when turned OFF. Independent of EnableDebugKeys.
+        internal static bool FastMurderCadence = false;
+        private static bool _pauseCaptured;
+        private static float _origPause;
+
         // Configurable debug hotkeys — bound to the [Debug Keys] config section in Plugin.Load and
         // re-applied live from the in-game overlay (which renders KeyCode as a key-binder). Defaults are
         // the original F-keys (F5 left free for the game's quicksave + the config-menu toggle).
@@ -69,6 +80,7 @@ namespace SODMotives
         internal static KeyCode KeyTeleportKnower = KeyCode.F12;
         internal static KeyCode KeyTriggerMurder  = KeyCode.F4;   // force the game's next murder NOW (fast test loop)
         internal static KeyCode KeyTeleportKillerKnower = KeyCode.F3;   // jump to the nearest knower of the KILLER
+        internal static KeyCode KeyForceSniper    = KeyCode.F2;   // CREATE a motivated sniper case immediately (bypasses the scheduler)
 
         // Each SocialEventType maps to exactly one MotiveType — used to keep ForceMotiveType in sync with F6.
         internal static MotiveType MotiveOf(SocialEventType t)
@@ -104,7 +116,7 @@ namespace SODMotives
                 go.hideFlags = HideFlags.HideAndDontSave;
                 go.AddComponent<DebugHotkey>();
                 if (EnableDebugKeys)
-                    MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys ON (defaults; rebindable in the config menu -> SOD Motives / Debug Keys): F3=teleport to nearest KILLER-knower, F4=trigger next murder NOW, F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=ghost, F8=always-answer, F9=case solution overlay, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower (victim). (F5 unbound.)");
+                    MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys ON (defaults; rebindable in the config menu -> SOD Motives / Debug Keys): F2=FORCE a motivated SNIPER case now, F3=teleport to nearest KILLER-knower, F4=trigger next murder NOW, F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=ghost, F8=always-answer, F9=case solution overlay, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower (victim). (F5 unbound.)");
                 else
                     MotivesPlugin.Log.LogInfo($"[SODMotives] Debug tooling OFF. {KeyCaseSolution} = case-solution overlay is always available (set it to None in [Debug Keys] to disable); enable [Debug] EnableDebugKeys in the config overlay for the full test loop (force event, teleports, ghost, etc.).");
             }
@@ -189,6 +201,85 @@ namespace SODMotives
                 mc.TriggerNextMurder();
             }
             catch (Exception e) { log.LogWarning($"[SODMotives][F4] trigger error: {e.Message}"); }
+        }
+
+        // F2 (testing): CREATE a motivated sniper case RIGHT NOW, bypassing the game's slow scheduler.
+        // Confirmed via Cpp2IL that ExecuteNewMurder(murderer, victim, preset, mo, site) is the universal
+        // murder-creation entry point (it just builds the Murder + enables its update loop; the scheduler's
+        // Tick calls the exact same thing). So we grab a loaded sniper preset+MO, pick a motivated pair with
+        // the mod's own selector, and call ExecuteNewMurder directly. The override skips sniper, so our pair
+        // passes through untouched — this tests whether a MOTIVATED sniper actually executes or stalls at
+        // waitForLocation (the vantage/target-site question). Generalised to any case type for kidnap later.
+        internal static void ForceSniperCase() => ForceCase(MurderPreset.CaseType.sniper, "F2");
+
+        internal static void ForceCase(MurderPreset.CaseType caseType, string tag)
+        {
+            var log = MotivesPlugin.Log;
+            try
+            {
+                var mc = MurderController.Instance;
+                if (mc == null) { log.LogInfo($"[SODMotives][force:{tag}] no MurderController."); return; }
+
+                // A loaded MO + one of its compatible presets of the requested case type. Assets stay loaded
+                // even when the sandbox toggle for that type is OFF, so this works regardless of settings.
+                MurderMO useMo = null; MurderPreset usePreset = null;
+                var mos = Resources.FindObjectsOfTypeAll<MurderMO>();
+                if (mos != null)
+                    for (int i = 0; i < mos.Length && usePreset == null; i++)
+                    {
+                        var mo = mos[i]; if (mo == null) continue;
+                        var compat = mo.compatibleWith; if (compat == null) continue;
+                        for (int j = 0; j < compat.Count; j++)
+                        {
+                            var p = compat[j];
+                            if (p != null && p.caseType == caseType) { useMo = mo; usePreset = p; break; }
+                        }
+                    }
+                if (useMo == null || usePreset == null)
+                { log.LogInfo($"[SODMotives][force:{tag}] no {caseType} preset/MO found among loaded assets."); return; }
+
+                // A motivated (killer -> victim) pair from the mod's own selector (also marks the victim as
+                // ours, so F9 shows the motive). No motivated pair -> abort with a clear note.
+                if (!MurderSelector.TryPickVictimCentric(out Human killer, out Human victim, out var pool)
+                    || killer == null || victim == null)
+                { log.LogInfo($"[SODMotives][force:{tag}] selector found no motivated (killer->victim) pair."); return; }
+
+                mc.currentMurderer = killer; mc.currentVictim = victim;
+                log.LogInfo($"[SODMotives][force:{tag}] forcing {caseType.ToString().ToUpper()}: {MotivesPlugin.Name(killer)} -> {MotivesPlugin.Name(victim)} (preset={usePreset.name}, mo={useMo.name}). Watch F9 MURDER STATE: reaches 'executing'/'post' = WORKS; stuck at 'waitForLocation' = site/vantage problem.");
+                var murder = mc.ExecuteNewMurder(killer, victim, usePreset, useMo, null);
+                log.LogInfo($"[SODMotives][force:{tag}] ExecuteNewMurder -> {(murder != null ? "Murder created" : "null")}.");
+            }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][force:{tag}] error: {e.Message}"); }
+        }
+
+        // Testing accelerator: while FastMurderCadence is on, hold MurderController.pauseBetweenMurders at 0
+        // so the game never waits between murders (subsequent cases chain immediately). Called every frame;
+        // captures the original on first apply and restores it when toggled off. No-op when off.
+        internal static void ApplyFastCadence()
+        {
+            try
+            {
+                var mc = MurderController.Instance;
+                if (mc == null) return;
+                if (FastMurderCadence)
+                {
+                    float cur = 0f; try { cur = mc.pauseBetweenMurders; } catch { }
+                    if (!_pauseCaptured)
+                    {
+                        _origPause = cur; _pauseCaptured = true;
+                        MotivesPlugin.Log.LogInfo($"[SODMotives] FAST CADENCE ON — pauseBetweenMurders was {cur:0.##}, forcing 0 (no gap between murders). NOTE: this does not speed the CURRENT murder's planning, nor force a sniper. Turn off to restore.");
+                    }
+                    if (cur != 0f)
+                        try { mc.pauseBetweenMurders = 0f; } catch { }
+                }
+                else if (_pauseCaptured)
+                {
+                    try { mc.pauseBetweenMurders = _origPause; } catch { }
+                    MotivesPlugin.Log.LogInfo($"[SODMotives] FAST CADENCE OFF — pauseBetweenMurders restored to {_origPause:0.##}.");
+                    _pauseCaptured = false;
+                }
+            }
+            catch { }
         }
 
         // F6: cycle which SPECIFIC event type the NEXT murder is forced to (finer than the old motive-type
@@ -574,6 +665,7 @@ namespace SODMotives
                 {
                     if (Input.GetKeyDown(DebugTools.KeyCycleForce)) DebugTools.CycleForceMotive();
                     if (Input.GetKeyDown(DebugTools.KeyTriggerMurder)) DebugTools.TriggerMurder();
+                    if (Input.GetKeyDown(DebugTools.KeyForceSniper)) DebugTools.ForceSniperCase();
                     if (Input.GetKeyDown(DebugTools.KeyTeleportScene)) DebugTools.TeleportToScene();
                     if (Input.GetKeyDown(DebugTools.KeyTeleportWork)) DebugTools.TeleportToWork();
                     if (Input.GetKeyDown(DebugTools.KeyTeleportKnower)) DebugTools.TeleportToNearestKnower();
@@ -596,6 +688,10 @@ namespace SODMotives
                 // whiffing forever). Scoped to our overridden cases + co-located killer only; no-op
                 // otherwise. Always runs. See MurderWatchdog.
                 MurderWatchdog.Tick();
+
+                // Testing accelerator (config-gated, default off; independent of EnableDebugKeys) — hold the
+                // murder cadence low while on, restore on off. Self-gates on FastMurderCadence.
+                DebugTools.ApplyFastCadence();
             }
             catch { }
         }

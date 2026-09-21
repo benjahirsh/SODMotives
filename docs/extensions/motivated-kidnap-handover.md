@@ -12,12 +12,12 @@ Steps 1–3 of the plan below are DONE; the rest (playtest → constrain) is pen
   The den is the `Murder.location` (no separate field). `TryPickNewVictimSite` is SNIPER-only (uses
   `TryGetSniperVantagePoint`); `IsValidLocation` is the location gate; `Tick` is the scheduler. Full write-up:
   **`docs/extensions/kidnap-recon.md`**.
-- **Tooling built + deployed (NOT playtested):** F1 = `ForceKidnapCase` (reuses generalized `ForceCase`);
+- **Tooling built + deployed (NOT playtested):** F2 = `ForceKidnapCase` (F1 is reserved by the game) (reuses generalized `ForceCase`);
   `[Troubleshooting] MotivateKidnaps` (default OFF) relaxes the override caseType guard for kidnap;
   `ForceCase` now logs the live preset/MO's `pickDen`/`allowDen`/meet/phase fields. Existing `[trace]`
   state hook already covers forced-kidnap victims. Commit `787dd3a` (+ merge `fb709d6`).
-- **NEXT = USER PLAYTEST:** mature save, EnableDebugKeys, press F1, read `LogOutput.log`
-  (`[force:F1] preset/MO …` + `[trace] … state=>…`) + F9 — reaches `post` or stalls at `waitForLocation`?
+- **NEXT = USER PLAYTEST:** mature save, EnableDebugKeys, press F2, read `LogOutput.log`
+  (`[force:F2] preset/MO …` + `[trace] … state=>…`) + F9 — reaches `post` or stalls at `waitForLocation`?
   See the playtest protocol in `kidnap-recon.md`. Then constrain the pool to kidnap-viable pairs (killer
   controls a den) with a vanilla fallback (never hang), and only then flip `MotivateKidnaps` default-ON.
 

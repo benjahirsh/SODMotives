@@ -22,7 +22,7 @@ namespace SODMotives
         internal static bool Ghost = false;         // NPCs ignore the player (testing aid)
         internal static bool AlwaysAnswer = false;  // NPCs always accept "do you know this person?" (no bribe)
 
-        // F8 HUD readout: the last NPC who spoke to the player (so you can always identify who you're
+        // Always-answer HUD readout: the last NPC who spoke to the player (so you can always identify who you're
         // talking to — the game has no forceable "tell me your name" dialog). Set from Interrogation's
         // speech-bubble hook; ignores the player's own lines.
         internal static string TalkingToLabel = null;
@@ -73,15 +73,14 @@ namespace SODMotives
         // the original F-keys (F5 left free for the game's quicksave + the config-menu toggle).
         internal static KeyCode KeyCaseSolution   = KeyCode.F9;
         internal static KeyCode KeyCycleForce     = KeyCode.F6;
-        internal static KeyCode KeyGhost          = KeyCode.F7;
-        internal static KeyCode KeyAlwaysAnswer   = KeyCode.F8;
+        internal static KeyCode KeyTestAccess     = KeyCode.F7;   // MERGED test toggle: ghost + always-answer together (used as a pair)
         internal static KeyCode KeyTeleportScene  = KeyCode.F10;
         internal static KeyCode KeyTeleportWork   = KeyCode.F11;
         internal static KeyCode KeyTeleportKnower = KeyCode.F12;
         internal static KeyCode KeyTriggerMurder  = KeyCode.F4;   // force the game's next murder NOW (fast test loop)
-        internal static KeyCode KeyTeleportKillerKnower = KeyCode.F3;   // jump to the nearest knower of the KILLER
-        internal static KeyCode KeyForceSniper    = KeyCode.F2;   // CREATE a motivated sniper case immediately (bypasses the scheduler)
-        internal static KeyCode KeyForceKidnap    = KeyCode.F1;   // CREATE a motivated kidnap case immediately (bypasses the scheduler)
+        internal static KeyCode KeyTeleportKillerKnower = KeyCode.F8;   // jump to the nearest knower of the KILLER
+        internal static KeyCode KeyForceSniper    = KeyCode.F3;   // CREATE a motivated sniper case immediately (bypasses the scheduler)
+        internal static KeyCode KeyForceKidnap    = KeyCode.F2;   // CREATE a motivated kidnap case immediately (bypasses the scheduler); F1 is reserved by the game
 
         // Each SocialEventType maps to exactly one MotiveType — used to keep ForceMotiveType in sync with F6.
         internal static MotiveType MotiveOf(SocialEventType t)
@@ -117,7 +116,7 @@ namespace SODMotives
                 go.hideFlags = HideFlags.HideAndDontSave;
                 go.AddComponent<DebugHotkey>();
                 if (EnableDebugKeys)
-                    MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys ON (defaults; rebindable in the config menu -> SOD Motives / Debug Keys): F1=FORCE a motivated KIDNAP case now, F2=FORCE a motivated SNIPER case now, F3=teleport to nearest KILLER-knower, F4=trigger next murder NOW, F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=ghost, F8=always-answer, F9=case solution overlay, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower (victim). (F5 unbound.)");
+                    MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys ON (defaults; rebindable in the config menu -> SOD Motives / Debug Keys): F2=FORCE a motivated KIDNAP case now, F3=FORCE a motivated SNIPER case now, F4=trigger next murder NOW, F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=TEST ACCESS (ghost + always-answer together), F8=teleport to nearest KILLER-knower, F9=case solution overlay, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower (victim). (F1 reserved by the game, F5 unbound.)");
                 else
                     MotivesPlugin.Log.LogInfo($"[SODMotives] Debug tooling OFF. {KeyCaseSolution} = case-solution overlay is always available (set it to None in [Debug Keys] to disable); enable [Debug] EnableDebugKeys in the config overlay for the full test loop (force event, teleports, ghost, etc.).");
             }
@@ -204,22 +203,22 @@ namespace SODMotives
             catch (Exception e) { log.LogWarning($"[SODMotives][F4] trigger error: {e.Message}"); }
         }
 
-        // F2 (testing): CREATE a motivated sniper case RIGHT NOW, bypassing the game's slow scheduler.
+        // F3 (testing): CREATE a motivated sniper case RIGHT NOW, bypassing the game's slow scheduler.
         // Confirmed via Cpp2IL that ExecuteNewMurder(murderer, victim, preset, mo, site) is the universal
         // murder-creation entry point (it just builds the Murder + enables its update loop; the scheduler's
         // Tick calls the exact same thing). So we grab a loaded sniper preset+MO, pick a motivated pair with
         // the mod's own selector, and call ExecuteNewMurder directly. The override skips sniper, so our pair
         // passes through untouched — this tests whether a MOTIVATED sniper actually executes or stalls at
         // waitForLocation (the vantage/target-site question). Generalised to any case type for kidnap later.
-        internal static void ForceSniperCase() => ForceCase(MurderPreset.CaseType.sniper, "F2");
+        internal static void ForceSniperCase() => ForceCase(MurderPreset.CaseType.sniper, "F3");
 
-        // F1 (testing): CREATE a motivated KIDNAP case RIGHT NOW, same mechanism as the sniper force key.
+        // F2 (testing): CREATE a motivated KIDNAP case RIGHT NOW, same mechanism as the sniper force key.
         // The override honours kidnap only when [Troubleshooting] MotivateKidnaps is ON; the force key works
         // regardless (it calls ExecuteNewMurder directly with a motivated pair), so it's the way to probe the
         // waitForLocation/den hang. Watch the F9 MURDER STATE + LogOutput.log [trace] lines: reaching
         // 'executing'/'post' = the motive-chosen pair supports a kidnap; stuck at 'waitForLocation' = the game
         // can't seat a holding "den" for this kidnapper (then we constrain the victim pool + fall back).
-        internal static void ForceKidnapCase() => ForceCase(MurderPreset.CaseType.kidnap, "F1");
+        internal static void ForceKidnapCase() => ForceCase(MurderPreset.CaseType.kidnap, "F2");
 
         // Dump the case-defining fields of a preset/MO so a playtest reveals what a kidnap actually requires
         // (den? where can it happen? occupancy caps? research/acquire phases?). These are ScriptableObject
@@ -439,7 +438,7 @@ namespace SODMotives
                     catch { }
 
                     // Interview lists — NPCs who can name the victim/killer AND know a motive event about
-                    // them (F12 / F3 jump to the closest when debug keys are on). Nearest the scene first.
+                    // them (F12 / F8 jump to the closest when debug keys are on). Nearest the scene first.
                     // Extra detail, shown only when ShowSuspectPoolAndKnowers is on.
                     if (ShowSuspectPoolAndKnowers)
                     {
@@ -508,7 +507,7 @@ namespace SODMotives
         // KILLER-side interview list — the mirror of AddVictimKnowers: every NPC who KNOWS THE KILLER'S
         // NAME (can identify the face-only body profile) AND knows a motive event involving the killer, so
         // (shown the killer's photo) they'll name them AND volunteer gossip. Lets you test killer-side
-        // gossip, not just victim-side. Nearest the scene first (F3 = jump to closest).
+        // gossip, not just victim-side. Nearest the scene first (F8 = jump to closest).
         private static void AddKillerKnowers(Human killer, Vector3 scenePos)
         {
             if (killer == null) return;
@@ -548,13 +547,13 @@ namespace SODMotives
                     rows.Add((dist, $"{MotivesPlugin.Name(h)} — {addr} (bldg {bld}/floor {floor}) — {dtxt} — [{FmtTypes(m)}]"));
                 }
             rows.Sort((x, y) => x.d.CompareTo(y.d));
-            Overlay.Add("KILLER KNOWERS — know the killer + a motive event (F3 = jump to closest):");
+            Overlay.Add("KILLER KNOWERS — know the killer + a motive event (F8 = jump to closest):");
             if (rows.Count == 0) Overlay.Add("  (nobody both knows the killer's name AND a motive event about them)");
             for (int i = 0; i < rows.Count && i < 8; i++) Overlay.Add("  " + rows[i].line);
         }
 
         // Nearest NPC (to scenePos) who can name `subject` AND knows a non-participant motive event about
-        // them — shared by the killer-knower teleport (F3). Returns null if none.
+        // them — shared by the killer-knower teleport (F8). Returns null if none.
         private static Human NearestKnowerHumanOf(Human subject, Vector3 scenePos)
         {
             if (subject == null) return null;
@@ -635,16 +634,16 @@ namespace SODMotives
             try
             {
                 if (!TryGetCase(out Human killer, out Human victim, out _) || killer == null)
-                { log.LogInfo("[SODMotives][F3] No killer."); return; }
+                { log.LogInfo("[SODMotives][F8] No killer."); return; }
                 Human k = NearestKnowerHumanOf(killer, ScenePos(victim));
-                if (k == null || k.home == null) { log.LogInfo("[SODMotives][F3] No killer-knower with a home found (killer may be too peripheral to be named)."); return; }
+                if (k == null || k.home == null) { log.LogInfo("[SODMotives][F8] No killer-knower with a home found (killer may be too peripheral to be named)."); return; }
                 var player = Player.Instance;
                 NewNode node = player.FindSafeTeleport(k.home, false, true);
-                if (node == null) { log.LogInfo("[SODMotives][F3] No safe spot at the knower's home."); return; }
+                if (node == null) { log.LogInfo("[SODMotives][F8] No safe spot at the knower's home."); return; }
                 player.Teleport(node, null, true, false, true);
-                log.LogInfo($"[SODMotives][F3] Teleported to nearest killer-knower {MotivesPlugin.Name(k)} @ {k.home.name}.");
+                log.LogInfo($"[SODMotives][F8] Teleported to nearest killer-knower {MotivesPlugin.Name(k)} @ {k.home.name}.");
             }
-            catch (Exception e) { log.LogWarning($"[SODMotives][F3] nearest killer-knower teleport error: {e}"); }
+            catch (Exception e) { log.LogWarning($"[SODMotives][F8] nearest killer-knower teleport error: {e}"); }
         }
 
         internal static void TeleportToScene()
@@ -697,16 +696,15 @@ namespace SODMotives
                     if (Input.GetKeyDown(DebugTools.KeyTeleportWork)) DebugTools.TeleportToWork();
                     if (Input.GetKeyDown(DebugTools.KeyTeleportKnower)) DebugTools.TeleportToNearestKnower();
                     if (Input.GetKeyDown(DebugTools.KeyTeleportKillerKnower)) DebugTools.TeleportToNearestKillerKnower();
-                    if (Input.GetKeyDown(DebugTools.KeyAlwaysAnswer))
+                    // MERGED test toggle (one key flips ghost + always-answer together — they're always used
+                    // as a pair): walk freely (NPCs ignore you) AND interrogate anyone without a bribe.
+                    if (Input.GetKeyDown(DebugTools.KeyTestAccess))
                     {
-                        DebugTools.AlwaysAnswer = !DebugTools.AlwaysAnswer;
-                        MotivesPlugin.Log.LogInfo($"[SODMotives] ALWAYS-ANSWER (no bribe) {(DebugTools.AlwaysAnswer ? "ON" : "OFF")} — while ON, the top-right HUD shows who you're talking to.");
-                    }
-                    if (Input.GetKeyDown(DebugTools.KeyGhost))
-                    {
-                        DebugTools.Ghost = !DebugTools.Ghost;
-                        if (!DebugTools.Ghost) DebugTools.ClearGhost();
-                        MotivesPlugin.Log.LogInfo($"[SODMotives] GHOST MODE {(DebugTools.Ghost ? "ON" : "OFF")}");
+                        bool on = !DebugTools.Ghost;   // both track together; use Ghost as the shared state
+                        DebugTools.Ghost = on;
+                        DebugTools.AlwaysAnswer = on;
+                        if (!on) DebugTools.ClearGhost();
+                        MotivesPlugin.Log.LogInfo($"[SODMotives] TEST ACCESS {(on ? "ON" : "OFF")} — ghost (NPCs ignore you) + always-answer (no bribe) toggled together.");
                     }
                     if (DebugTools.Ghost) DebugTools.ApplyGhost();
                 }
@@ -737,8 +735,8 @@ namespace SODMotives
 
                 if (DebugTools.EnableDebugKeys)
                 {
-                    // Dev-tooling indicators (F6 force / F8 always-answer / F7 ghost) — only while dev tooling
-                    // is enabled. Each is shown only when its state is active, so a clean screen means "off".
+                    // Dev-tooling indicators (F6 force / F7 test access = ghost + always-answer) — only while
+                    // dev tooling is enabled. Each is shown only when its state is active, so a clean screen means "off".
                     bool fm = DebugTools.ForceEventType.HasValue || DebugTools.ForceMotiveType != MotiveType.None;
                     if (fm)
                     {
@@ -750,7 +748,7 @@ namespace SODMotives
                     if (DebugTools.AlwaysAnswer)
                     {
                         _hudStyle.normal.textColor = Color.cyan;
-                        GUI.Label(new Rect(x, y, w, 20), "ALWAYS-ANSWER ON (F8) - NPCs never refuse 'do you know this person?'", _hudStyle);
+                        GUI.Label(new Rect(x, y, w, 20), "ALWAYS-ANSWER ON (F7) - NPCs never refuse 'do you know this person?'", _hudStyle);
                         y += 20f;
                         if (!string.IsNullOrEmpty(DebugTools.TalkingToLabel))
                         {

@@ -53,12 +53,12 @@ ISIL has the raw logic but numeric field offsets (painful — not fully decoded)
 
 ## Tooling added this session (branch `kidnap-wip`, built clean, deployed, NOT playtested)
 
-1. **F1 = force-kidnap key** — `DebugTools.ForceKidnapCase()` → the generalized
-   `ForceCase(CaseType.kidnap, "F1")` (same path as the sniper F2): grabs a loaded kidnap preset+MO via
+1. **F2 = force-kidnap key** — `DebugTools.ForceKidnapCase()` → the generalized
+   `ForceCase(CaseType.kidnap, "F2")` (same path as the sniper force key, now F3): grabs a loaded kidnap preset+MO via
    `Resources.FindObjectsOfTypeAll<MurderMO>()`, picks a motivated pair with `TryPickVictimCentric`, sets
    `currentMurderer/Victim`, calls `ExecuteNewMurder(...)` directly (bypasses the slow scheduler). Works
    regardless of the sandbox kidnap toggle or `MotivateKidnaps` (assets stay loaded). Bound in
-   `[Debug Keys] ForceKidnapCase` (default F1, gated by `EnableDebugKeys`).
+   `[Debug Keys] ForceKidnapCase` (default F2 — F1 is reserved by the game — gated by `EnableDebugKeys`).
 2. **`[Troubleshooting] MotivateKidnaps` toggle** (default OFF) — relaxes the override's caseType guard
    (`Plugin.cs` `Patch_ExecuteNewMurder_Override`) so NATURAL kidnaps also get a motivated pair. Sniper
    always stays vanilla. `MurderSelector.MotivateKidnaps`.
@@ -76,8 +76,8 @@ fires for forced-kidnap victims (they're in `OverriddenVictimIds` via `TryPickVi
 
 1. Load a mature save, config overlay (`` ` ``): `[Debug] EnableDebugKeys = true`.
 2. (Optional) `[Troubleshooting] MotivateKidnaps = true` to also test the natural path.
-3. Press **F1**. Read `LogOutput.log` (filter `[SODMotives]`):
-   - the `[force:F1] preset …` + `MO …` lines → the live kidnap preset's real requirements (esp.
+3. Press **F2** (F1 is reserved by the game). Read `LogOutput.log` (filter `[SODMotives]`):
+   - the `[force:F2] preset …` + `MO …` lines → the live kidnap preset's real requirements (esp.
      **`pickDen`** and **`allowDen`**).
    - the `[trace] … state=>…` lines → does it reach `executing`/`post`, or park at **`waitForLocation`**?
    - watch F9 MURDER STATE the same way.

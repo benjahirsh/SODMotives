@@ -162,14 +162,14 @@ namespace SODMotives
             BindApply("Debug Keys", "TriggerMurder", UnityEngine.KeyCode.F4,
                 "Force the game's next murder to run NOW (fast test loop). Combine with the forced event type to get a specific case quickly. Set to None to disable.",
                 v => DebugTools.KeyTriggerMurder = v);
-            BindApply("Debug Keys", "TeleportToKillerKnower", UnityEngine.KeyCode.F3,
+            BindApply("Debug Keys", "TeleportToKillerKnower", UnityEngine.KeyCode.F8,
                 "Teleport to the nearest NPC who can name the KILLER and knows a motive event about them, so you can test interrogating knowers about the killer (the F9 'KILLER KNOWERS' list).",
                 v => DebugTools.KeyTeleportKillerKnower = v);
-            BindApply("Debug Keys", "ForceSniperCase", UnityEngine.KeyCode.F2,
+            BindApply("Debug Keys", "ForceSniperCase", UnityEngine.KeyCode.F3,
                 "TESTING: immediately create a motivated SNIPER case (killer + victim from the mod's selector, a loaded sniper preset/MO), bypassing the game's slow scheduler. Watch the F9 MURDER STATE to see whether it executes or stalls at waitForLocation. Set to None to disable.",
                 v => DebugTools.KeyForceSniper = v);
-            BindApply("Debug Keys", "ForceKidnapCase", UnityEngine.KeyCode.F1,
-                "TESTING: immediately create a motivated KIDNAP case (killer + victim from the mod's selector, a loaded kidnap preset/MO), bypassing the game's slow scheduler. Works regardless of MotivateKidnaps. Watch the F9 MURDER STATE + LogOutput.log [trace] lines: 'executing'/'post' = works; stuck at 'waitForLocation' = the kidnapper has no viable holding den. Set to None to disable.",
+            BindApply("Debug Keys", "ForceKidnapCase", UnityEngine.KeyCode.F2,
+                "TESTING: immediately create a motivated KIDNAP case (killer + victim from the mod's selector, a loaded kidnap preset/MO), bypassing the game's slow scheduler. Works regardless of MotivateKidnaps. Watch the F9 MURDER STATE + LogOutput.log [trace] lines: 'executing'/'post' = works; stuck at 'waitForLocation' = the kidnapper has no viable holding den. F1 is reserved by the game. Set to None to disable.",
                 v => DebugTools.KeyForceKidnap = v);
             BindApply("Debug Keys", "CaseSolutionOverlay", UnityEngine.KeyCode.F9,
                 "Toggle the on-screen case-solution overlay (killer / victim / suspect pool / injected clues).",
@@ -177,12 +177,9 @@ namespace SODMotives
             BindApply("Debug Keys", "CycleForceEvent", UnityEngine.KeyCode.F6,
                 "Cycle the forced next-murder event type (off / affair / promotion / layoffs / eviction / rentarrears / feud / debt).",
                 v => DebugTools.KeyCycleForce = v);
-            BindApply("Debug Keys", "GhostMode", UnityEngine.KeyCode.F7,
-                "Toggle ghost mode (NPCs ignore you; invincible).",
-                v => DebugTools.KeyGhost = v);
-            BindApply("Debug Keys", "AlwaysAnswer", UnityEngine.KeyCode.F8,
-                "Toggle always-answer (NPCs never refuse 'do you know this person?').",
-                v => DebugTools.KeyAlwaysAnswer = v);
+            BindApply("Debug Keys", "TestAccess", UnityEngine.KeyCode.F7,
+                "Toggle TEST ACCESS: ghost mode (NPCs ignore you; invincible) AND always-answer (NPCs never refuse 'do you know this person?') together, since they're used as a pair. Set to None to disable.",
+                v => DebugTools.KeyTestAccess = v);
             BindApply("Debug Keys", "TeleportToScene", UnityEngine.KeyCode.F10,
                 "Teleport to the current crime scene.",
                 v => DebugTools.KeyTeleportScene = v);

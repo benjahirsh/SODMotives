@@ -110,22 +110,29 @@ namespace SODMotives
                     if (_probed.Add(vid)) ProbeValidLocations(murder, killer, victim);
 
                     // MEET ASSIST (kidnap): the pair meets at the restaurant, but the game only completes the
-                    // meet — which triggers the abduction (knock out -> restrain -> carry to den) — once meetTime
-                    // exceeds a threshold, i.e. when they linger/sit at the booth. Our forced pair meets then
-                    // disperses, so it never fires and the case hangs. While they ARE co-located, force meetTime
-                    // high so the game's own Update completes the meet next frame and advances the abduction.
-                    // Scoped to kidnaps (only they set meet goals); harmless on any other case.
-                    if (MeetGoalsSet(murder) && SameLocation(killer, victim))
+                    // meet — which triggers the abduction (knock out -> restrain -> carry to den; travellingTo
+                    // -> executing) — once meetTime exceeds a threshold, i.e. when they linger/sit at the booth.
+                    // Our forced pair meets then disperses, so it never accumulates and the case hangs. Forcing
+                    // meetTime ONCE didn't stick (the game recomputes it), so force it high EVERY frame while the
+                    // meet goals exist, so the game's own Update completes the meet the moment it evaluates the
+                    // block. Scoped to kidnaps (only they set meet goals); harmless on any other case.
+                    bool meetPending = MeetGoalsSet(murder);
+                    if (meetPending)
                     {
                         try { murder.meetTime = 99999f; } catch { }
                         if (_meetForced.Add(vid))
-                            MotivesPlugin.Log.LogInfo($"[SODMotives][kidnap] MEET-ASSIST: {MotivesPlugin.Name(killer)} + {MotivesPlugin.Name(victim)} co-located at {LocName(victim)} with meet goals set; forcing meetTime high so the game completes the meet -> abduction.");
+                            MotivesPlugin.Log.LogInfo($"[SODMotives][kidnap] MEET-ASSIST: forcing meetTime high every frame for {MotivesPlugin.Name(killer)} -> {MotivesPlugin.Name(victim)} so the game completes the meet -> abduction.");
                     }
 
                     if (_waitLocVictimId != vid) { _waitLocVictimId = vid; _waitLocSince = NowHours(); return; }
                     if (_waitRecovered.Contains(vid)) return;
                     float wstuck = NowHours() - _waitLocSince;
-                    if (wstuck < WaitLocationStallHours) return;
+                    // A kidnap with its meet set up is mid-abduction (the meet-assist is driving it), so give it
+                    // a much longer window before cancelling — otherwise the watchdog pre-empts the meet
+                    // completion -> travellingTo (seen in testing: the case reached travellingTo just AFTER a
+                    // premature cancel). A den-less / sniper stall (no meet) still cancels at the normal timeout.
+                    float cap = meetPending ? WaitLocationStallHours * 6f : WaitLocationStallHours;
+                    if (wstuck < cap) return;
                     LogKidnapState(murder, killer, victim, "stall");   // final state before we give up — did the meet ever set up?
                     try { murder.CancelCurrentMurder(); } catch (Exception ce) { MotivesPlugin.Log.LogWarning($"[SODMotives][watchdog] waitForLocation cancel error: {ce.Message}"); }
                     _waitRecovered.Add(vid);

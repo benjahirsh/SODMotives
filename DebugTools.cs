@@ -374,26 +374,37 @@ namespace SODMotives
             {
                 var cd = CityData.Instance; var player = Player.Instance;
                 if (cd == null || player == null) { log.LogInfo("[SODMotives][cityhall] No city/player."); return; }
-                NewGameLocation hall = null;
                 var dir = cd.gameLocationDirectory;
-                if (dir != null)
-                    for (int i = 0; i < dir.Count; i++)
-                    {
-                        var loc = dir[i]; if (loc == null) continue;
-                        string n = null; try { n = loc.name; } catch { }
-                        if (!string.IsNullOrEmpty(n) && n.IndexOf("City Hall", StringComparison.OrdinalIgnoreCase) >= 0) { hall = loc; break; }
-                    }
-                if (hall == null) { log.LogInfo("[SODMotives][cityhall] City Hall location not found in this city."); return; }
-                // FindSafeTeleport can fail for a large public building (returns null); fall back to the
-                // location's own anchor node, then to any of its rooms' nodes, so we always land somewhere.
-                NewNode node = null;
-                try { node = player.FindSafeTeleport(hall, false, true); } catch { }
-                if (node == null) { try { node = hall.anchorNode; } catch { } }
-                if (node == null) { log.LogInfo($"[SODMotives][cityhall] Found '{hall.name}' but no reachable node to teleport to."); return; }
-                player.Teleport(node, null, true, false, true);
-                log.LogInfo($"[SODMotives][cityhall] Teleported to {hall.name}.");
+                if (dir == null) { log.LogInfo("[SODMotives][cityhall] No location directory."); return; }
+                // A city has several "City Hall" locations (building, lobby, floors); some sub-locations (e.g.
+                // the lobby) have no anchorNode and FindSafeTeleport returns null. Try EVERY match and use the
+                // first that yields a reachable node (FindSafeTeleport -> anchorNode -> its own node list ->
+                // a room's centre node).
+                for (int i = 0; i < dir.Count; i++)
+                {
+                    var loc = dir[i]; if (loc == null) continue;
+                    string n = null; try { n = loc.name; } catch { }
+                    if (string.IsNullOrEmpty(n) || n.IndexOf("City Hall", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                    NewNode node = NodeForLocation(player, loc);
+                    if (node == null) continue;
+                    player.Teleport(node, null, true, false, true);
+                    log.LogInfo($"[SODMotives][cityhall] Teleported to {n}.");
+                    return;
+                }
+                log.LogInfo("[SODMotives][cityhall] Found City Hall but no location had a reachable node to teleport to.");
             }
             catch (Exception e) { log.LogWarning($"[SODMotives][cityhall] teleport error: {e}"); }
+        }
+
+        // Best-effort reachable node for a location: safe-teleport spot, else the anchor, else the location's
+        // own nodes, else a room's centre node. Returns null only if the location truly has no nodes.
+        private static NewNode NodeForLocation(Player player, NewGameLocation loc)
+        {
+            NewNode node = null;
+            try { node = player.FindSafeTeleport(loc, false, true); } catch { }
+            if (node == null) { try { node = loc.anchorNode; } catch { } }
+            if (node == null) { try { var ns = loc.nodes; if (ns != null && ns.Count > 0) node = ns[0]; } catch { } }
+            return node;
         }
 
         // Toggle fast-forward for testing. ON sets the game's fastest built-in speed ('simulation') and, if

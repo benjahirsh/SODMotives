@@ -53,9 +53,21 @@ namespace SODMotives
                 NewAddress existing = null; try { existing = killer.den; } catch { }
                 if (existing != null) { log.LogInfo($"[SODMotives][den] killer {MotivesPlugin.Name(killer)} already has a den ({SafeName(existing)}); leaving it."); return true; }
 
-                // Holding den = the killer's own residence for now (a valid private location they control).
-                NewAddress den = null; try { den = killer.home; } catch { }
-                if (den == null) { log.LogInfo($"[SODMotives][den] killer {MotivesPlugin.Name(killer)} has no home to use as a den — can't seat a kidnap; watchdog will fall back."); return false; }
+                NewAddress vh = null; try { vh = victim != null ? victim.home : null; } catch { }
+                NewAddress kh = null; try { kh = killer.home; } catch { }
+
+                // Prefer a VACANT residence (nobody lives there) as a proper secret holding den — so the victim
+                // is taken somewhere they don't live and the case is a real mystery. Never the victim's home
+                // (they'd be "kidnapped" into their own apartment) and, since it's vacant, never a cohabited home.
+                NewAddress den = PickVacantDen(killer, vh, kh);
+                string how = "vacant residence";
+                if (den == null)
+                {
+                    // Fallback: the killer's own home, but ONLY if the victim doesn't live there too — holding
+                    // the victim at their own address is trivially solvable (the earlier cohabiting affair bug).
+                    if (kh != null && (vh == null || !SamePlace(kh, vh))) { den = kh; how = "killer's home (no vacant residence found)"; }
+                }
+                if (den == null) { log.LogInfo($"[SODMotives][den] no vacant residence and killer.home is the victim's home — can't seat a clean kidnap for {MotivesPlugin.Name(killer)} -> {MotivesPlugin.Name(victim)}; watchdog will cancel + fall back to vanilla."); return false; }
 
                 try { killer.SetDen(den, mo); }
                 catch (Exception se)
@@ -64,11 +76,40 @@ namespace SODMotives
                     try { killer.den = den; } catch { }
                 }
                 NewAddress now = null; try { now = killer.den; } catch { }
-                log.LogInfo($"[SODMotives][den] assigned {MotivesPlugin.Name(killer)}.den = {SafeName(now)} (decorated with MO {(mo != null ? mo.name : "<none>")}). IsValidLocation will now accept it.");
+                log.LogInfo($"[SODMotives][den] assigned {MotivesPlugin.Name(killer)}.den = {SafeName(now)} [{how}] (decorated with MO {(mo != null ? mo.name : "<none>")}). IsValidLocation will now accept it.");
                 return now != null;
             }
             catch (Exception e) { log.LogWarning($"[SODMotives][den] EnsureKidnapDen error: {e.Message}"); return false; }
         }
+
+        // Pick a random VACANT residence (inhabitants.Count == 0) to serve as the kidnapper's secret den,
+        // excluding the victim's and killer's own homes. Returns null if the city has no vacant residence.
+        private static NewAddress PickVacantDen(Human killer, NewAddress victimHome, NewAddress killerHome)
+        {
+            try
+            {
+                var cd = CityData.Instance;
+                var dir = cd != null ? cd.residenceDirectory : null;
+                if (dir == null) return null;
+                var cands = new List<NewAddress>();
+                for (int i = 0; i < dir.Count; i++)
+                {
+                    var rc = dir[i]; if (rc == null) continue;
+                    NewAddress a = null; try { a = rc.address; } catch { }
+                    if (a == null) continue;
+                    if (victimHome != null && SamePlace(a, victimHome)) continue;
+                    if (killerHome != null && SamePlace(a, killerHome)) continue;
+                    int occ = 0; try { var inh = a.inhabitants; occ = inh != null ? inh.Count : 0; } catch { occ = -1; }
+                    if (occ == 0) cands.Add(a);
+                }
+                if (cands.Count == 0) return null;
+                return cands[_rng.Next(cands.Count)];
+            }
+            catch { return null; }
+        }
+
+        private static bool SamePlace(NewGameLocation a, NewGameLocation b)
+        { try { return a != null && b != null && a.Pointer == b.Pointer; } catch { return false; } }
 
         private static string SafeName(NewAddress a) { try { return a != null ? a.name : "<null>"; } catch { return "?"; } }
 

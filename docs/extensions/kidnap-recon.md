@@ -126,7 +126,34 @@ picked in `PickNewMurderer`), which our pair-swap bypasses. Same class of proble
 (a forced motivated sniper loops in `travellingTo`): the special-case setup machinery is coupled to vanilla's
 own killer selection.
 
-### Options from here
+### DECODED (2026-09-21, option 3) — the den mechanism, and the fix
+
+Mapped the Murder + Human + MurderMO field offsets (Cpp2IL dll_il_recovery) and decoded
+`Murder.IsValidLocation`'s ISIL:
+
+- Murder fields: `0xF0=preset`, `0xF8=mo`, `0x100=murderer`, `0x108=victim`, `0x118=location`,
+  `0x170=sniperVictimSite`. `preset+0x20 = caseType` (murder=0, sniper=1, kidnap=2). MO allow-flags:
+  `0x99 allowAnywhere, 0x9A allowHome, 0x9B allowWork, 0x9C allowPublic, 0x9D allowStreets, 0x9E allowDen`.
+- `IsValidLocation(newLoc)` branches on `mo` allow-flags. For the kidnap MO (only `allowDen`), it runs the den
+  branch: load `murderer` (`this+0x100`), then **`murderer.den` (`Human+0x2A8`, a `NewAddress`)**, and accept
+  `newLoc` ONLY if `newLoc == murderer.den` (plus a light occupancy check). 
+- ⇒ **A kidnap's one valid location is `murderer.den`.** A motive-chosen killer has `den == null`, so NOTHING
+  validates → 0/870 → permanent `waitForLocation` hang. (Human fields: `0x298 home, 0x2A0 residence,
+  0x2A8 den`.)
+- Vanilla assigns the den via **`Human.SetDen(NewAddress, MurderMO decorateUsingRules)`** (sets `den` and
+  decorates it with the MO's `denFurniture`/`denItems`) when it sets up a kidnapper it chose. `SetDen` has no
+  static callers in the dump (virtual/deferred), but we can call it ourselves.
+
+**FIX (built + deployed, F2 path first — commit `cd5cfc7`):** `MurderSelector.EnsureKidnapDen(killer, victim,
+mo)` — if `killer.den == null`, call `killer.SetDen(killer.home, kidnapMO)` (raw `killer.den = home` fallback)
+BEFORE the case is created, so `IsValidLocation` accepts `killer.home` as the holding den and the case seats +
+advances past `waitForLocation`. Wired into F2 (`ForceCase`) to verify; the override (natural) path comes once
+proven. TEST: F2 a kidnap → should now reach `travellingTo`/`executing`/`post` instead of hanging; look for
+`[SODMotives][den] assigned <killer>.den = <home>` then the state trace advancing. (killer.home may not be the
+ideal den — a shared/occupied home could still fail the occupancy check or read oddly; if so, switch to a
+vacant/private address.)
+
+### Options from here (superseded by the decode above — option 3 succeeded on paper)
 1. **Defer motivated kidnaps** (like sniper). Keep the `waitForLocation` recovery (so the `MotivateKidnaps`
    toggle can never hang — it just cancels + falls back to vanilla) + the tooling + the affair-gossip fix.
    Kidnaps stay vanilla. Pragmatic given two independent hard-stops.

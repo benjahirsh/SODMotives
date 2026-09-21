@@ -51,13 +51,18 @@ namespace SODMotives
         private static float _waitLocSince = 0f;       // gameTime it entered 'waitForLocation'
         private static readonly HashSet<int> _probed = new HashSet<int>();         // cases we've run the location probe on (once each)
         private static readonly HashSet<int> _waitRecovered = new HashSet<int>();  // cases we've cancelled out of a waitForLocation hang
+        private static readonly HashSet<int> _meetForced = new HashSet<int>();     // kidnaps whose meet we've assisted (log-once guard)
 
         internal static void ResetForNewGame()
         {
             _watchVictimId = -1; _executingSince = 0f;
             _intervened.Clear(); _loggedNoReach.Clear(); _awaitingPost = -1;
-            _waitLocVictimId = -1; _waitLocSince = 0f; _probed.Clear(); _waitRecovered.Clear();
+            _waitLocVictimId = -1; _waitLocSince = 0f; _probed.Clear(); _waitRecovered.Clear(); _meetForced.Clear();
         }
+
+        // True once BOTH kidnap meet goals exist (the killer+victim rendezvous goals). Only kidnaps set these.
+        private static bool MeetGoalsSet(MurderController.Murder m)
+        { try { return m.meetGoal1 != null && m.meetGoal2 != null; } catch { return false; } }
 
         // Called from Patch_MurderStateInject (our existing SetMurderState postfix, already gated to
         // overridden victims) on every state transition of one of our cases.
@@ -103,6 +108,20 @@ namespace SODMotives
                 if (murder.state == MurderController.MurderState.waitForLocation)
                 {
                     if (_probed.Add(vid)) ProbeValidLocations(murder, killer, victim);
+
+                    // MEET ASSIST (kidnap): the pair meets at the restaurant, but the game only completes the
+                    // meet — which triggers the abduction (knock out -> restrain -> carry to den) — once meetTime
+                    // exceeds a threshold, i.e. when they linger/sit at the booth. Our forced pair meets then
+                    // disperses, so it never fires and the case hangs. While they ARE co-located, force meetTime
+                    // high so the game's own Update completes the meet next frame and advances the abduction.
+                    // Scoped to kidnaps (only they set meet goals); harmless on any other case.
+                    if (MeetGoalsSet(murder) && SameLocation(killer, victim))
+                    {
+                        try { murder.meetTime = 99999f; } catch { }
+                        if (_meetForced.Add(vid))
+                            MotivesPlugin.Log.LogInfo($"[SODMotives][kidnap] MEET-ASSIST: {MotivesPlugin.Name(killer)} + {MotivesPlugin.Name(victim)} co-located at {LocName(victim)} with meet goals set; forcing meetTime high so the game completes the meet -> abduction.");
+                    }
+
                     if (_waitLocVictimId != vid) { _waitLocVictimId = vid; _waitLocSince = NowHours(); return; }
                     if (_waitRecovered.Contains(vid)) return;
                     float wstuck = NowHours() - _waitLocSince;

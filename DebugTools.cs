@@ -369,6 +369,7 @@ namespace SODMotives
         internal static void TeleportToCityHall()
         {
             var log = MotivesPlugin.Log;
+            log.LogInfo("[SODMotives][cityhall] key pressed — attempting City Hall teleport…");
             try
             {
                 var cd = CityData.Instance; var player = Player.Instance;

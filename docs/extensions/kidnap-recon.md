@@ -153,6 +153,16 @@ proven. TEST: F2 a kidnap → should now reach `travellingTo`/`executing`/`post`
 ideal den — a shared/occupied home could still fail the occupancy check or read oddly; if so, switch to a
 vacant/private address.)
 
+**PLAYTEST 1 (worked!) + den refinement (commit `0c3a83d`):** F2-overriding an AFFAIR kidnap SUCCEEDED — the
+case seated, held the victim, placed a ransom note, solvable. BUT killer+victim were cohabiting, so den ==
+their shared home → victim "kidnapped" into their own apartment, ransom note co-located → trivial. Fix:
+`EnsureKidnapDen` now prefers a **random VACANT residence** (`CityData.residenceDirectory` → `rc.address`,
+`inhabitants.Count == 0`), excluding the victim's + killer's homes, as a proper secret den; `SetDen` decorates
+it. Falls back to killer.home only when it isn't the victim's home; else the watchdog cancels + reverts to
+vanilla. Keeps affairs viable for kidnaps (user preference). NEXT: verify a vacant-den kidnap reads as a real
+mystery (victim held somewhere they don't live), then wire the natural override path + consider den locking/
+access + ransom-note placement.
+
 ### Options from here (superseded by the decode above — option 3 succeeded on paper)
 1. **Defer motivated kidnaps** (like sniper). Keep the `waitForLocation` recovery (so the `MotivateKidnaps`
    toggle can never hang — it just cancels + falls back to vanilla) + the tooling + the affair-gossip fix.

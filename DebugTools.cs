@@ -227,7 +227,26 @@ namespace SODMotives
         // waitForLocation/den hang. Watch the F9 MURDER STATE + LogOutput.log [trace] lines: reaching
         // 'executing'/'post' = the motive-chosen pair supports a kidnap; stuck at 'waitForLocation' = the game
         // can't seat a holding "den" for this kidnapper (then we constrain the victim pool + fall back).
-        internal static void ForceKidnapCase() => ForceCase(MurderPreset.CaseType.kidnap, "F2");
+        internal static void ForceKidnapCase() { EnableGameVerboseLogging(); ForceCase(MurderPreset.CaseType.kidnap, "F2"); }
+
+        // Turn ON the game's OWN verbose murder logging so it narrates the kidnap flow ("Murder: Completing
+        // meet goal 1", "Victim is knocked out and restrained", etc.) into the log. Those messages call
+        // Game.Log(msg, level=2), gated ONLY by Game.Instance.printDebug + debugPrintLevel >= 2 (the spammy
+        // per-human logs have their own separate debugHuman* gates, left off, so this narrates the murder
+        // without flooding). Session-persistent; a game restart resets it. This is our window into exactly how
+        // vanilla drives the meet + abduction.
+        internal static void EnableGameVerboseLogging()
+        {
+            try
+            {
+                var g = Game.Instance;
+                if (g == null) { MotivesPlugin.Log.LogInfo("[SODMotives][gamelog] Game.Instance null; can't enable verbose logging yet."); return; }
+                g.printDebug = true;
+                if (g.debugPrintLevel < 2) g.debugPrintLevel = 2;
+                MotivesPlugin.Log.LogInfo($"[SODMotives][gamelog] enabled the game's own verbose logging (printDebug=true, debugPrintLevel={g.debugPrintLevel}) — its 'Murder:' flow messages will now narrate the kidnap. Restart to silence.");
+            }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][gamelog] error: {e.Message}"); }
+        }
 
         // Dump the case-defining fields of a preset/MO so a playtest reveals what a kidnap actually requires
         // (den? where can it happen? occupancy caps? research/acquire phases?). These are ScriptableObject

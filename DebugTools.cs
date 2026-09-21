@@ -277,6 +277,9 @@ namespace SODMotives
                 { log.LogInfo($"[SODMotives][force:{tag}] selector found no motivated (killer->victim) pair."); return; }
 
                 mc.currentMurderer = killer; mc.currentVictim = victim;
+                // A kidnap hangs at waitForLocation unless the killer has a den (IsValidLocation accepts only
+                // murderer.den). Assign one before creating the case so it can seat its holding location.
+                if (caseType == MurderPreset.CaseType.kidnap) MurderSelector.EnsureKidnapDen(killer, victim, useMo);
                 log.LogInfo($"[SODMotives][force:{tag}] forcing {caseType.ToString().ToUpper()}: {MotivesPlugin.Name(killer)} -> {MotivesPlugin.Name(victim)} (preset={usePreset.name}, mo={useMo.name}). Watch F9 MURDER STATE: reaches 'executing'/'post' = WORKS; stuck at 'waitForLocation' = site/vantage problem.");
                 var murder = mc.ExecuteNewMurder(killer, victim, usePreset, useMo, null);
                 log.LogInfo($"[SODMotives][force:{tag}] ExecuteNewMurder -> {(murder != null ? "Murder created" : "null")}.");

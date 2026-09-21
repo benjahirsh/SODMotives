@@ -37,6 +37,41 @@ namespace SODMotives
 
         private static readonly Random _rng = new Random();
 
+        // KIDNAP DEN FIX. A kidnap can only seat its holding location if the killer has a den: the game's
+        // Murder.IsValidLocation accepts ONLY `newLoc == murderer.den` (Human.den, a NewAddress). Vanilla
+        // assigns that den (via Human.SetDen, which also decorates it with the MO's den furniture) when it
+        // sets up a kidnapper it chose itself; our motive-chosen / swapped-in killer skips that, so den==null
+        // and the case hangs at waitForLocation forever (confirmed: 0/870 locations valid). We assign one
+        // ourselves. Start with the killer's own home as the holding den (always exists, private, pathable);
+        // returns true if the killer ends up with a den. Never throws.
+        internal static bool EnsureKidnapDen(Human killer, Human victim, MurderMO mo)
+        {
+            var log = MotivesPlugin.Log;
+            try
+            {
+                if (killer == null) return false;
+                NewAddress existing = null; try { existing = killer.den; } catch { }
+                if (existing != null) { log.LogInfo($"[SODMotives][den] killer {MotivesPlugin.Name(killer)} already has a den ({SafeName(existing)}); leaving it."); return true; }
+
+                // Holding den = the killer's own residence for now (a valid private location they control).
+                NewAddress den = null; try { den = killer.home; } catch { }
+                if (den == null) { log.LogInfo($"[SODMotives][den] killer {MotivesPlugin.Name(killer)} has no home to use as a den — can't seat a kidnap; watchdog will fall back."); return false; }
+
+                try { killer.SetDen(den, mo); }
+                catch (Exception se)
+                {
+                    log.LogWarning($"[SODMotives][den] SetDen threw ({se.Message}); setting the den field directly as a fallback.");
+                    try { killer.den = den; } catch { }
+                }
+                NewAddress now = null; try { now = killer.den; } catch { }
+                log.LogInfo($"[SODMotives][den] assigned {MotivesPlugin.Name(killer)}.den = {SafeName(now)} (decorated with MO {(mo != null ? mo.name : "<none>")}). IsValidLocation will now accept it.");
+                return now != null;
+            }
+            catch (Exception e) { log.LogWarning($"[SODMotives][den] EnsureKidnapDen error: {e.Message}"); return false; }
+        }
+
+        private static string SafeName(NewAddress a) { try { return a != null ? a.name : "<null>"; } catch { return "?"; } }
+
         // Occasionally leave a case entirely to vanilla, preserving classic serial-killer
         // hunts (signature and all). Call once per handled case.
         internal static bool ShouldForceVanilla()

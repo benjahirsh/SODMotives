@@ -108,6 +108,34 @@ code path (where the kidnap `location` candidate is generated) and either (a) co
 to killers who own a den-eligible private residence that ISN'T the victim's home, or (b) seat a den ourselves,
 always with a vanilla fallback (never hang).
 
+## DEN PROBE RESULT (2026-09-21) — IsValidLocation rejects EVERYTHING
+
+Ran the runtime `[den probe]` (MurderWatchdog calls the game's own `Murder.IsValidLocation` on a stuck
+overridden kidnap). For `Valeria Ragin#86 → Erik Ismayilov#306` (preset `Kidnapper` / MO `FinancialKidnapper`):
+
+```
+killer.home=804 Etheridge Heights valid=False ; victim.home=102 Etheridge Heights valid=False ; cohabiting=False
+IsValidLocation over 870 city locations -> 0 VALID.
+```
+
+**Not one of the 870 city locations passes `IsValidLocation` for this pair — not even the killer's own home.**
+So the den never seats and the case hangs at `waitForLocation` (now auto-cancelled at 12h by the watchdog —
+recovery VALIDATED in-game). This means the kidnap "den" is not any pre-existing location the mod can point at;
+vanilla must **claim/establish** a den as part of its own kidnapper setup (tied to the killer the game itself
+picked in `PickNewMurderer`), which our pair-swap bypasses. Same class of problem as the sniper deferral
+(a forced motivated sniper loops in `travellingTo`): the special-case setup machinery is coupled to vanilla's
+own killer selection.
+
+### Options from here
+1. **Defer motivated kidnaps** (like sniper). Keep the `waitForLocation` recovery (so the `MotivateKidnaps`
+   toggle can never hang — it just cancels + falls back to vanilla) + the tooling + the affair-gossip fix.
+   Kidnaps stay vanilla. Pragmatic given two independent hard-stops.
+2. **Killer-centric kidnap (untested, promising):** on the NATURAL path, let vanilla's `PickNewMurderer` pick a
+   den-capable kidnapper, then in the `ExecuteNewMurder` prefix swap ONLY the VICTIM to one that killer has a
+   real motive edge with (instead of swapping both). The den depends on the (untouched) killer, so it may still
+   seat; the motive comes from the killer→victim edge. Needs the natural path + verification that the den
+   survives a victim swap. Could still hit the same wall.
+
 ## Expected outcome + the fix if it hangs
 
 Most likely: it parks at `waitForLocation` because the motive-chosen kidnapper has no seatable den.

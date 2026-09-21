@@ -391,8 +391,14 @@ namespace SODMotives
                 bool ours = false;
                 try { ours = victim != null && MurderSelector.OverriddenVictimIds.Contains(victim.humanID); } catch { }
 
-                Overlay.Add(ours ? "CASE TYPE: motivated (mod)" : "CASE TYPE: vanilla / not overridden");
-                try { var mrd = MurderController.Instance != null ? MurderController.Instance.GetCurrentMurder() : null; if (mrd != null) Overlay.Add($"MURDER STATE: {mrd.state}"); } catch { }
+                // Grab the live Murder once: its preset gives the MURDER TYPE (murder / sniper / kidnap),
+                // shown next to whether the mod overrode it; its state drives the progress line below.
+                MurderController.Murder mrd = null;
+                try { mrd = MurderController.Instance != null ? MurderController.Instance.GetCurrentMurder() : null; } catch { }
+                string murderType = "?";
+                try { if (mrd != null && mrd.preset != null) murderType = mrd.preset.caseType.ToString(); } catch { }
+                Overlay.Add((ours ? "CASE TYPE: motivated (mod)" : "CASE TYPE: vanilla / not overridden") + $"  [{murderType}]");
+                try { if (mrd != null) Overlay.Add($"MURDER STATE: {mrd.state}"); } catch { }
 
                 Overlay.Add($"KILLER: {MotivesPlugin.Name(killer)}");
                 Overlay.Add($"VICTIM: {MotivesPlugin.Name(victim)}");

@@ -106,18 +106,37 @@ namespace SODMotives
                     if (occ == 0) vacants.Add(a);
                 }
                 if (vacants.Count == 0) return null;
-                // Try random vacants (bounded) and return the first the VICTIM can be safely teleported into.
-                int tries = Math.Min(vacants.Count, 40);
-                for (int t = 0; t < tries; t++)
+                // Vanilla's dens are named "Vacant address N" or "Basement NN" — genuinely spare private units
+                // where a held victim STAYS. A numbered hotel guest room (e.g. "502 Plaza Orchid Hotel") is
+                // ALSO vacant + teleport-viable but the victim won't stay in it (endless teleport loop, seen
+                // in-game). So PREFER vacant/basement-named units; fall back to any teleport-viable one.
+                var preferred = new List<NewAddress>(); var other = new List<NewAddress>();
+                for (int i = 0; i < vacants.Count; i++)
                 {
-                    var a = vacants[_rng.Next(vacants.Count)];
-                    bool reachable = true;
-                    try { if (victim != null) reachable = victim.FindSafeTeleport(a, false, true) != null; } catch { reachable = false; }
-                    if (reachable) return a;
+                    var a = vacants[i]; string n = null; try { n = a.name; } catch { }
+                    bool pref = !string.IsNullOrEmpty(n) && (n.IndexOf("Vacant", StringComparison.OrdinalIgnoreCase) >= 0 || n.IndexOf("Basement", StringComparison.OrdinalIgnoreCase) >= 0);
+                    (pref ? preferred : other).Add(a);
                 }
-                return null;   // none of the sampled vacants had a safe-teleport spot
+                NewAddress pick = PickTeleportViable(preferred, victim);
+                if (pick == null) pick = PickTeleportViable(other, victim);
+                return pick;
             }
             catch { return null; }
+        }
+
+        // Return the first address (from a bounded random sample) the VICTIM can be safely teleported into.
+        private static NewAddress PickTeleportViable(List<NewAddress> cands, Human victim)
+        {
+            if (cands == null || cands.Count == 0) return null;
+            int tries = Math.Min(cands.Count, 40);
+            for (int t = 0; t < tries; t++)
+            {
+                var a = cands[_rng.Next(cands.Count)];
+                bool reachable = true;
+                try { if (victim != null) reachable = victim.FindSafeTeleport(a, false, true) != null; } catch { reachable = false; }
+                if (reachable) return a;
+            }
+            return null;
         }
 
         private static bool SamePlace(NewGameLocation a, NewGameLocation b)

@@ -59,8 +59,8 @@ namespace SODMotives
                 // Prefer a VACANT residence (nobody lives there) as a proper secret holding den — so the victim
                 // is taken somewhere they don't live and the case is a real mystery. Never the victim's home
                 // (they'd be "kidnapped" into their own apartment) and, since it's vacant, never a cohabited home.
-                NewAddress den = PickVacantDen(killer, vh, kh);
-                string how = "vacant residence";
+                NewAddress den = PickVacantDen(killer, victim, vh, kh);
+                string how = "vacant, teleport-viable residence";
                 if (den == null)
                 {
                     // Fallback: the killer's own home, but ONLY if the victim doesn't live there too — holding
@@ -83,15 +83,18 @@ namespace SODMotives
         }
 
         // Pick a random VACANT residence (inhabitants.Count == 0) to serve as the kidnapper's secret den,
-        // excluding the victim's and killer's own homes. Returns null if the city has no vacant residence.
-        private static NewAddress PickVacantDen(Human killer, NewAddress victimHome, NewAddress killerHome)
+        // excluding the victim's and killer's own homes. Requires the den be TELEPORT-VIABLE — the game's own
+        // "GoTo den routine" seats the victim by doing victim.FindSafeTeleport(den) -> teleport, so a den with
+        // no safe-teleport spot (e.g. a hotel ROOM) can never hold the victim and hangs the case; vanilla's
+        // dens are basements / vacant flats that always have one. Returns null if none qualify.
+        private static NewAddress PickVacantDen(Human killer, Human victim, NewAddress victimHome, NewAddress killerHome)
         {
             try
             {
                 var cd = CityData.Instance;
                 var dir = cd != null ? cd.residenceDirectory : null;
                 if (dir == null) return null;
-                var cands = new List<NewAddress>();
+                var vacants = new List<NewAddress>();
                 for (int i = 0; i < dir.Count; i++)
                 {
                     var rc = dir[i]; if (rc == null) continue;
@@ -100,10 +103,19 @@ namespace SODMotives
                     if (victimHome != null && SamePlace(a, victimHome)) continue;
                     if (killerHome != null && SamePlace(a, killerHome)) continue;
                     int occ = 0; try { var inh = a.inhabitants; occ = inh != null ? inh.Count : 0; } catch { occ = -1; }
-                    if (occ == 0) cands.Add(a);
+                    if (occ == 0) vacants.Add(a);
                 }
-                if (cands.Count == 0) return null;
-                return cands[_rng.Next(cands.Count)];
+                if (vacants.Count == 0) return null;
+                // Try random vacants (bounded) and return the first the VICTIM can be safely teleported into.
+                int tries = Math.Min(vacants.Count, 40);
+                for (int t = 0; t < tries; t++)
+                {
+                    var a = vacants[_rng.Next(vacants.Count)];
+                    bool reachable = true;
+                    try { if (victim != null) reachable = victim.FindSafeTeleport(a, false, true) != null; } catch { reachable = false; }
+                    if (reachable) return a;
+                }
+                return null;   // none of the sampled vacants had a safe-teleport spot
             }
             catch { return null; }
         }

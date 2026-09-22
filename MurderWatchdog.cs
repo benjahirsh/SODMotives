@@ -51,20 +51,31 @@ namespace SODMotives
         private static float _waitLocSince = 0f;       // gameTime it entered 'waitForLocation'
         private static readonly HashSet<int> _probed = new HashSet<int>();         // cases we've run the location probe on (once each)
         private static readonly HashSet<int> _waitRecovered = new HashSet<int>();  // cases we've cancelled out of a waitForLocation hang
-        private static readonly HashSet<int> _meetForced = new HashSet<int>();     // kidnaps whose meet we've assisted (log-once guard)
         private static readonly HashSet<int> _observed = new HashSet<int>();       // kidnaps (any, incl. vanilla) we've logged an observation for
 
         internal static void ResetForNewGame()
         {
             _watchVictimId = -1; _executingSince = 0f;
             _intervened.Clear(); _loggedNoReach.Clear(); _awaitingPost = -1;
-            _waitLocVictimId = -1; _waitLocSince = 0f; _probed.Clear(); _waitRecovered.Clear(); _meetForced.Clear();
+            _waitLocVictimId = -1; _waitLocSince = 0f; _probed.Clear(); _waitRecovered.Clear();
             _observed.Clear();
         }
 
-        // True once BOTH kidnap meet goals exist (the killer+victim rendezvous goals). Only kidnaps set these.
-        private static bool MeetGoalsSet(MurderController.Murder m)
-        { try { return m.meetGoal1 != null && m.meetGoal2 != null; } catch { return false; } }
+        // True if this is a kidnap whose den the VICTIM can be safely teleported into — i.e. the game's
+        // "GoTo den routine" (victim.FindSafeTeleport(den) -> teleport) can seat the victim, so the case can
+        // complete like vanilla and must NOT be cancelled. False for a non-kidnap, a den-less kidnap, or a den
+        // with no safe-teleport spot (a genuine hang worth cancelling).
+        private static bool KidnapDenReachable(MurderController.Murder m, Human killer, Human victim)
+        {
+            try
+            {
+                if (m == null || m.preset == null || m.preset.caseType != MurderPreset.CaseType.kidnap) return false;
+                NewAddress den = null; try { den = killer != null ? killer.den : null; } catch { }
+                if (den == null || victim == null) return false;
+                try { return victim.FindSafeTeleport(den, false, true) != null; } catch { return false; }
+            }
+            catch { return false; }
+        }
 
         // Called from Patch_MurderStateInject (our existing SetMurderState postfix, already gated to
         // overridden victims) on every state transition of one of our cases.
@@ -126,34 +137,21 @@ namespace SODMotives
                 {
                     if (_probed.Add(vid)) ProbeValidLocations(murder, killer, victim);
 
-                    // MEET ASSIST (kidnap): the pair meets at the restaurant, but the game only completes the
-                    // meet — which triggers the abduction (knock out -> restrain -> carry to den; travellingTo
-                    // -> executing) — once meetTime exceeds a threshold, i.e. when they linger/sit at the booth.
-                    // Our forced pair meets then disperses, so it never accumulates and the case hangs. Forcing
-                    // meetTime ONCE didn't stick (the game recomputes it), so force it high EVERY frame while the
-                    // meet goals exist, so the game's own Update completes the meet the moment it evaluates the
-                    // block. Scoped to kidnaps (only they set meet goals); harmless on any other case.
-                    bool meetPending = MeetGoalsSet(murder);
-                    if (meetPending)
-                    {
-                        try { murder.meetTime = 99999f; } catch { }
-                        if (_meetForced.Add(vid))
-                            MotivesPlugin.Log.LogInfo($"[SODMotives][kidnap] MEET-ASSIST: forcing meetTime high every frame for {MotivesPlugin.Name(killer)} -> {MotivesPlugin.Name(victim)} so the game completes the meet -> abduction.");
-                    }
+                    // A kidnap whose den the victim CAN be teleported into is just SLOW (like vanilla: it takes
+                    // in-game DAYS to meet/abduct/carry), NOT hung — so leave it entirely alone. (Forcing
+                    // meetTime was a dead end: the game recomputes it. And an over-eager cancel pre-empted a case
+                    // that then reached travellingTo — the abduction was working, we killed it.) Only cancel a
+                    // TRUE hang: no den, or a den with no safe-teleport spot (which can never seat the victim).
+                    if (KidnapDenReachable(murder, killer, victim)) return;
 
                     if (_waitLocVictimId != vid) { _waitLocVictimId = vid; _waitLocSince = NowHours(); return; }
                     if (_waitRecovered.Contains(vid)) return;
                     float wstuck = NowHours() - _waitLocSince;
-                    // A kidnap with its meet set up is mid-abduction (the meet-assist is driving it), so give it
-                    // a much longer window before cancelling — otherwise the watchdog pre-empts the meet
-                    // completion -> travellingTo (seen in testing: the case reached travellingTo just AFTER a
-                    // premature cancel). A den-less / sniper stall (no meet) still cancels at the normal timeout.
-                    float cap = meetPending ? WaitLocationStallHours * 6f : WaitLocationStallHours;
-                    if (wstuck < cap) return;
-                    LogKidnapState(murder, killer, victim, "stall");   // final state before we give up — did the meet ever set up?
+                    if (wstuck < WaitLocationStallHours) return;
+                    LogKidnapState(murder, killer, victim, "stall");   // final state before we give up
                     try { murder.CancelCurrentMurder(); } catch (Exception ce) { MotivesPlugin.Log.LogWarning($"[SODMotives][watchdog] waitForLocation cancel error: {ce.Message}"); }
                     _waitRecovered.Add(vid);
-                    MotivesPlugin.Log.LogWarning($"[SODMotives][watchdog] RECOVERED: {MotivesPlugin.Name(killer)} -> {MotivesPlugin.Name(victim)} stuck in 'waitForLocation' {wstuck:F1}h (no seatable location — e.g. a kidnap with no valid den) — cancelled the case so it can't hang. See the [den probe] above for why.");
+                    MotivesPlugin.Log.LogWarning($"[SODMotives][watchdog] RECOVERED: {MotivesPlugin.Name(killer)} -> {MotivesPlugin.Name(victim)} stuck in 'waitForLocation' {wstuck:F1}h with NO reachable den — cancelled so it can't hang. See the [den probe] above.");
                     return;
                 }
 

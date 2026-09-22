@@ -52,12 +52,14 @@ namespace SODMotives
         private static readonly HashSet<int> _probed = new HashSet<int>();         // cases we've run the location probe on (once each)
         private static readonly HashSet<int> _waitRecovered = new HashSet<int>();  // cases we've cancelled out of a waitForLocation hang
         private static readonly HashSet<int> _meetForced = new HashSet<int>();     // kidnaps whose meet we've assisted (log-once guard)
+        private static readonly HashSet<int> _observed = new HashSet<int>();       // kidnaps (any, incl. vanilla) we've logged an observation for
 
         internal static void ResetForNewGame()
         {
             _watchVictimId = -1; _executingSince = 0f;
             _intervened.Clear(); _loggedNoReach.Clear(); _awaitingPost = -1;
             _waitLocVictimId = -1; _waitLocSince = 0f; _probed.Clear(); _waitRecovered.Clear(); _meetForced.Clear();
+            _observed.Clear();
         }
 
         // True once BOTH kidnap meet goals exist (the killer+victim rendezvous goals). Only kidnaps set these.
@@ -99,7 +101,22 @@ namespace SODMotives
                 var victim = murder.victim; var killer = murder.murderer;
                 if (victim == null || killer == null) return;
                 int vid = victim.humanID;
-                if (!MurderSelector.OverriddenVictimIds.Contains(vid)) return;   // OURS only — vanilla cases never reach here
+
+                // KIDNAP OBSERVER (READ-ONLY, fires for ANY kidnap incl. VANILLA): capture the pair's
+                // relationship, the killer's den, and the meet state so a real vanilla kidnap can be compared
+                // side-by-side with our forced one. Also flips on the game's own verbose murder narration.
+                // Does NOT intervene in vanilla cases — purely logging.
+                try
+                {
+                    if (murder.preset != null && murder.preset.caseType == MurderPreset.CaseType.kidnap && _observed.Add(vid))
+                    {
+                        DebugTools.EnableGameVerboseLogging();
+                        LogKidnapObservation(murder, killer, victim);
+                    }
+                }
+                catch { }
+
+                if (!MurderSelector.OverriddenVictimIds.Contains(vid)) return;   // INTERVENTIONS below are OURS only — vanilla cases just get observed above
 
                 // waitForLocation stall (a kidnap with no seatable holding 'den', a sniper with no vantage
                 // site): this state has no natural resolution, so the case would hang forever. Probe the
@@ -229,6 +246,52 @@ namespace SODMotives
                 LogKidnapState(murder, killer, victim, "entry");
             }
             catch (Exception e) { log.LogWarning($"[SODMotives][den probe] error: {e.Message}"); }
+        }
+
+        // KIDNAP OBSERVER: one-shot dump comparing a VANILLA kidnap to a MOD-FORCED one. The big unknowns are
+        // (a) the killer<->victim RELATIONSHIP (is a vanilla kidnap victim connected to their kidnapper in a
+        // way ours isn't?), (b) the DEN (does vanilla use the killer's own home/property vs our injected vacant
+        // unit?), and (c) whether the victim attends the meet. Logs (a)+(b) here; (c) comes from the game's own
+        // narration + the meet-state line. Read-only.
+        private static void LogKidnapObservation(MurderController.Murder murder, Human killer, Human victim)
+        {
+            var log = MotivesPlugin.Log;
+            try
+            {
+                bool ours = MurderSelector.OverriddenVictimIds.Contains(victim.humanID);
+                log.LogInfo($"[SODMotives][kidnap-obs] ===== {(ours ? "MOD-FORCED" : "VANILLA")} KIDNAP: {MotivesPlugin.Name(killer)} -> {MotivesPlugin.Name(victim)} =====");
+                log.LogInfo($"[SODMotives][kidnap-obs]   relationship killer->victim: {DescribeEdge(killer, victim)}");
+                log.LogInfo($"[SODMotives][kidnap-obs]   relationship victim->killer: {DescribeEdge(victim, killer)}");
+                NewAddress kden = null, khome = null, vhome = null;
+                try { kden = killer.den; } catch { }
+                try { khome = killer.home; } catch { }
+                try { vhome = victim.home; } catch { }
+                bool denIsKillerHome = false, denIsVictimHome = false;
+                try { denIsKillerHome = kden != null && khome != null && kden.Pointer == khome.Pointer; } catch { }
+                try { denIsVictimHome = kden != null && vhome != null && kden.Pointer == vhome.Pointer; } catch { }
+                log.LogInfo($"[SODMotives][kidnap-obs]   killer.den={LName(kden)}  (killer.home={LName(khome)} denIsKillerHome={denIsKillerHome};  victim.home={LName(vhome)} denIsVictimHome={denIsVictimHome})");
+                LogKidnapState(murder, killer, victim, "obs");
+            }
+            catch (Exception e) { log.LogWarning($"[SODMotives][kidnap-obs] error: {e.Message}"); }
+        }
+
+        // Describe the directed acquaintance edge a->b: connection types + like + known (or "NO EDGE").
+        private static string DescribeEdge(Human a, Human b)
+        {
+            try
+            {
+                if (a == null || b == null) return "<null>";
+                Acquaintance acq;
+                if (!a.FindAcquaintanceExists(b, out acq) || acq == null) return "NO EDGE (strangers)";
+                var parts = new List<string>();
+                try { var conns = acq.connections; if (conns != null) for (int i = 0; i < conns.Count; i++) parts.Add(conns[i].ToString()); } catch { }
+                string connStr = parts.Count > 0 ? string.Join(",", parts.ToArray()) : "(no connection types)";
+                float like = float.NaN, known = float.NaN;
+                try { like = acq.like; } catch { }
+                try { known = acq.known; } catch { }
+                return $"[{connStr}] like={like:0.00} known={known:0.00}";
+            }
+            catch { return "<err>"; }
         }
 
         // Kidnap abduction state — was the MEET set up (the thing that brings killer+victim together so the

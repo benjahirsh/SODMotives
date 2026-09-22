@@ -235,15 +235,24 @@ namespace SODMotives
         // per-human logs have their own separate debugHuman* gates, left off, so this narrates the murder
         // without flooding). Session-persistent; a game restart resets it. This is our window into exactly how
         // vanilla drives the meet + abduction.
+        // Config toggle: keep the game's verbose murder logging on (applied every frame while true), so a
+        // VANILLA kidnap gets narrated from the very start (before it even appears). Turn on to observe.
+        internal static bool GameVerboseLogging = false;
+        private static bool _verboseLogged = false;
+
         internal static void EnableGameVerboseLogging()
         {
             try
             {
                 var g = Game.Instance;
-                if (g == null) { MotivesPlugin.Log.LogInfo("[SODMotives][gamelog] Game.Instance null; can't enable verbose logging yet."); return; }
+                if (g == null) return;   // game not loaded yet; a per-frame caller will retry
                 g.printDebug = true;
                 if (g.debugPrintLevel < 2) g.debugPrintLevel = 2;
-                MotivesPlugin.Log.LogInfo($"[SODMotives][gamelog] enabled the game's own verbose logging (printDebug=true, debugPrintLevel={g.debugPrintLevel}) — its 'Murder:' flow messages will now narrate the kidnap. Restart to silence.");
+                if (!_verboseLogged)
+                {
+                    _verboseLogged = true;
+                    MotivesPlugin.Log.LogInfo($"[SODMotives][gamelog] enabled the game's own verbose murder logging (printDebug=true, debugPrintLevel={g.debugPrintLevel}). NOTE: the 'Murder:' flow prints to the game's OWN log at %USERPROFILE%\\AppData\\LocalLow\\ColePowered Games\\Shadows of Doubt\\Player.log — NOT the BepInEx log. Restart to silence.");
+                }
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][gamelog] error: {e.Message}"); }
         }
@@ -848,6 +857,10 @@ namespace SODMotives
 
                 // Testing fast-forward: re-assert Time.timeScale multiplier while ON (never overrides a pause).
                 DebugTools.ApplyTimeBoost();
+
+                // Keep the game's verbose murder logging on while the toggle is set (retries until the game
+                // loads Game.Instance), so a VANILLA kidnap is narrated from the start.
+                if (DebugTools.GameVerboseLogging) DebugTools.EnableGameVerboseLogging();
             }
             catch { }
         }

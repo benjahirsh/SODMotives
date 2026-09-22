@@ -128,6 +128,9 @@ namespace SODMotives
             BindApply("Troubleshooting", "StallGameHours", 24f,
                 "In-game hours a mod murder may sit stalled in 'executing' before the watchdog force-finishes it (only if killer is present and no damage is landing).",
                 v => MurderWatchdog.StallGameHours = v);
+            BindApply("Troubleshooting", "GameVerboseLogging", false,
+                "OBSERVE: keep the game's OWN verbose murder logging on (its 'Murder:' step-by-step flow), so a vanilla kidnap is narrated from the start. Output goes to the game's Player.log (AppData/LocalLow/ColePowered Games/Shadows of Doubt/Player.log), NOT the BepInEx log. Turn on before running a vanilla kidnapping to observe how it works.",
+                v => DebugTools.GameVerboseLogging = v);
             BindApply("Troubleshooting", "TimeBoostMultiplier", 2f,
                 "Fast-forward strength: the EXTRA multiple applied on top of the game's fastest built-in speed while the fast-forward key (End) is ON, by pushing the game's own time multiplier (not Time.timeScale). 1 = just simulation speed. Higher tries to go faster; the game may clamp/ignore what it can't keep up with.",
                 v => DebugTools.TimeBoostMultiplier = v);

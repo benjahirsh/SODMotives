@@ -559,7 +559,7 @@ namespace SODMotives
     [HarmonyPriority(Priority.First)]
     internal static class Patch_ExecuteNewMurder_Override
     {
-        static void Prefix(MurderController __instance, ref Human newMurderer, ref Human newVictim, MurderPreset preset, ref NewGameLocation victimSite)
+        static void Prefix(MurderController __instance, ref Human newMurderer, ref Human newVictim, MurderPreset preset, MurderMO newMotive, ref NewGameLocation victimSite)
         {
             if (!MurderSelector.EnableOverride) return;
             // Only touch ordinary generated (proc-gen sandbox) MURDERS. Special case
@@ -604,6 +604,12 @@ namespace SODMotives
                     // the vanilla pair in place while the mod victim is already in the bookkeeping.
                     newMurderer = m; newVictim = v; victimSite = null;
                     __instance.currentMurderer = m; __instance.currentVictim = v;
+
+                    // KIDNAP (MotivateKidnaps): the swapped-in killer needs a den or the case hangs at
+                    // waitForLocation (IsValidLocation accepts only murderer.den). Assign one exactly as the
+                    // F2 force path does — a vacant, teleport-viable residence.
+                    if (preset != null && preset.caseType == MurderPreset.CaseType.kidnap)
+                        MurderSelector.EnsureKidnapDen(m, v, newMotive);
 
                     var killerMotive = MurderSelector.MotiveByVictim.TryGetValue(v.humanID, out var mr) ? mr : default;
                     MotivesPlugin.Log.LogInfo("[SODMotives] ************ MOTIVATED MURDER (V2.1 mixed pool) ************");

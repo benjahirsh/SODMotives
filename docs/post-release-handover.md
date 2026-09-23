@@ -74,6 +74,33 @@ adds the full pool + knower lists for deeper reports.
   natively; address-book half is larger/uncertain).
 - **Layoffs clue granularity** — currently one "Redundancy List" naming all laid-off; consider per-NPC
   termination notices (like promotion's per-rival threats) or a hybrid.
+- **Boss/promotee victim rate slider (Promotion cases).** Promotion cases can make the victim a boss/promotee;
+  there are relatively FEW bosses in a city, so killing them off depletes the pool over time. Add a config
+  slider to bias promotion-case victim selection AWAY from bosses/promotees (kill fewer of them) — e.g. a
+  weight/probability that a promotion case targets a rival instead of the boss/promotee, or a cap on
+  boss-victim frequency. Selection is in `MurderSelector.TryPickVictimCentric` + `WorkplaceSim` (Promotion
+  edges r→P and r→P's boss D; victim currently = P or D). (Requested by user 2026-09-22.)
+- **Kidnap ransom "thanks for the money" call fires even when the victim was RESCUED (not paid).** Confirmed
+  OURS, not vanilla (vanilla gives no such call on a rescue). Our `MurderWatchdog.SpawnRansomNote` kicks off the
+  game's own ransom chain (spawn note → TriggerKidnappingCase → downstream); in our case that chain reaches the
+  COLLECTED state (`MurderController.KidnapperCollectedRansom` / `SetRansomPhase(collectedRansom/finishedSuccess)`)
+  even without the player paying. Fix: trace where/why our `Murder.ransomPhase` reaches `collectedRansom` for a
+  rescued victim and gate the collection (or force `ransomPhase` to a terminal non-collected state on rescue).
+  Cosmetic — the case still solves. Also (minor, same area): when the rescued victim is asked about the ransom
+  note, their name renders BLANK (vanilla names them in 3rd person) — our swapped victim doesn't resolve into the
+  note's name token. (Found by user 2026-09-23.)
+- **"Ask your partner to come to the door" tweak.** (Requested by user 2026-09-23; scope to be detailed — a way
+  to get a specific NPC, e.g. a suspect's or victim's partner, to come to the door rather than whoever the game
+  sends.)
+- **Bias the default murder/kidnap mix AWAY from rare/structural NPCs (bosses + landlords).** Rare NPCs (company
+  owners/directors = bosses, property landlords) are costly to lose from the world: as a MURDER victim they're
+  deleted; as a caught KILLER they're arrested/removed. Improve the default selection so fewer of them are
+  murdered or become the arrested killer. Conversely a KIDNAP victim can be SAVED, so *kidnapping* such an NPC is
+  preferable to murdering them (the world keeps them if the player rescues them) — i.e. skew kidnaps TOWARD
+  boss/landlord victims and murders AWAY from them. Generalises the "Boss/promotee victim rate slider" item below
+  to landlords, to killers-arrested, and to the murder-vs-kidnap split. Selection lives in
+  `MurderSelector.TryPickVictimCentric` (motive-family weights map to roles: Workplace→boss, Property→landlord;
+  branch on case type since kidnap vs murder is per-case). (Requested by user 2026-09-23.)
 - More ideas: `docs/extensions/README.md`, `docs/v2-design.md`.
 
 ## Optional loose ends

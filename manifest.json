@@ -1,6 +1,6 @@
 {
   "name": "Better_Leads_and_Motives",
-  "version_number": "1.0.2",
+  "version_number": "1.1.0",
   "website_url": "https://github.com/benjahirsh/SODMotives",
   "description": "Adds believable, traceable motives that can be uncovered through deduction and NPC interrogation. Figuring out why someone was killed is now a valid lead to who killed them.",
   "dependencies": [

@@ -13,12 +13,11 @@ namespace SODMotives
     {
         // Tunables (bound to BepInEx config in Plugin.Load).
         internal static bool EnableOverride = true;
-        // EXPERIMENTAL ([Troubleshooting] MotivateKidnaps): when true, the override ALSO motivates KIDNAP
-        // cases (swaps in a motivated killer -> victim pair) instead of leaving them fully vanilla. Default
-        // OFF — motivated kidnaps are UNPROVEN and may stall the case at waitForLocation while the game looks
-        // for a viable holding "den" for the motive-chosen kidnapper. Sniper cases always stay vanilla. See
-        // docs/extensions/motivated-kidnap-handover.md. Flip on only for testing (F1 force-kidnap + F9 trace).
-        internal static bool MotivateKidnaps = false;
+        // The mixer's KIDNAP slider ([Motive Mix] MotivatedKidnapShare): probability [0..1] that a KIDNAP case
+        // gets a motivated killer -> victim pair (a walk-native abduction to a real holding den) instead of
+        // running fully vanilla — the kidnap analogue of MotiveCaseShare for murders. 1 (default) = every kidnap
+        // is motivated; 0 = kidnaps stay vanilla. Sniper cases always stay vanilla. Read once per kidnap case.
+        internal static float MotivatedKidnapShare = 1f;
         internal static int MinSuspects = 3;            // PREFER victims with at least this many real suspects
         internal static int KillerPoolSize = 10;        // killer = uniform-random among the victim's top-N suspects
         // THE MAIN MIX KNOB: probability [0..1] a case is a relationship-MOTIVE case; the rest are left
@@ -60,14 +59,22 @@ namespace SODMotives
                 // is taken somewhere they don't live and the case is a real mystery. Never the victim's home
                 // (they'd be "kidnapped" into their own apartment) and, since it's vacant, never a cohabited home.
                 NewAddress den = PickVacantDen(killer, victim, vh, kh);
-                string how = "vacant, teleport-viable residence";
+                string how = "vacant, WALK-reachable residence";
                 if (den == null)
                 {
                     // Fallback: the killer's own home, but ONLY if the victim doesn't live there too — holding
                     // the victim at their own address is trivially solvable (the earlier cohabiting affair bug).
-                    if (kh != null && (vh == null || !SamePlace(kh, vh))) { den = kh; how = "killer's home (no vacant residence found)"; }
+                    // The fallback must ALSO be walk-reachable (else the victim can't walk in and the case just
+                    // hangs), so skip it if it isn't.
+                    bool fbOk = kh != null && (vh == null || !SamePlace(kh, vh));
+                    if (fbOk) { try { fbOk = MurderWatchdog.KidnapDenWalkReachable(victim, kh); } catch { fbOk = false; } }
+                    if (fbOk) { den = kh; how = "killer's home (walk-reachable; no vacant walk-reachable den found)"; }
                 }
-                if (den == null) { log.LogInfo($"[SODMotives][den] no vacant residence and killer.home is the victim's home — can't seat a clean kidnap for {MotivesPlugin.Name(killer)} -> {MotivesPlugin.Name(victim)}; watchdog will cancel + fall back to vanilla."); return false; }
+                if (den == null)
+                {
+                    log.LogInfo($"[SODMotives][den] no WALK-reachable vacant den (nor a walk-reachable killer.home) — can't seat a clean walk-native kidnap for {MotivesPlugin.Name(killer)} -> {MotivesPlugin.Name(victim)}; watchdog will cancel + fall back to vanilla.");
+                    return false;
+                }
 
                 try { killer.SetDen(den, mo); }
                 catch (Exception se)
@@ -77,66 +84,106 @@ namespace SODMotives
                 }
                 NewAddress now = null; try { now = killer.den; } catch { }
                 log.LogInfo($"[SODMotives][den] assigned {MotivesPlugin.Name(killer)}.den = {SafeName(now)} [{how}] (decorated with MO {(mo != null ? mo.name : "<none>")}). IsValidLocation will now accept it.");
+                // DIAGNOSTIC: the game seats the kidnap only once the victim is INSIDE this den, which it does by
+                // teleporting them to victim.FindSafeTeleport(den). Report whether that safe-teleport spot is
+                // actually inside the den — if not, the victim can never land in the den and the case loops.
+                try { log.LogInfo($"[SODMotives][den] teleport-viability: {MurderWatchdog.DescribeDenTeleport(victim, now)}"); } catch { }
                 return now != null;
             }
             catch (Exception e) { log.LogWarning($"[SODMotives][den] EnsureKidnapDen error: {e.Message}"); return false; }
         }
 
-        // Pick a random VACANT residence (inhabitants.Count == 0) to serve as the kidnapper's secret den,
-        // excluding the victim's and killer's own homes. Requires the den be TELEPORT-VIABLE — the game's own
-        // "GoTo den routine" seats the victim by doing victim.FindSafeTeleport(den) -> teleport, so a den with
-        // no safe-teleport spot (e.g. a hotel ROOM) can never hold the victim and hangs the case; vanilla's
-        // dens are basements / vacant flats that always have one. Returns null if none qualify.
+        // Pick a VACANT, WALK-IN-ABLE address for the kidnapper's holding den, excluding the victim's + killer's
+        // homes. Source = CityData.addressDirectory. THE ACCESS INSIGHT (2026-09-23, user's lead + in-game): the
+        // victim can only WALK into a den it isn't TRESPASSING in (Human.IsTrespassing gates the AI's pathing). A
+        // locked/owned unit (basement, hotel room) => the committed victim freezes on the street outside. Two den
+        // kinds pass: (1) an UNOWNED "Vacant address N" unit — abandoned, no owner, so nobody trespasses; PRIVATE
+        // (no residents, no public traffic) = vanilla's den; (2) an NPC-open PUBLIC venue (IsPublicallyOpen=true,
+        // e.g. "Public bathrooms") — PROVEN in-game (victim walked in + was restrained) but public, can't be
+        // locked. So PREFER the private "Vacant address" units, fall back to the open venue (proven; never lose
+        // what works). EXCLUDE basements. If the private units still don't work, the fix is an explicit access
+        // grant (NewAddress.AddOwner/AddGuestPass) in EnsureKidnapDen. Logs the pool once.
         private static NewAddress PickVacantDen(Human killer, Human victim, NewAddress victimHome, NewAddress killerHome)
         {
             try
             {
                 var cd = CityData.Instance;
-                var dir = cd != null ? cd.residenceDirectory : null;
+                var dir = cd != null ? cd.addressDirectory : null;
                 if (dir == null) return null;
-                var vacants = new List<NewAddress>();
+                var vacantAddr = new List<NewAddress>();   // unowned "Vacant address N" — private + walk-in (vanilla's den)
+                var openVenue = new List<NewAddress>();     // NPC-open public venue (bathrooms) — proven walk-reachable fallback
+                int totalVacant = 0, basements = 0, noDoor = 0; string vExamples = "", oExamples = "";
                 for (int i = 0; i < dir.Count; i++)
                 {
-                    var rc = dir[i]; if (rc == null) continue;
-                    NewAddress a = null; try { a = rc.address; } catch { }
-                    if (a == null) continue;
+                    var a = dir[i]; if (a == null) continue;
                     if (victimHome != null && SamePlace(a, victimHome)) continue;
                     if (killerHome != null && SamePlace(a, killerHome)) continue;
                     int occ = 0; try { var inh = a.inhabitants; occ = inh != null ? inh.Count : 0; } catch { occ = -1; }
-                    if (occ == 0) vacants.Add(a);
+                    if (occ != 0) continue;                          // vacant only (no residents to interfere with the hold)
+                    totalVacant++;
+                    string n = null; try { n = a.name; } catch { }
+                    if (!string.IsNullOrEmpty(n) && n.IndexOf("Basement", StringComparison.OrdinalIgnoreCase) >= 0) { basements++; continue; }
+                    if (!string.IsNullOrEmpty(n) && n.IndexOf("Vacant", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        // Require a real, lockable DOOR: some "Vacant address" units are open floors (e.g. a flooded
+                        // basement level) with no door on the room — the victim can't be sealed in, and the killer
+                        // can't lock it. Vanilla only uses enclosed units with a door. Skip the door-less ones.
+                        if (!HasLockableDoor(a)) { noDoor++; continue; }
+                        vacantAddr.Add(a);
+                        if (vExamples.Length < 120) vExamples += (vExamples.Length > 0 ? " | " : "") + n;
+                    }
+                    else
+                    {
+                        bool open = false; try { open = a.IsPublicallyOpen(false); } catch { }
+                        if (open) { openVenue.Add(a); if (oExamples.Length < 120 && !string.IsNullOrEmpty(n)) oExamples += (oExamples.Length > 0 ? " | " : "") + n; }
+                    }
                 }
-                if (vacants.Count == 0) return null;
-                // Vanilla's dens are named "Vacant address N" or "Basement NN" — genuinely spare private units
-                // where a held victim STAYS. A numbered hotel guest room (e.g. "502 Plaza Orchid Hotel") is
-                // ALSO vacant + teleport-viable but the victim won't stay in it (endless teleport loop, seen
-                // in-game). So PREFER vacant/basement-named units; fall back to any teleport-viable one.
-                var preferred = new List<NewAddress>(); var other = new List<NewAddress>();
-                for (int i = 0; i < vacants.Count; i++)
-                {
-                    var a = vacants[i]; string n = null; try { n = a.name; } catch { }
-                    bool pref = !string.IsNullOrEmpty(n) && (n.IndexOf("Vacant", StringComparison.OrdinalIgnoreCase) >= 0 || n.IndexOf("Basement", StringComparison.OrdinalIgnoreCase) >= 0);
-                    (pref ? preferred : other).Add(a);
-                }
-                NewAddress pick = PickTeleportViable(preferred, victim);
-                if (pick == null) pick = PickTeleportViable(other, victim);
+                MotivesPlugin.Log.LogInfo($"[SODMotives][den] den-pool: {totalVacant} vacant -> {vacantAddr.Count} 'Vacant address' w/door (private) + {openVenue.Count} NPC-open venue + {basements} basement + {noDoor} vacant-addr-no-door (all excluded).");
+                MotivesPlugin.Log.LogInfo($"[SODMotives][den]   'Vacant address' (try first): {(vExamples.Length > 0 ? vExamples : "<NONE>")}");
+                MotivesPlugin.Log.LogInfo($"[SODMotives][den]   open-venue fallback: {(oExamples.Length > 0 ? oExamples : "<none>")}");
+                // Prefer the private unowned "Vacant address" den; fall back to a proven NPC-open venue.
+                NewAddress pick = PickTeleportViable(vacantAddr, victim);
+                if (pick == null) pick = PickTeleportViable(openVenue, victim);
                 return pick;
             }
             catch { return null; }
         }
 
-        // Return the first address (from a bounded random sample) the VICTIM can be safely teleported into.
+        // Sanity check: the candidate den must have a usable safe-teleport node (the game needs one to seat the
+        // hold). WALK-reachability is now gated upstream in PickVacantDen via IsPublicallyOpen, so this is just a
+        // loose "has a node" check (allowTrespass=true), scanning a bounded random sample.
         private static NewAddress PickTeleportViable(List<NewAddress> cands, Human victim)
         {
             if (cands == null || cands.Count == 0) return null;
-            int tries = Math.Min(cands.Count, 40);
+            int tries = Math.Min(cands.Count, 120);
             for (int t = 0; t < tries; t++)
             {
                 var a = cands[_rng.Next(cands.Count)];
-                bool reachable = true;
-                try { if (victim != null) reachable = victim.FindSafeTeleport(a, false, true) != null; } catch { reachable = false; }
-                if (reachable) return a;
+                bool ok = true;
+                try { if (victim != null) ok = victim.FindSafeTeleport(a, false, true) != null; } catch { ok = false; }
+                if (ok) return a;
             }
             return null;
+        }
+
+        // True if the address has at least one entrance with a real, lockable DOOR (NodeAccess.door != null) — an
+        // enclosed unit the victim can be sealed into. Filters out open "Vacant address" floors (flooded basement
+        // levels etc.) that have no door, which vanilla never uses as a den. Never throws.
+        private static bool HasLockableDoor(NewAddress a)
+        {
+            try
+            {
+                var ents = a.entrances;
+                if (ents != null)
+                    for (int i = 0; i < ents.Count; i++)
+                    {
+                        var e = ents[i]; if (e == null) continue;
+                        try { if (e.door != null) return true; } catch { }
+                    }
+                try { var me = a.GetMainEntrance(); if (me != null && me.door != null) return true; } catch { }
+            }
+            catch { }
+            return false;
         }
 
         private static bool SamePlace(NewGameLocation a, NewGameLocation b)
@@ -151,6 +198,14 @@ namespace SODMotives
             // With probability (1 - MotiveCaseShare) leave this case entirely to vanilla (serial-killer,
             // signature and all). MotiveCaseShare >= 1 => never (all motive); <= 0 => always vanilla.
             return MotiveCaseShare < 1f && _rng.NextDouble() >= MotiveCaseShare;
+        }
+
+        // Should THIS kidnap case be motivated? Drawn per kidnap by the mixer's MotivatedKidnapShare slider.
+        internal static bool ShouldMotivateKidnap()
+        {
+            if (MotivatedKidnapShare <= 0f) return false;
+            if (MotivatedKidnapShare >= 1f) return true;
+            return _rng.NextDouble() < MotivatedKidnapShare;
         }
 
         // ---- bookkeeping shared with the clue injector / signature stripping / F9 ----

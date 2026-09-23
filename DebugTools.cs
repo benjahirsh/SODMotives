@@ -75,8 +75,8 @@ namespace SODMotives
         internal static KeyCode KeyCycleForce     = KeyCode.F6;
         internal static KeyCode KeyTestAccess     = KeyCode.F7;   // MERGED test toggle: ghost + always-answer together (used as a pair)
         internal static KeyCode KeyTeleportScene  = KeyCode.F10;
-        internal static KeyCode KeyTeleportWork   = KeyCode.F11;
-        internal static KeyCode KeyTeleportKnower = KeyCode.F12;
+        internal static KeyCode KeyTeleportMeet   = KeyCode.F11;   // teleport to the kidnap MEETING location (was: victim's work)
+        internal static KeyCode KeyTeleportVictimHome = KeyCode.F12;   // teleport to the VICTIM's home (was: nearest case-knower)
         internal static KeyCode KeyTriggerMurder  = KeyCode.F4;   // force the game's next murder NOW (fast test loop)
         internal static KeyCode KeyTeleportKillerKnower = KeyCode.F8;   // jump to the nearest knower of the KILLER
         internal static KeyCode KeyForceSniper    = KeyCode.F3;   // CREATE a motivated sniper case immediately (bypasses the scheduler)
@@ -125,11 +125,23 @@ namespace SODMotives
                 go.hideFlags = HideFlags.HideAndDontSave;
                 go.AddComponent<DebugHotkey>();
                 if (EnableDebugKeys)
-                    MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys ON (defaults; rebindable in the config menu -> SOD Motives / Debug Keys): F2=FORCE a motivated KIDNAP case now, F3=FORCE a motivated SNIPER case now, F4=trigger next murder NOW, F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=TEST ACCESS (ghost + always-answer together), F8=teleport to nearest KILLER-knower, F9=case solution overlay, F10=teleport to scene, F11=to victim's work, F12=to nearest case-knower (victim), Home=teleport to City Hall, End=toggle fast-forward (simulation speed). (F1 reserved by the game, F5 unbound.)");
+                    MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys ON (defaults; rebindable in the config menu -> SOD Motives / Debug Keys): F2=FORCE a motivated KIDNAP case now, F3=FORCE a motivated SNIPER case now, F4=trigger next murder NOW, F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=TEST ACCESS (ghost + always-answer together), F8=teleport to nearest KILLER-knower, F9=case solution overlay, F10=teleport to scene, F11=to kidnap MEETING location, F12=to VICTIM's home, Home=teleport to City Hall, End=toggle fast-forward (simulation speed). (F1 reserved by the game, F5 unbound.)");
                 else
                     MotivesPlugin.Log.LogInfo($"[SODMotives] Debug tooling OFF. {KeyCaseSolution} = case-solution overlay is always available (set it to None in [Debug Keys] to disable); enable [Debug] EnableDebugKeys in the config overlay for the full test loop (force event, teleports, ghost, etc.).");
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] hotkey register failed: {e.Message}"); }
+        }
+
+        // TESTING: set the player's money to a high value so a ransom can be paid immediately. Fired when test
+        // access (F7) turns on. Never throws.
+        internal static void GiveTestCash(int amount = 10000)
+        {
+            try
+            {
+                var gc = GameplayController.Instance;
+                if (gc != null) { gc.SetMoney(amount); MotivesPlugin.Log.LogInfo($"[SODMotives] TEST CASH: set player money to {amount} (so you can pay a ransom)."); }
+            }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] GiveTestCash error: {e.Message}"); }
         }
 
         // Keep the player unnoticed while ghost mode is on (called every frame).
@@ -222,8 +234,8 @@ namespace SODMotives
         internal static void ForceSniperCase() => ForceCase(MurderPreset.CaseType.sniper, "F3");
 
         // F2 (testing): CREATE a motivated KIDNAP case RIGHT NOW, same mechanism as the sniper force key.
-        // The override honours kidnap only when [Troubleshooting] MotivateKidnaps is ON; the force key works
-        // regardless (it calls ExecuteNewMurder directly with a motivated pair), so it's the way to probe the
+        // The override motivates natural kidnaps per the [Motive Mix] MotivatedKidnapShare slider; this force key
+        // works regardless (it calls ExecuteNewMurder directly with a motivated pair), so it's the way to probe the
         // waitForLocation/den hang. Watch the F9 MURDER STATE + LogOutput.log [trace] lines: reaching
         // 'executing'/'post' = the motive-chosen pair supports a kidnap; stuck at 'waitForLocation' = the game
         // can't seat a holding "den" for this kidnapper (then we constrain the victim pool + fall back).
@@ -370,26 +382,49 @@ namespace SODMotives
             MotivesPlugin.Log.LogInfo($"[SODMotives] FORCE EVENT = {(ForceEventType.HasValue ? ForceEventType.Value.ToString() + " (motive " + ForceMotiveType + ")" : "OFF (any motive)")} — applies to the NEXT new murder.");
         }
 
-        internal static void TeleportToWork()
+        // Teleport to the kidnap MEETING location — the public spot (restaurant) the killer lures the victim to
+        // before the abduction. This is the first leg we want to make match vanilla (walked, physical trail), so
+        // being able to jump there and watch it happen is the key dev aid for the meet work.
+        internal static void TeleportToMeet()
         {
             var log = MotivesPlugin.Log;
             try
             {
                 var mc = MurderController.Instance;
-                Human victim = null;
-                try { var m = mc != null ? mc.GetCurrentMurder() : null; victim = m != null ? m.victim : null; } catch { }
-                if (victim == null && mc != null) victim = mc.currentVictim;
-                if (victim == null) { log.LogInfo("[SODMotives][F11] No victim."); return; }
-                NewGameLocation work = null;
-                try { if (victim.job != null && victim.job.employer != null) work = victim.job.employer.placeOfBusiness; } catch { }
-                if (work == null) { log.LogInfo("[SODMotives][F11] Victim has no workplace."); return; }
+                var m = mc != null ? mc.GetCurrentMurder() : null;
+                if (m == null) { log.LogInfo("[SODMotives][F11] No active case."); return; }
+                NewGameLocation meet = null;
+                try { meet = m.meetRestaurant; } catch { }
+                if (meet == null) { log.LogInfo("[SODMotives][F11] No meeting location (meetRestaurant) set for this case."); return; }
                 var player = Player.Instance;
-                NewNode node = player.FindSafeTeleport(work, false, true);
-                if (node == null) { log.LogInfo("[SODMotives][F11] No safe spot at the workplace."); return; }
+                NewNode node = player.FindSafeTeleport(meet, false, true);
+                if (node == null) { log.LogInfo($"[SODMotives][F11] No safe teleport spot at the meeting location {meet.name}."); return; }
                 player.Teleport(node, null, true, false, true);
-                log.LogInfo($"[SODMotives][F11] Teleported to victim's workplace: {work.name}");
+                log.LogInfo($"[SODMotives][F11] Teleported to the meeting location: {meet.name}");
             }
-            catch (Exception e) { log.LogWarning($"[SODMotives][F11] work teleport error: {e}"); }
+            catch (Exception e) { log.LogWarning($"[SODMotives][F11] meet teleport error: {e}"); }
+        }
+
+        // Teleport to the VICTIM's home — where the ransom note lands and the investigation starts for a kidnap.
+        internal static void TeleportToVictimHome()
+        {
+            var log = MotivesPlugin.Log;
+            try
+            {
+                var mc = MurderController.Instance;
+                var m = mc != null ? mc.GetCurrentMurder() : null;
+                Human victim = m != null ? m.victim : null;
+                if (victim == null && mc != null) victim = mc.currentVictim;
+                if (victim == null) { log.LogInfo("[SODMotives][F12] No victim."); return; }
+                NewAddress home = null; try { home = victim.home; } catch { }
+                if (home == null) { log.LogInfo("[SODMotives][F12] Victim has no home."); return; }
+                var player = Player.Instance;
+                NewNode node = player.FindSafeTeleport(home, false, true);
+                if (node == null) { log.LogInfo($"[SODMotives][F12] No safe teleport spot at the victim's home {home.name}."); return; }
+                player.Teleport(node, null, true, false, true);
+                log.LogInfo($"[SODMotives][F12] Teleported to victim's home: {home.name}");
+            }
+            catch (Exception e) { log.LogWarning($"[SODMotives][F12] victim-home teleport error: {e}"); }
         }
 
         // Teleport to City Hall — a fixed central landmark (handy when a case's scene is unresolved, e.g. a
@@ -529,9 +564,33 @@ namespace SODMotives
                 Overlay.Add((ours ? "CASE TYPE: motivated (mod)" : "CASE TYPE: vanilla / not overridden") + $"  [{murderType}]");
                 try { if (mrd != null) Overlay.Add($"MURDER STATE: {mrd.state}"); } catch { }
 
-                Overlay.Add($"KILLER: {MotivesPlugin.Name(killer)}");
-                Overlay.Add($"VICTIM: {MotivesPlugin.Name(victim)}");
+                Overlay.Add($"KILLER: {MotivesPlugin.Name(killer)}  @ {HomeName(killer)}");
+                Overlay.Add($"VICTIM: {MotivesPlugin.Name(victim)}  @ {HomeName(victim)}");
                 Overlay.Add($"SCENE : {scene}");
+                // Meeting location (kidnap): the public spot the killer lures the victim to before the abduction.
+                // F11 teleports here (see TeleportToMeet). Also show the killer's den (the hold location) if set.
+                try
+                {
+                    if (mrd != null && mrd.preset != null && mrd.preset.caseType == MurderPreset.CaseType.kidnap)
+                    {
+                        string meet = "<none set>"; try { if (mrd.meetRestaurant != null) meet = mrd.meetRestaurant.name; } catch { }
+                        Overlay.Add($"MEET  : {meet}   (F11 to teleport)");
+                        NewAddress denAddr = null; string den = "<none>";
+                        try { if (killer != null) denAddr = killer.den; if (denAddr != null) den = denAddr.name; } catch { }
+                        Overlay.Add($"DEN   : {den}");
+                        // WALK-NATIVE watch: is the den walk-reachable, and is the victim walking into it? (dist to
+                        // the den anchor should shrink to ~0 as the victim walks the meet->den leg, then victim@den
+                        // flips true and the case seats — the real trail, no teleport). Lets you watch it live on F9.
+                        if (denAddr != null && victim != null)
+                        {
+                            bool walkOk = false; try { walkOk = MurderWatchdog.KidnapDenWalkReachable(victim, denAddr); } catch { }
+                            bool atDen = false; try { var vl = victim.currentGameLocation; atDen = vl != null && vl.Pointer == denAddr.Pointer; } catch { }
+                            float dist = -1f; try { var vn = victim.currentNode; var da = denAddr.anchorNode; if (vn != null && da != null) dist = Vector3.Distance(vn.position, da.position); } catch { }
+                            Overlay.Add($"        walk-reachable={walkOk}  victim@den={atDen}  dist={(dist < 0 ? "?" : dist.ToString("0") + "m")}");
+                        }
+                    }
+                }
+                catch { }
 
                 // MOTIVE + SUSPECT POOL read the REAL event-backed pool the killer was drawn from
                 // (MurderSelector), not the retired like-based Motive.Score.
@@ -587,6 +646,13 @@ namespace SODMotives
             // Mirror to log too.
             log.LogInfo("[SODMotives][F9] ---- case solution ----");
             foreach (var l in Overlay) log.LogInfo("[SODMotives][F9]   " + l);
+        }
+
+        // Home address name for the F9 panel (shown next to the killer/victim names so the tester can jump there).
+        private static string HomeName(Human h)
+        {
+            try { return h != null && h.home != null ? h.home.name : "?"; }
+            catch { return "?"; }
         }
 
         // The combined victim-interview list: every NPC who KNOWS THE VICTIM'S NAME (can identify the
@@ -830,8 +896,8 @@ namespace SODMotives
                     if (Input.GetKeyDown(DebugTools.KeyTeleportCityHall)) DebugTools.TeleportToCityHall();
                     if (Input.GetKeyDown(DebugTools.KeyTimeBoost)) DebugTools.ToggleTimeBoost();
                     if (Input.GetKeyDown(DebugTools.KeyTeleportScene)) DebugTools.TeleportToScene();
-                    if (Input.GetKeyDown(DebugTools.KeyTeleportWork)) DebugTools.TeleportToWork();
-                    if (Input.GetKeyDown(DebugTools.KeyTeleportKnower)) DebugTools.TeleportToNearestKnower();
+                    if (Input.GetKeyDown(DebugTools.KeyTeleportMeet)) DebugTools.TeleportToMeet();
+                    if (Input.GetKeyDown(DebugTools.KeyTeleportVictimHome)) DebugTools.TeleportToVictimHome();
                     if (Input.GetKeyDown(DebugTools.KeyTeleportKillerKnower)) DebugTools.TeleportToNearestKillerKnower();
                     // MERGED test toggle (one key flips ghost + always-answer together — they're always used
                     // as a pair): walk freely (NPCs ignore you) AND interrogate anyone without a bribe.
@@ -841,7 +907,8 @@ namespace SODMotives
                         DebugTools.Ghost = on;
                         DebugTools.AlwaysAnswer = on;
                         if (!on) DebugTools.ClearGhost();
-                        MotivesPlugin.Log.LogInfo($"[SODMotives] TEST ACCESS {(on ? "ON" : "OFF")} — ghost (NPCs ignore you) + always-answer (no bribe) toggled together.");
+                        if (on) DebugTools.GiveTestCash();   // top up money so you can pay a ransom immediately
+                        MotivesPlugin.Log.LogInfo($"[SODMotives] TEST ACCESS {(on ? "ON" : "OFF")}: ghost (NPCs ignore you) + always-answer (no bribe) + test cash, toggled together.");
                     }
                     if (DebugTools.Ghost) DebugTools.ApplyGhost();
                 }

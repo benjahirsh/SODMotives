@@ -533,6 +533,27 @@ namespace SODMotives
             if (e.group != null)
                 for (int i = 0; i < e.group.Count; i++)
                     AddFor(e, e.group[i], conns, partners);
+
+            // When partners are EXCLUDED (affairs are secret from the betrayed partners), make sure they really
+            // are excluded: a live-in partner is otherwise pulled into the audience via a housemate /
+            // familiarResidence / neighbor connection, so they'd gossip about an affair they're meant to be in
+            // the dark about. Drop them here. They stay SUSPECTS (their motive edges are separate); the killer
+            // (also a betrayed partner) likewise won't narrate their own motive.
+            if (!partners)
+            {
+                RemovePartner(e, e.a);
+                RemovePartner(e, e.b);
+                if (e.group != null)
+                    for (int i = 0; i < e.group.Count; i++)
+                        RemovePartner(e, e.group[i]);
+            }
+        }
+
+        private static void RemovePartner(SocialEvent e, Human h)
+        {
+            if (h == null) return;
+            Human p = null; try { p = h.partner; } catch { }
+            if (p != null) try { e.knownBy.Remove(p.humanID); } catch { }
         }
 
         private static void AddFor(SocialEvent e, Human h, Acquaintance.ConnectionType[] conns, bool includePartner)

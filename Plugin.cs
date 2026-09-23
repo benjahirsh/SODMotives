@@ -13,7 +13,7 @@ namespace SODMotives
     // It intentionally changes NOTHING in the game yet — this is how we lock the
     // design to reality (call order, whether victim depends on murderer, and the
     // actual range/meaning of Acquaintance.like) before writing the override.
-    [BepInPlugin(Guid, "SOD Motives", "1.0.0")]
+    [BepInPlugin(Guid, "SOD Motives", "1.1.0")]
     public class MotivesPlugin : BasePlugin
     {
         public const string Guid = "com.benhirsh.sodmotives";
@@ -43,6 +43,9 @@ namespace SODMotives
             BindApply("Motive Mix", "MotiveCaseShare", 1.0f,
                 "MAIN KNOB: fraction (0..1) of murders that are relationship-MOTIVE cases; the rest are left as vanilla serial-killer cases. Default 1 = every case is a motive case (so the mod always shows). Lower it to mix in some classic untraceable serial-killer hunts (with their signatures) for variety; 0 = all vanilla. Applies to the next case.",
                 v => MurderSelector.MotiveCaseShare = v, R01(), Order(100));
+            BindApply("Motive Mix", "MotivatedKidnapShare", 1f,
+                "KIDNAP analogue of MotiveCaseShare: fraction (0..1) of KIDNAP cases that get a motivated killer->victim pair (a walk-native abduction to a real holding den — the victim walks there and is restrained, leaving a real trail); the rest run vanilla. Default 1 = every kidnap is motivated; 0 = kidnaps stay vanilla. Requires the sandbox 'Kidnapping' case type ON. Sniper cases always stay vanilla. Applies to the next kidnap.",
+                v => MurderSelector.MotivatedKidnapShare = v, R01(), Order(95));
             // The five motive families — each a 0..1 weight, NORMALISED together, so any mix works (they need
             // not sum to 1). Set one to 0 to drop that motive from the blend.
             BindApply("Motive Mix", "AffairShare", 0.35f,
@@ -155,9 +158,6 @@ namespace SODMotives
             BindApply("Troubleshooting", "FastMurderCadence", false,
                 "TESTING: force the pause between murders to 0 so cases chain back-to-back with no gap. NOTE: this only compresses the wait BETWEEN murders — it does not speed the current murder's planning/enactment, and it does NOT force a sniper/kidnap case (those are picked by the game and can't be forced without a dev trigger). Leave false for normal play; restores the original cadence when turned off.",
                 v => DebugTools.FastMurderCadence = v);
-            BindApply("Troubleshooting", "MotivateKidnaps", false,
-                "EXPERIMENTAL: also motivate KIDNAP cases (swap in a motivated killer -> victim pair) instead of leaving them fully vanilla. Default OFF — motivated kidnaps are unproven and may stall the case at waitForLocation while the game hunts a viable holding 'den' for the motive-chosen kidnapper. Sniper cases always stay vanilla. Use with the F1 force-kidnap key + F9 overlay to test.",
-                v => MurderSelector.MotivateKidnaps = v);
 
             // --- Debug (developer tooling) ---
             BindApply("Debug", "EnableDebugKeys", false,
@@ -178,7 +178,7 @@ namespace SODMotives
                 "TESTING: immediately create a motivated SNIPER case (killer + victim from the mod's selector, a loaded sniper preset/MO), bypassing the game's slow scheduler. Watch the F9 MURDER STATE to see whether it executes or stalls at waitForLocation. Set to None to disable.",
                 v => DebugTools.KeyForceSniper = v);
             BindApply("Debug Keys", "ForceKidnapCase", UnityEngine.KeyCode.F2,
-                "TESTING: immediately create a motivated KIDNAP case (killer + victim from the mod's selector, a loaded kidnap preset/MO), bypassing the game's slow scheduler. Works regardless of MotivateKidnaps. Watch the F9 MURDER STATE + LogOutput.log [trace] lines: 'executing'/'post' = works; stuck at 'waitForLocation' = the kidnapper has no viable holding den. F1 is reserved by the game. Set to None to disable.",
+                "TESTING: immediately create a motivated KIDNAP case (killer + victim from the mod's selector, a loaded kidnap preset/MO), bypassing the game's slow scheduler. Works regardless of the MotivatedKidnapShare slider. Watch the F9 MURDER STATE: 'executing'/'post' = works; the victim walks to a real den and is restrained. F1 is reserved by the game. Set to None to disable.",
                 v => DebugTools.KeyForceKidnap = v);
             BindApply("Debug Keys", "CaseSolutionOverlay", UnityEngine.KeyCode.F9,
                 "Toggle the on-screen case-solution overlay (killer / victim / suspect pool / injected clues).",
@@ -198,12 +198,12 @@ namespace SODMotives
             BindApply("Debug Keys", "TeleportToScene", UnityEngine.KeyCode.F10,
                 "Teleport to the current crime scene.",
                 v => DebugTools.KeyTeleportScene = v);
-            BindApply("Debug Keys", "TeleportToWork", UnityEngine.KeyCode.F11,
-                "Teleport to the victim's workplace.",
-                v => DebugTools.KeyTeleportWork = v);
-            BindApply("Debug Keys", "TeleportToNearestKnower", UnityEngine.KeyCode.F12,
-                "Teleport to the nearest case-knower.",
-                v => DebugTools.KeyTeleportKnower = v);
+            BindApply("Debug Keys", "TeleportToMeet", UnityEngine.KeyCode.F11,
+                "Teleport to the kidnap MEETING location (the public spot the killer lures the victim to before the abduction). Only meaningful for a kidnap case with a meet set.",
+                v => DebugTools.KeyTeleportMeet = v);
+            BindApply("Debug Keys", "TeleportToVictimHome", UnityEngine.KeyCode.F12,
+                "Teleport to the VICTIM's home (where a kidnap's ransom note lands and the investigation starts).",
+                v => DebugTools.KeyTeleportVictimHome = v);
 
             // Live re-apply: when a knob changes (overlay edit / .cfg reload), push it into its static field.
             Config.SettingChanged += (sender, e) =>
@@ -574,16 +574,16 @@ namespace SODMotives
                 }
                 if (preset != null && preset.caseType != MurderPreset.CaseType.murder)
                 {
-                    // Kidnap is opt-in via [Troubleshooting] MotivateKidnaps (EXPERIMENTAL — may stall at
-                    // waitForLocation while the game hunts a viable holding "den" for the motive-chosen
-                    // kidnapper). Sniper always stays vanilla (its motivated form stalls in a travellingTo loop).
-                    bool allowKidnap = MurderSelector.MotivateKidnaps && preset.caseType == MurderPreset.CaseType.kidnap;
+                    // KIDNAP: motivate it with probability [Motive Mix] MotivatedKidnapShare (the mixer slider);
+                    // otherwise leave it vanilla. SNIPER always stays vanilla (its motivated form stalls in a
+                    // travellingTo loop). A motivated kidnap runs the walk-native abduction (den picked below).
+                    bool allowKidnap = preset.caseType == MurderPreset.CaseType.kidnap && MurderSelector.ShouldMotivateKidnap();
                     if (!allowKidnap)
                     {
-                        MotivesPlugin.Log.LogInfo($"[SODMotives] override: special case type '{preset.caseType}' (kidnap/sniper) — leaving vanilla, untouched.");
+                        MotivesPlugin.Log.LogInfo($"[SODMotives] override: special case type '{preset.caseType}' — leaving vanilla, untouched (kidnap share {MurderSelector.MotivatedKidnapShare:0.##}; sniper always vanilla).");
                         return;
                     }
-                    MotivesPlugin.Log.LogInfo("[SODMotives] override: MotivateKidnaps ON — motivating a KIDNAP case (EXPERIMENTAL; watch the F9 MURDER STATE for a waitForLocation stall).");
+                    MotivesPlugin.Log.LogInfo("[SODMotives] override: motivating a KIDNAP case (walk-native abduction to a real den).");
                 }
                 if (MurderSelector.ShouldForceVanilla())
                 {
@@ -605,9 +605,9 @@ namespace SODMotives
                     newMurderer = m; newVictim = v; victimSite = null;
                     __instance.currentMurderer = m; __instance.currentVictim = v;
 
-                    // KIDNAP (MotivateKidnaps): the swapped-in killer needs a den or the case hangs at
-                    // waitForLocation (IsValidLocation accepts only murderer.den). Assign one exactly as the
-                    // F2 force path does — a vacant, teleport-viable residence.
+                    // KIDNAP: the swapped-in killer needs a den or the case hangs at waitForLocation
+                    // (IsValidLocation accepts only murderer.den). Assign a vacant, walk-in-able "Vacant address"
+                    // den (unowned, so the victim can walk in) — same path the F2 force key uses.
                     if (preset != null && preset.caseType == MurderPreset.CaseType.kidnap)
                         MurderSelector.EnsureKidnapDen(m, v, motive);
 
@@ -675,6 +675,16 @@ namespace SODMotives
     [HarmonyPatch(typeof(MurderController.Murder), nameof(MurderController.Murder.SetMurderState))]
     internal static class Patch_MurderStateInject
     {
+        // Block the kidnapper's premature KILL (our motivated kidnaps only): our victim-swap leaves the kidnap's
+        // kill timers expired, so the game tries to kill the held victim almost immediately. Skip the kill's
+        // state transitions until our fair deadline (MurderWatchdog decides); the victim stays held + rescuable.
+        static bool Prefix(MurderController.Murder __instance, MurderController.MurderState newState)
+        {
+            try { if (MurderWatchdog.ShouldBlockKidnapKill(__instance, newState)) return false; }
+            catch { }
+            return true;
+        }
+
         static void Postfix(MurderController.Murder __instance, MurderController.MurderState newState)
         {
             try
@@ -690,6 +700,17 @@ namespace SODMotives
                 // Track 'executing' entry/exit for the stall watchdog (recovers our overridden cases
                 // that soft-lock because the killer never lands a lethal blow — see MurderWatchdog).
                 MurderWatchdog.OnState(__instance.victim.humanID, newState);
+
+                // For kidnaps: note once the case has reached the HOLD (post/escaping/unsolved). After that, a
+                // return to travellingTo/executing is the KILL (not the abduction) — used to block it until the
+                // fair deadline (MurderWatchdog.ShouldBlockKidnapKill).
+                try
+                {
+                    if (__instance.preset != null && __instance.preset.caseType == MurderPreset.CaseType.kidnap
+                        && (newState == MurderController.MurderState.post || newState == MurderController.MurderState.escaping || newState == MurderController.MurderState.unsolved))
+                        MurderWatchdog.KidnapReachedHold.Add(__instance.victim.humanID);
+                }
+                catch { }
 
                 // Inject clues only once the murder has actually happened.
                 if (newState == MurderController.MurderState.post)

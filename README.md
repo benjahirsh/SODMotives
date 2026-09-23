@@ -13,8 +13,8 @@ I'm keeping this vague on purpose so as not to spoil the experience. The rest of
 Some things to know before starting:
 
 - **Asking "Do you know this person?" now tells you more.** On top of the usual reply, an NPC will also share what they know about that person's involvement in events around town. This is your main tool for building a suspect list, and it is easy to miss, so lean on it.
-- **By default every murder will be a motive case.** You can configure this (`` ` `` key) to mix motive murders in with the classic vanilla cases.
-- **"Procedural Murders" in the Gameplay settings must be turned ON (default)** for the mod to generate motives. Sniper and kidnapping still occur as vanilla cases; I'm working on adding motives for them also.
+- **By default every murder and kidnapping is a motive case.** You can configure this in the overlay (`` ` `` key) to mix motive cases in with the classic vanilla ones; under Motive Mix, separate sliders set the share for murders and for kidnappings.
+- **"Procedural Murders" in the Gameplay settings must be turned ON (default)** for the mod to generate motives, with "Regular Murders" enabled for murder cases and the "Kidnapping" case type enabled for motivated kidnappings. Motives for Sniper cases are in development.
 
 ## Requirements
 
@@ -89,16 +89,6 @@ There is a built-in diagnostics view to help me fix issues. Press **F9** to open
 **Please leave a comment on the [Steam guide](https://steamcommunity.com/sharedfiles/filedetails/?id=3804929108).** Feedback and bug reports are very welcome.
 
 ---
-
-## For developers
-
-Built as a BepInEx 6 IL2CPP plugin (HarmonyX) against the game's interop assemblies. Build with:
-
-```
-dotnet build -c Release
-```
-
-The source is organised by motive family (affairs, workplace, property, feuds and debts), with separate pieces for case selection, clue injection, interrogation gossip, and save/reload persistence. Issues and pull requests welcome.
 
 ## License
 

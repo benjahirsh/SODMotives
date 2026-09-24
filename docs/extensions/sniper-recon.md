@@ -341,3 +341,29 @@ NORMAL speed (FastMurderCadence OFF). I read `[sniper-obs]`/`[sniper-live]` (doe
 `sniperVictimSite`? does it shoot from a rooftop and leave a window/trajectory clue?) to see whether the street MO
 gives a coherent, solvable sniper case for an arbitrary motivated pair. That decides the fix: route motivated snipers
 to the street MO (+ a `siteVantage`-viable site check), and only use VoyeurSniper when `homeVantage=FOUND`.
+
+### 2026-09-24 (playtest 3) — the MO list (definitive) + natural path keeps picking VoyeurSniper
+`[mo-dump]` printed the authoritative list — exactly **2 sniper MOs**:
+- **`ExCopSniper`**: `requiresSniperVantageAtHome=False` ; allow home/work/public/streets/den/anywhere =
+  T/T/T/T/F/F. The STREET/rooftop type (can shoot from a public rooftop at a routine site).
+- **`VoyeurSniper`**: `requiresSniperVantageAtHome=True` ; allow home/work/public/streets = T/T/F/F. Home-voyeur
+  (shoots only from home/work, needs a pre-existing vantage; no public rooftops).
+
+Playtest 3 case: Isabel Aguayo#243 -> Justice Lovelace#136 `[workOther,boss]`, natural (slider) case. **Picked
+`VoyeurSniper` AGAIN**, targeting the victim at WORK (`SetMurderLocation -> Juniper`). `siteVantage=NONE` (Juniper) +
+`homeVantage=NONE` (victim home) for all 200 samples; killer 802 Hodge Projects has LOS to neither. Game
+force-killed in a bathroom again. **So the natural path never picks `ExCopSniper`** — it almost certainly requires an
+ex-cop killer, which our relationship-chosen killers aren't, so the game defaults to `VoyeurSniper`. This is why the
+`MotivatedSniperShare` slider only ever produced VoyeurSniper cases. To test the street MO we must FORCE it (F3 now
+does: it prefers `requiresSniperVantageAtHome==false`, i.e. `ExCopSniper`; `ExecuteNewMurder` doesn't validate killer
+traits, so forcing it onto a non-ex-cop pair is mechanically fine).
+
+**NEXT (USER): press F3 (NOT the slider) to force `ExCopSniper`** — normal speed, `FastMurderCadence` off. This is the
+decisive test of the street/rooftop pattern for an arbitrary motivated pair. I read `[sniper-obs]`/`[sniper-live]`:
+does `ExCopSniper` set a public `sniperVictimSite`, find a rooftop vantage (`siteVantage=FOUND`), send the killer
+there, and shoot coherently with a window/trajectory clue? Two outcomes: (a) it works -> fix = route motivated
+snipers to `ExCopSniper` (+ a `siteVantage`-viable gate, else vanilla); (b) it ALSO force-resolves with no vantage ->
+no MO works for arbitrary pairs, so the fix is the vantage-viable CONSTRAINT (only motivate pairs that already have a
+viable site+vantage, else vanilla) which makes motivated snipers rarer but coherent. NOTE: the game force-fires
+`ExecuteSniperShot` even at `siteVantage=NONE` (seen twice), so a `siteVantage`/`homeVantage` gate is needed
+regardless of which MO we use.

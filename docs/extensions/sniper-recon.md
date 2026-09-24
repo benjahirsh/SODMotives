@@ -221,3 +221,29 @@ the victim's exposed site, confirm a vantage exists for the killer, and only the
 `vantage=NONE` for our pairs, validating this before building the constraint. Open question: can we pre-filter
 the victim pool by "some site of theirs has a killer-reachable vantage", or do we pick the pair then search for a
 viable site among the victim's routine locations?
+
+### 2026-09-24 (later) — branch brought current + weapon probe added (RESUME: run the confirmation playtest)
+- **Merged `v2` into `sniper-wip`** (commit `ee862be`): inherits the shipped 1.1.1 kidnap save/load fixes
+  (`EnsureVictimDenGoal` rebuild + `KidnapReachedHold` re-arm) and the F2 force-kidnap key removal. The merge was
+  region-disjoint (kidnap fix vs sniper diagnostics vs F8/F12 tailing) so it auto-resolved; verified F2 gone
+  (keys jump F3->F4), F3/F8/F12 sniper+tailing bindings intact, and the kidnap fix methods present. Builds clean.
+- **Added a WEAPON/equipment probe** to the sniper diagnostics (commit `d7c5b11`): `DescribeSniperWeapon(murder)`
+  reads `Murder.acquiredEquipment` / `weaponPreset` / `weapon` (the real Interactable) / `weaponStr` and appends to
+  both `[sniper-obs]` (once) and `[sniper-live]` (throttled). Rationale: a motivated sniper that reaches
+  `travellingTo` has PASSED `acquireEquipment`, so it should read `acquired=True held=<a rifle>`; if it instead
+  reads no weapon, the loop is an acquire failure, not geometry, and the fix is different. Dev-only (gated behind
+  `[Debug] EnableDebugKeys`). Build clean 0-warn, auto-deployed.
+- **Watchdog note (so the playtest isn't cut short):** a forced sniper victim IS in `OverriddenVictimIds`, so the
+  generic `waitForLocation` stall-cancel (`WaitLocationStallHours=12`) applies. It reverts our forced sniper to
+  vanilla after 12 *game-hours* accumulated in `waitForLocation` (the clock does NOT reset across a
+  waitForLocation<->travellingTo re-pick loop). That is ample: the `[sniper-live]` sampler covers ~10 game-hours
+  (200 samples x 0.05h), so a forced sniper yields plenty of loop samples before the clean revert. (Cosmetic: the
+  cancel log line is kidnap-worded — "never WALKED into the den" — misleading for a sniper; the vantage-viable
+  redesign will replace this path, so left as-is.)
+- **IMMEDIATE NEXT (USER playtest, then I read the logs myself):** sandbox, `[Debug] EnableDebugKeys=true`, NORMAL
+  speed, Sniper case type available. Press **F3** to force a motivated (OURS) sniper. Let it run; tail with F8
+  (killer) / F12 (victim). Then I read `LogOutput.log` for `[sniper-obs]`/`[sniper-live]` to CONFIRM the hypothesis:
+  `OURS` pairs should show `vantage=NONE` (validating geometry as the loop cause) with `weapon: acquired=True`
+  (ruling out an acquire failure). If instead `vantage=FOUND` but the killer never reaches it, or `acquired=False`,
+  the fix direction changes. Only after this confirmation do I build the vantage-viable constraint (Plugin.cs
+  override un-guard behind a default-0 `MotivatedSniperShare` slider + a viability check in `MurderSelector`).

@@ -164,6 +164,9 @@ namespace SODMotives
             BindApply("Troubleshooting", "FastMurderCadence", false,
                 "TESTING: force the pause between murders to 0 so cases chain back-to-back with no gap. NOTE: this only compresses the wait BETWEEN murders — it does not speed the current murder's planning/enactment, and it does NOT force a sniper/kidnap case (those are picked by the game and can't be forced without a dev trigger). Leave false for normal play; restores the original cadence when turned off.",
                 v => DebugTools.FastMurderCadence = v);
+            BindApply("Troubleshooting", "ForceVanillaSniperMO", false,
+                "TESTING (dev): force the game's OWN next scheduled murder to use the STREET sniper MO (ExCopSniper), which the game rarely picks on its own. Pair with [Motive Mix] MotivatedSniperShare=0 + MotiveCaseShare=0 (so the mod leaves the case untouched) + the sandbox 'Sniper cases' type ON to observe a pure VANILLA ExCopSniper. Leave false for normal play; restores the game's debug fields when turned off.",
+                v => DebugTools.ForceVanillaSniperMO = v);
 
             // --- Debug (developer tooling) ---
             BindApply("Debug", "EnableDebugKeys", false,

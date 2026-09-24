@@ -422,6 +422,45 @@ namespace SODMotives
             catch { }
         }
 
+        // Testing: while ForceVanillaSniperMO is on, set the game's OWN force-case fields
+        // (MurderController.debugMurderPreset + debugMO) to the Sniper preset + the STREET sniper MO (ExCopSniper),
+        // so the game's NEXT scheduled murder is an ExCopSniper (rare naturally — its MO scoring favours Retired
+        // killers). Pair with [Motive Mix] MotivatedSniperShare=0 + MotiveCaseShare=0 so our override leaves it
+        // untouched = a PURE VANILLA ExCopSniper to observe. Captures/restores the fields when toggled off. No-op off.
+        internal static bool ForceVanillaSniperMO = false;
+        private static bool _fvsCaptured = false;
+        private static MurderPreset _fvsOrigPreset; private static MurderMO _fvsOrigMO;
+        internal static void ApplyForceVanillaSniperMO()
+        {
+            try
+            {
+                var mc = MurderController.Instance;
+                if (mc == null) return;
+                if (ForceVanillaSniperMO)
+                {
+                    var mo = MurderWatchdog.SniperMO(false);   // ExCopSniper (requiresSniperVantageAtHome == false)
+                    MurderPreset preset = null;
+                    try { var c = mo != null ? mo.compatibleWith : null; if (c != null) for (int i = 0; i < c.Count; i++) { var p = c[i]; if (p != null && p.caseType == MurderPreset.CaseType.sniper) { preset = p; break; } } } catch { }
+                    if (mo == null || preset == null) return;
+                    if (!_fvsCaptured)
+                    {
+                        try { _fvsOrigPreset = mc.debugMurderPreset; _fvsOrigMO = mc.debugMO; } catch { }
+                        _fvsCaptured = true;
+                        MotivesPlugin.Log.LogInfo($"[SODMotives] FORCE VANILLA ExCopSniper ON — set debugMurderPreset={preset.name} + debugMO={mo.name}; the game's next murder should be an ExCopSniper. Set MotivatedSniperShare=0 + MotiveCaseShare=0 so it stays VANILLA (our override won't touch it). Turn off to restore.");
+                    }
+                    try { mc.debugMurderPreset = preset; } catch { }
+                    try { mc.debugMO = mo; } catch { }
+                }
+                else if (_fvsCaptured)
+                {
+                    try { mc.debugMurderPreset = _fvsOrigPreset; mc.debugMO = _fvsOrigMO; } catch { }
+                    MotivesPlugin.Log.LogInfo("[SODMotives] FORCE VANILLA ExCopSniper OFF — restored the game's debug preset/MO.");
+                    _fvsCaptured = false;
+                }
+            }
+            catch { }
+        }
+
         // F6: cycle which SPECIFIC event type the NEXT murder is forced to (finer than the old motive-type
         // cycle — Layoffs vs Promotion, Eviction vs RentArrears vs Debt are now separable). The filter is
         // applied in TryPickVictimCentric (which also narrows by the mapped motive + skips case-type
@@ -975,6 +1014,10 @@ namespace SODMotives
                 // Testing accelerator (config-gated, default off; independent of EnableDebugKeys) — hold the
                 // murder cadence low while on, restore on off. Self-gates on FastMurderCadence.
                 DebugTools.ApplyFastCadence();
+
+                // Testing: force the game's OWN next sniper to be the street MO (ExCopSniper) so we can observe a
+                // VANILLA ExCopSniper (rare naturally). Self-gates on ForceVanillaSniperMO.
+                DebugTools.ApplyForceVanillaSniperMO();
 
                 // Testing fast-forward: re-assert Time.timeScale multiplier while ON (never overrides a pause).
                 DebugTools.ApplyTimeBoost();

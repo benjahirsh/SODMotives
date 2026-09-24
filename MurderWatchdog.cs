@@ -287,6 +287,15 @@ namespace SODMotives
                 if ((murder.state == MurderController.MurderState.post || murder.state == MurderController.MurderState.escaping || murder.state == MurderController.MurderState.unsolved)
                     && murder.preset != null && murder.preset.caseType == MurderPreset.CaseType.kidnap)
                 {
+                    // Re-arm the hold marker every tick while held. It is normally set by the SetMurderState
+                    // postfix on the transition INTO the hold, but that transition does NOT re-fire after a
+                    // save/reload (the case loads already at post/escaping/unsolved), and the marker is in-memory
+                    // and cleared on every game start (INCLUDING a load). Without this, the kill-block
+                    // (ShouldBlockKidnapKill) never re-arms after a reload and a held victim could be killed
+                    // before the ransom deadline. Setting it here (only in the hold states) restores the block on
+                    // the first tick after load, and never mislabels the abduction's own pre-hold
+                    // travellingTo/executing (those states do not enter this branch).
+                    KidnapReachedHold.Add(vid);
                     if (KidnapRansomAssist && _ransomTried.Add(vid)) SpawnRansomNote(murder, killer, victim);
                     // Seal the den once the abduction is done (post+) AND the killer has physically LEFT it: CLOSE
                     // the front door(s) behind them (matches vanilla's default flee behaviour reliably), and LOCK

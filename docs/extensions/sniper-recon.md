@@ -463,3 +463,34 @@ home/work (sniper-centric overload), so ExCopSniper travels to that nest. The ov
 via `MurderWatchdog.SniperMO(useVoyeur)` (home-voyeur MO vs street MO). F9 now shows `SNIPE MO: <name> (voyeur/street)`.
 NEXT: playtest — confirm a voyeur-viable pair keeps VoyeurSniper + shoots from home coherently, and a no-home-LOS
 pair still uses ExCopSniper (the log line shows `VOYEUR/home` vs `STREET/rooftop`). Then the solvability check (#1).
+
+### 2026-09-24 (playtest 6) — ExCopSniper is NOT reliable: the game's vantage AI oscillates; the victim must be EXPOSED
+Slider case: Winter Roper#52 -> Jackson Rogers#53, `[lover,groupMember]` who SHARE a home (both 1303 Zeng Terrace).
+Voyeur failed (killer's home == victim's home, no vantage), fell to STREET/ExCopSniper, pinned `sniperVictimSite=
+Offinex Systems` (victim's workplace, siteVantage=FOUND score 9.09). It LOOPED (190 travellingTo samples, killShotNode
+(0,0,0), never fired) and timed out to `unsolved` WITH NO KILL. Killer oscillated: 100 samples @home, 62 @Beta Smog,
+rest streets — never committed to a nest.
+- **Player.log narration is the smoking gun:** the game repeatedly logs `Murder: Best sniper for vantage point over
+  MINGO STREET` and FLIP-FLOPS between two rooftops (`Layne Heights Manufacturing` score ~101 vs `The Fathoms Zone
+  Indigo` score ~225), recomputing every ~800 frames. So (a) the game RE-TARGETS to a STREET (Mingo Street) at
+  runtime, NOT my pinned Offinex Systems — ExCopSniper runs its own site/vantage logic and my pin does not hold at
+  runtime; and (b) it wants the victim EXPOSED on that street, but the victim stayed INSIDE Offinex Systems the whole
+  time (V_AT_SITE=True), so there was never a shot -> endless vantage re-pick.
+- **Why playtest 5 worked but this didn't:** playtest 5 (Shandrel->Denzel, coworkers, different buildings) happened
+  to have the victim exposed at a spot with a single stable vantage, so the killer committed + shot. This pair
+  (cohabiting lovers, victim tucked inside their workplace) gives an unstable street vantage + an unexposed victim.
+  This is exactly the geometry/exposure constraint vanilla guarantees by PICKING the pair to fit the MO; we force the
+  pair by motive, so we can't guarantee it. `weapon: acquired=True held=<none>` also seen (rifle not in hand).
+
+**IMPLICATION:** reliably forcing EVERY motive-pair to snipe is infeasible — the game needs the victim exposed at a
+site with a stable reachable vantage, decided at runtime. Motivated snipers will WORK for clean-geometry pairs and
+LOOP for others.
+
+**PROPOSED PATH (pragmatic, matches the kidnap model): gate + watchdog fallback.** Keep the vantage gate (filters
+obvious no-LOS pairs), and add a WATCHDOG SAFETY-NET that cancels a motivated sniper still looping in
+travellingTo/waitForLocation past a time budget without reaching executing -> `CancelCurrentMurder()` -> vanilla, so
+a stuck pair yields a normal vanilla sniper instead of a fizzled no-kill case. Optionally EXCLUDE cohabiting/very-
+close pairs from snipers (a sniper who lives with the victim is odd anyway). Result: motivated snipers for viable
+pairs, clean vanilla fallback otherwise. (Open alt: a stricter gate that predicts exposure/stability — hard, since
+exposure is a runtime property of the victim's routine.) DECISION NEEDED from user: ship gate+fallback, or keep
+chasing higher reliability.

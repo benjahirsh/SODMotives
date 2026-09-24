@@ -704,6 +704,8 @@ namespace SODMotives
                 NewGameLocation probeSite = site != null ? site : loc;   // VoyeurSniper leaves sniperVictimSite null and shoots the victim at murder.location (their home)
                 log.LogInfo($"[SODMotives][sniper-obs]   sniperVictimSite={LName(site)} murder.location={LName(loc)} ; siteVantage[{LName(probeSite)}]: {DescribeSniperVantage(killer, probeSite)}");
                 log.LogInfo($"[SODMotives][sniper-obs]   victim.home={LName(vh)} ; homeVantage: {DescribeSniperVantage(killer, vh)}");
+                NewGameLocation vwork = null; try { var job = victim.job; var emp = job != null ? job.employer : null; if (emp != null) vwork = emp.placeOfBusiness; } catch { }
+                log.LogInfo($"[SODMotives][sniper-obs]   victim.work={LName(vwork)} ; workVantage: {DescribeSniperVantage(killer, vwork)}");
                 log.LogInfo($"[SODMotives][sniper-obs]   {DescribeSniperWeapon(murder)}");
             }
             catch (Exception e) { log.LogWarning($"[SODMotives][sniper-obs] error: {e.Message}"); }
@@ -747,10 +749,12 @@ namespace SODMotives
             {
                 if (killer == null || site == null) return "vantage: killer/site null";
                 var tb = Toolbox.Instance; if (tb == null) return "vantage: no Toolbox";
-                float score = 0f; bool found;
-                try { found = tb.TryGetSniperVantagePoint(killer, site, out _, out score); }
+                float score = 0f; NewWall wall = null; bool found;
+                try { found = tb.TryGetSniperVantagePoint(killer, site, out wall, out score); }
                 catch (Exception e) { return "vantage: TryGetSniperVantagePoint threw: " + e.Message; }
-                return found ? $"vantage=FOUND score={score:0.00}" : "vantage=NONE (no wall covers this killer+site)";
+                if (!found) return "vantage=NONE (no wall covers this killer+site)";
+                string nestLoc = "?"; try { var nn = wall != null ? wall.node : null; var gl = nn != null ? nn.gameLocation : null; if (gl != null) nestLoc = gl.name; } catch { }
+                return $"vantage=FOUND score={score:0.00} nest@{nestLoc}";
             }
             catch (Exception e) { return "vantage: err " + e.Message; }
         }

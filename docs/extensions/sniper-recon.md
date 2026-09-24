@@ -539,3 +539,24 @@ the keep-tracking + safety-net layer for a victim who's slow to expose.
 commits to an exposed street + rooftop, fires when the victim walks it) instead of oscillating on a pinned interior.
 Watch F9 (SNIPE MO/NEST) + `[sniper]` logs + `Murder: Best sniper for vantage point over <street>` (should settle,
 not flip 300x). Then SOLVABILITY check #1 (does a clean kill leave findable sniper forensics).
+
+### 2026-09-24 (playtest 7, no-pin) — un-snipeable homebody victim; patience net worked; VANILLA BASELINE next
+No-pin ExCopSniper case: Jace Morgan#189 -> Aleale Hawkins#190, `[lover,groupMember]` cohabiting, both living in
+`Basement 01 Lovelace View` (a WINDOWLESS basement). No pin (`sniperVictimSite=<null>`), but the victim NEVER left
+the basement (200/200 `victim@Basement 01`), the game found no vantage (`SNIPE NEST: none`, ~0 vantage computations),
+and after 12 h the `[sniper] patience ... exhausted -> cancelling to vanilla` net fired (no hang). So this victim is
+fundamentally un-snipeable (homebody + windowless home + no exposed routine) — even vanilla would never pick them for
+a sniper. Confirms the real gap: we removed the pin (good) AND the gate, so we now ATTEMPT snipers on victims with no
+exposed site. Need a gate that requires the victim to be EXPOSABLE — but built from how VANILLA actually selects,
+not guessed.
+
+**Diagnostics readied for the VANILLA baseline (commit `4b70b8d`):** `DescribeSniperVantage` now logs `nest@<gameLocation>`
+(where the vantage wall is), and `[sniper-obs]` adds `victim.work` + `workVantage`. All sniper diagnostics fire for
+VANILLA snipers too (gated behind EnableDebugKeys; the observer flips on the game's verbose narration).
+
+**USER VANILLA TEST (next):** sandbox Procedural ON + Sniper ON + Regular OFF + Kidnapping OFF (every case a sniper);
+`[Motive Mix] MotivatedSniperShare=0` (snipers stay VANILLA); `[Debug] EnableDebugKeys=true`; normal speed; let a
+vanilla sniper play out. Then read: which MO vanilla uses (VoyeurSniper vs ExCopSniper mix), the `sniperVictimSite`
+it picks (street? public? home/work?), whether the victim TRAVELS there (exposure), the nest location, and whether
+vanilla ever targets a homebody. That defines the gate: only motivate a sniper for a victim with a real
+exposed/vantage-viable site the way vanilla requires.

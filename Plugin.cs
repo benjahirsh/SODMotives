@@ -13,7 +13,7 @@ namespace SODMotives
     // It intentionally changes NOTHING in the game yet — this is how we lock the
     // design to reality (call order, whether victim depends on murderer, and the
     // actual range/meaning of Acquaintance.like) before writing the override.
-    [BepInPlugin(Guid, "SOD Motives", "1.1.0")]
+    [BepInPlugin(Guid, "SOD Motives", "1.1.1")]
     public class MotivesPlugin : BasePlugin
     {
         public const string Guid = "com.benhirsh.sodmotives";
@@ -177,9 +177,6 @@ namespace SODMotives
             BindApply("Debug Keys", "ForceSniperCase", UnityEngine.KeyCode.F3,
                 "TESTING: immediately create a motivated SNIPER case (killer + victim from the mod's selector, a loaded sniper preset/MO), bypassing the game's slow scheduler. Watch the F9 MURDER STATE to see whether it executes or stalls at waitForLocation. Set to None to disable.",
                 v => DebugTools.KeyForceSniper = v);
-            BindApply("Debug Keys", "ForceKidnapCase", UnityEngine.KeyCode.F2,
-                "TESTING: immediately create a motivated KIDNAP case (killer + victim from the mod's selector, a loaded kidnap preset/MO), bypassing the game's slow scheduler. Works regardless of the MotivatedKidnapShare slider. Watch the F9 MURDER STATE: 'executing'/'post' = works; the victim walks to a real den and is restrained. F1 is reserved by the game. Set to None to disable.",
-                v => DebugTools.KeyForceKidnap = v);
             BindApply("Debug Keys", "CaseSolutionOverlay", UnityEngine.KeyCode.F9,
                 "Toggle the on-screen case-solution overlay (killer / victim / suspect pool / injected clues).",
                 v => DebugTools.KeyCaseSolution = v);

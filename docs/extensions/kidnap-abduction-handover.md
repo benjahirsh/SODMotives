@@ -33,11 +33,31 @@ The whole loop is native and verified in-game:
    EnableDebugKeys` so a shipped log stays clean; flip that on for a bug report. F7 `GiveTestCash` kept (already
    behind `EnableDebugKeys`). Load-bearing kidnap logic (kill-block, ransom-note spawn, den seal, waitForLocation
    stall-cancel, executing force-finish) is unchanged and always on.
-2. **COMMIT** on `kidnap-wip` (NO `Co-Authored-By: Claude` trailer, per repo policy), then merge to `v2`.
-3. **PACKAGE** the 1.1.0 zip; user uploads to Thunderstore (version_number already 1.1.0).
-Still to do by the USER before upload: the in-game smoke test (F2 kidnap at NORMAL speed — F-keys work, no
-"Failed to patch" in LogOutput.log; the strip only removed/gated diagnostics + dead code, so load risk is nil,
-but confirm once).
+2. **COMMITTED** `69cfcc8` on `kidnap-wip` (NO `Co-Authored-By: Claude` trailer), FAST-FORWARD-MERGED to `v2`.
+3. **SHIPPED 1.1.0** — released on Thunderstore (by user); `v2` pushed to origin (`69cfcc8`) + lightweight tag
+   `v1.1.0` pushed. GitHub `v2` and the Thunderstore page are both live at 1.1.0.
+
+## NEXT (1.1.x) — RANSOM-PAYMENT VICTIM POLISH (user chose 2026-09-24; start next session)
+**Symptom:** after a kidnap victim is freed by the player PAYING the ransom (not by a rescue), the victim runs
+around their apartment as if still being attacked/restrained. First question: **is this OURS or vanilla?** (The
+rescue path was proven vanilla earlier; the PAYMENT path hasn't been isolated.)
+**Plan:**
+1. **Reproduce + compare.** Force a kidnap (F2, normal speed, EnableDebugKeys on), pay the ransom, watch the
+   freed victim. Then do the same on a VANILLA kidnap (Kidnapping type on, MotivatedKidnapShare 0, or just let
+   one occur) and compare. If vanilla does the same jittery post-free behaviour → it's not ours, document + drop.
+2. **If it's ours,** it's almost certainly leftover restraint/kidnap state our swap never cleared on release.
+   The ransom resolves via `Murder.ransomPhase` (`none/travellingToRansom/collectedRansom/freeingVictim/
+   finishedSuccess`) and `MurderController.KidnapperCollectsRansom`/`KidnapperCollectedRansom`; on
+   `freeingVictim`/`finishedSuccess` vanilla clears the victim's restrained/kidnapped state + resets its AI.
+   Our swapped victim likely keeps a restraint flag (a victim-side bool ~`victim+0x1F` was seen during the
+   kill-block RE) or a stuck AI goal. Find where vanilla clears it (decompile the ransom-release path) and
+   replicate for our overridden victim on release (a new one-shot in `MurderWatchdog` gated to our kidnap
+   victims once `ransomPhase` hits `freeingVictim`/`finishedSuccess`, mirroring how we already gate the kill-block).
+3. **Verify in-game:** pay a forced kidnap's ransom → freed victim behaves normally (walks home / resumes
+   routine, not the attack-flail). Test at NORMAL speed. Note: our `[kidnap-*]` diagnostics now need
+   `[Debug] EnableDebugKeys` on to log.
+Toolchain unchanged: Cpp2IL `2022.1.0-pre-release.21` for method bodies, `ilspycmd` vs the interop DLL for
+signatures. Deferred backlog (post-this): rare-NPC kidnap/murder bias, red-herring clues, theft motive.
 
 **OPEN / BACKLOG (in `docs/post-release-handover.md`, none block shipping):**
 - Verify the victim-post-free state: after being freed by ransom PAYMENT (not rescue), the victim ran around

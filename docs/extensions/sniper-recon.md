@@ -397,3 +397,32 @@ picks a home/work target, which is exactly what this gate covers.
 2. Hit rate: home+work LOS pairs may be uncommon -> motivated snipers could be rare (most -> vanilla). If so, v2
    adds public/routine ROOFTOP sites (the street pattern) so pairs with no home/work LOS can still be sniped from a
    public vantage; the inverse solver overload (vantage -> possibleTargetSites) may help enumerate these.
+
+### 2026-09-24 (playtest 4 + fix v2) — gate/pin work, but VoyeurSniper won't travel to the nest -> swap to ExCopSniper
+Playtest 4 (slider, fix v1): Sawyer Barnett#180 -> Melissa Anderson#34, same building (1801 vs 1401 Zeng Terrace).
+- v1 gate+pin WORKED: `TryPickSniperSite` found a vantage onto the victim's WORKPLACE (`siteVantage[Beta Smog
+  Group]=FOUND score~16`), pinned `sniperVictimSite=Beta Smog Group`, victim was there (`V_AT_SITE=True`, 9m).
+  `homeVantage=NONE` (same building).
+- BUT the killer NEVER went to the nest: `killer@Zeng Terrace 15th/18th floor landing`, ~115m away, looped
+  waitForLocation/travellingTo, never fired in-window (then force-fires from home = the no-LOS kill). ROOT CAUSE: the
+  natural MO `VoyeurSniper` (requiresSniperVantageAtHome=True) shoots ONLY from the killer's own home and will NOT
+  travel to a public nest; the vantage found is a public wall it refuses to use. Gating alone is not enough with
+  VoyeurSniper.
+- `[mo-dump]` killer-fit (answers "is ex-cop an assumption?"): `ExCopSniper` murdererJobBoosts=`{[Retired]+20}` (a
+  SCORE boost, NOT a hard ex-cop gate); so forcing ExCopSniper onto any motivated killer is mechanically fine.
+
+**FIX v2 (commit `a6c0b68`, deployed):** after the vantage gate passes, the override SWAPS `motive` (now a `ref`
+param) to `MurderWatchdog.StreetSniperMO()` (the loaded sniper MO with requiresSniperVantageAtHome==false =
+ExCopSniper) so the killer TRAVELS to the public vantage overlooking the pinned site. `TryPickSniperSite` also
+returns the nest `NewWall`; the override logs `nest@position`.
+
+**F9 (commit `602d55b`, user request):** for an active sniper case F9 now shows `SNIPE SITE` and `NEST: FOUND
+(score) killer->nest <dist>m` (or NONE) via the game's own solver, so you can watch whether the killer travels to the
+nest (dist shrinks) or idles.
+
+**NEXT (USER, slider):** run a motivated sniper; watch F9 `NEST` + `[sniper-live]`. Does the ExCopSniper killer now
+TRAVEL to the nest (killer->nest shrinks) and shoot from it (window/trajectory clue at the site)? Outcomes: (a) works
+-> street snipers land; (b) ExCopSniper ignores the pin (re-picks its own routine `sniperVictimSite` via
+TryPickNewVictimSite) or still won't path to the nest -> we drive the killer to the nest node ourselves, OR fall back
+to DESIGN A (home-voyeur: gate on the KILLER'S HOME having LOS via the location-centric solver overload so
+VoyeurSniper shoots from home coherently; rarer but simpler).

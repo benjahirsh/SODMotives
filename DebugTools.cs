@@ -76,9 +76,9 @@ namespace SODMotives
         internal static KeyCode KeyTestAccess     = KeyCode.F7;   // MERGED test toggle: ghost + always-answer together (used as a pair)
         internal static KeyCode KeyTeleportScene  = KeyCode.F10;
         internal static KeyCode KeyTeleportMeet   = KeyCode.F11;   // teleport to the kidnap MEETING location (was: victim's work)
-        internal static KeyCode KeyTeleportVictimHome = KeyCode.F12;   // teleport to the VICTIM's home (was: nearest case-knower)
+        internal static KeyCode KeyTeleportVictim = KeyCode.F12;   // teleport to the VICTIM's CURRENT position (tail them)
         internal static KeyCode KeyTriggerMurder  = KeyCode.F4;   // force the game's next murder NOW (fast test loop)
-        internal static KeyCode KeyTeleportKillerKnower = KeyCode.F8;   // jump to the nearest knower of the KILLER
+        internal static KeyCode KeyTeleportKiller = KeyCode.F8;   // teleport to the KILLER's CURRENT position (tail them)
         internal static KeyCode KeyForceSniper    = KeyCode.F3;   // CREATE a motivated sniper case immediately (bypasses the scheduler)
         internal static KeyCode KeyForceKidnap    = KeyCode.F2;   // CREATE a motivated kidnap case immediately (bypasses the scheduler); F1 is reserved by the game
         internal static KeyCode KeyTeleportCityHall = KeyCode.Home;   // teleport to City Hall (fixed landmark)
@@ -405,26 +405,32 @@ namespace SODMotives
             catch (Exception e) { log.LogWarning($"[SODMotives][F11] meet teleport error: {e}"); }
         }
 
-        // Teleport to the VICTIM's home — where the ransom note lands and the investigation starts for a kidnap.
-        internal static void TeleportToVictimHome()
+        // F12: teleport to the VICTIM's CURRENT position (tail them — where they are right now, not their home).
+        internal static void TeleportToVictim()
         {
-            var log = MotivesPlugin.Log;
             try
             {
-                var mc = MurderController.Instance;
-                var m = mc != null ? mc.GetCurrentMurder() : null;
-                Human victim = m != null ? m.victim : null;
-                if (victim == null && mc != null) victim = mc.currentVictim;
-                if (victim == null) { log.LogInfo("[SODMotives][F12] No victim."); return; }
-                NewAddress home = null; try { home = victim.home; } catch { }
-                if (home == null) { log.LogInfo("[SODMotives][F12] Victim has no home."); return; }
-                var player = Player.Instance;
-                NewNode node = player.FindSafeTeleport(home, false, true);
-                if (node == null) { log.LogInfo($"[SODMotives][F12] No safe teleport spot at the victim's home {home.name}."); return; }
-                player.Teleport(node, null, true, false, true);
-                log.LogInfo($"[SODMotives][F12] Teleported to victim's home: {home.name}");
+                if (!TryGetCase(out _, out Human victim, out _) || victim == null)
+                { MotivesPlugin.Log.LogInfo("[SODMotives][F12] No victim."); return; }
+                TeleportToActorCurrent(victim, "F12", "victim");
             }
-            catch (Exception e) { log.LogWarning($"[SODMotives][F12] victim-home teleport error: {e}"); }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][F12] victim teleport error: {e}"); }
+        }
+
+        // Teleport the player to an actor's CURRENT position: their live node if available, else a safe spot in
+        // their current location. For tailing the killer/victim during a case.
+        private static void TeleportToActorCurrent(Human who, string tag, string label)
+        {
+            var log = MotivesPlugin.Log;
+            var player = Player.Instance;
+            if (player == null) { log.LogInfo($"[SODMotives][{tag}] No player."); return; }
+            NewGameLocation loc = null; try { loc = who.currentGameLocation; } catch { }
+            NewNode node = null; try { node = who.currentNode; } catch { }
+            if (node == null && loc != null) { try { node = player.FindSafeTeleport(loc, false, true); } catch { } }
+            if (node == null) { log.LogInfo($"[SODMotives][{tag}] No current position for the {label} ({MotivesPlugin.Name(who)})."); return; }
+            player.Teleport(node, null, true, false, true);
+            string locName = "?"; try { if (loc != null) locName = loc.name; } catch { }
+            log.LogInfo($"[SODMotives][{tag}] Teleported to the {label}'s current position: {MotivesPlugin.Name(who)} @ {locName}");
         }
 
         // Teleport to City Hall — a fixed central landmark (handy when a case's scene is unresolved, e.g. a
@@ -753,34 +759,6 @@ namespace SODMotives
             for (int i = 0; i < rows.Count && i < 8; i++) Overlay.Add("  " + rows[i].line);
         }
 
-        // Nearest NPC (to scenePos) who can name `subject` AND knows a non-participant motive event about
-        // them — shared by the killer-knower teleport (F8). Returns null if none.
-        private static Human NearestKnowerHumanOf(Human subject, Vector3 scenePos)
-        {
-            if (subject == null) return null;
-            int sid = subject.humanID;
-            var knowerIds = new HashSet<int>();
-            foreach (var e in EventStore.All)
-            {
-                if (!e.InvolvesHuman(sid)) continue;
-                foreach (var kid in e.knownBy) if (!e.InvolvesHuman(kid)) knowerIds.Add(kid);
-            }
-            var dir = CityData.Instance != null ? CityData.Instance.citizenDirectory : null;
-            Human best = null; float bestD = float.MaxValue;
-            if (dir != null)
-                for (int i = 0; i < dir.Count; i++)
-                {
-                    var h = dir[i]; if (h == null) continue;
-                    if (!knowerIds.Contains(h.humanID)) continue;
-                    if (!Motive.KnowsName(h, subject)) continue;
-                    NewAddress home = null; try { home = h.home; } catch { }
-                    if (home == null) continue;
-                    float dist = float.MaxValue; try { var an = home.anchorNode; if (an != null) dist = Vector3.Distance(scenePos, an.position); } catch { }
-                    if (dist < bestD) { bestD = dist; best = h; }
-                }
-            return best;
-        }
-
         private static string FmtTypes(Dictionary<SocialEventType, int> m)
         {
             var sb = new System.Text.StringBuilder();
@@ -826,25 +804,16 @@ namespace SODMotives
             catch (Exception e) { log.LogWarning($"[SODMotives][F12] nearest-knower teleport error: {e}"); }
         }
 
-        // F3: teleport to the KILLER-knower nearest the scene — someone who can name the killer AND knows a
-        // motive event about them — so you can interview a killer-side gossip (test asking about the killer,
-        // not just the victim) without hunting.
-        internal static void TeleportToNearestKillerKnower()
+        // F8: teleport to the KILLER's CURRENT position (tail them — where they are right now).
+        internal static void TeleportToKiller()
         {
-            var log = MotivesPlugin.Log;
             try
             {
-                if (!TryGetCase(out Human killer, out Human victim, out _) || killer == null)
-                { log.LogInfo("[SODMotives][F8] No killer."); return; }
-                Human k = NearestKnowerHumanOf(killer, ScenePos(victim));
-                if (k == null || k.home == null) { log.LogInfo("[SODMotives][F8] No killer-knower with a home found (killer may be too peripheral to be named)."); return; }
-                var player = Player.Instance;
-                NewNode node = player.FindSafeTeleport(k.home, false, true);
-                if (node == null) { log.LogInfo("[SODMotives][F8] No safe spot at the knower's home."); return; }
-                player.Teleport(node, null, true, false, true);
-                log.LogInfo($"[SODMotives][F8] Teleported to nearest killer-knower {MotivesPlugin.Name(k)} @ {k.home.name}.");
+                if (!TryGetCase(out Human killer, out _, out _) || killer == null)
+                { MotivesPlugin.Log.LogInfo("[SODMotives][F8] No killer."); return; }
+                TeleportToActorCurrent(killer, "F8", "killer");
             }
-            catch (Exception e) { log.LogWarning($"[SODMotives][F8] nearest killer-knower teleport error: {e}"); }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][F8] killer teleport error: {e}"); }
         }
 
         internal static void TeleportToScene()
@@ -897,8 +866,8 @@ namespace SODMotives
                     if (Input.GetKeyDown(DebugTools.KeyTimeBoost)) DebugTools.ToggleTimeBoost();
                     if (Input.GetKeyDown(DebugTools.KeyTeleportScene)) DebugTools.TeleportToScene();
                     if (Input.GetKeyDown(DebugTools.KeyTeleportMeet)) DebugTools.TeleportToMeet();
-                    if (Input.GetKeyDown(DebugTools.KeyTeleportVictimHome)) DebugTools.TeleportToVictimHome();
-                    if (Input.GetKeyDown(DebugTools.KeyTeleportKillerKnower)) DebugTools.TeleportToNearestKillerKnower();
+                    if (Input.GetKeyDown(DebugTools.KeyTeleportVictim)) DebugTools.TeleportToVictim();
+                    if (Input.GetKeyDown(DebugTools.KeyTeleportKiller)) DebugTools.TeleportToKiller();
                     // MERGED test toggle (one key flips ghost + always-answer together — they're always used
                     // as a pair): walk freely (NPCs ignore you) AND interrogate anyone without a bribe.
                     if (Input.GetKeyDown(DebugTools.KeyTestAccess))

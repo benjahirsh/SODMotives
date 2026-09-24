@@ -171,9 +171,9 @@ namespace SODMotives
             BindApply("Debug Keys", "TriggerMurder", UnityEngine.KeyCode.F4,
                 "Force the game's next murder to run NOW (fast test loop). Combine with the forced event type to get a specific case quickly. Set to None to disable.",
                 v => DebugTools.KeyTriggerMurder = v);
-            BindApply("Debug Keys", "TeleportToKillerKnower", UnityEngine.KeyCode.F8,
-                "Teleport to the nearest NPC who can name the KILLER and knows a motive event about them, so you can test interrogating knowers about the killer (the F9 'KILLER KNOWERS' list).",
-                v => DebugTools.KeyTeleportKillerKnower = v);
+            BindApply("Debug Keys", "TeleportToKiller", UnityEngine.KeyCode.F8,
+                "Teleport to the KILLER's CURRENT position (where they are right now) so you can tail them during a case.",
+                v => DebugTools.KeyTeleportKiller = v);
             BindApply("Debug Keys", "ForceSniperCase", UnityEngine.KeyCode.F3,
                 "TESTING: immediately create a motivated SNIPER case (killer + victim from the mod's selector, a loaded sniper preset/MO), bypassing the game's slow scheduler. Watch the F9 MURDER STATE to see whether it executes or stalls at waitForLocation. Set to None to disable.",
                 v => DebugTools.KeyForceSniper = v);
@@ -201,9 +201,9 @@ namespace SODMotives
             BindApply("Debug Keys", "TeleportToMeet", UnityEngine.KeyCode.F11,
                 "Teleport to the kidnap MEETING location (the public spot the killer lures the victim to before the abduction). Only meaningful for a kidnap case with a meet set.",
                 v => DebugTools.KeyTeleportMeet = v);
-            BindApply("Debug Keys", "TeleportToVictimHome", UnityEngine.KeyCode.F12,
-                "Teleport to the VICTIM's home (where a kidnap's ransom note lands and the investigation starts).",
-                v => DebugTools.KeyTeleportVictimHome = v);
+            BindApply("Debug Keys", "TeleportToVictim", UnityEngine.KeyCode.F12,
+                "Teleport to the VICTIM's CURRENT position (where they are right now) so you can tail them during a case.",
+                v => DebugTools.KeyTeleportVictim = v);
 
             // Live re-apply: when a knob changes (overlay edit / .cfg reload), push it into its static field.
             Config.SettingChanged += (sender, e) =>

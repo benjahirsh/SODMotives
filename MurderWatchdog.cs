@@ -58,6 +58,14 @@ namespace SODMotives
         private static float _liveLastLogH = -999f;     // gameTime (hours) of the last live sample
         private static int _liveCount = 0;              // samples logged for this victim (capped so it can't spam forever)
 
+        // Sniper diagnostic sampler (dev-only): observe a sniper case (forced or VANILLA) to learn the intended
+        // vantage / target-site / shot flow, and to diagnose why a motivated sniper loops in travellingTo instead
+        // of firing. Separate throttle so it doesn't fight the kidnap sampler. All gated behind EnableDebugKeys.
+        private static readonly HashSet<int> _sniperObserved = new HashSet<int>();  // sniper cases we've logged the one-shot observation for
+        private static int _sniperLiveVid = -1;
+        private static float _sniperLiveLastLogH = -999f;
+        private static int _sniperLiveCount = 0;
+
         // Seal the den behind the fleeing killer. Vanilla (confirmed in-game across 2 sandboxes: frontDoors
         // locked=0 the whole hold, AND a web-search confirmed vacant-address kidnap dens stay UNLOCKED) only
         // CLOSES the doors (default NPC flee behaviour), never locks the unowned den. So we CLOSE to match that
@@ -88,6 +96,7 @@ namespace SODMotives
             _waitLocVictimId = -1; _waitLocSince = 0f; _probed.Clear(); _waitRecovered.Clear();
             _observed.Clear();
             _liveVid = -1; _liveLastLogH = -999f; _liveCount = 0;
+            _sniperObserved.Clear(); _sniperLiveVid = -1; _sniperLiveLastLogH = -999f; _sniperLiveCount = 0;
             _ransomTried.Clear(); _killTimeReasserted.Clear();
             _killBlockLogged.Clear(); KidnapReachedHold.Clear(); _denSealed.Clear();
         }
@@ -214,6 +223,40 @@ namespace SODMotives
                             {
                                 _liveLastLogH = now; _liveCount++;
                                 LogKidnapLive(murder, killer, victim);
+                            }
+                        }
+                    }
+                    catch { }
+
+                    // SNIPER OBSERVER (once) + LIVE SAMPLER — sniper is target-site-first: the game picks a
+                    // sniperVictimSite (an exposed routine/public spot the victim visits), finds a vantage wall,
+                    // then the killer travels there + shoots. Capture that flow (esp. on a VANILLA case, to learn
+                    // the intended behaviour) plus whether a vantage exists for the killer+site — the leading
+                    // suspect for why a motivated sniper loops in travellingTo instead of firing.
+                    try
+                    {
+                        if (murder.preset != null && murder.preset.caseType == MurderPreset.CaseType.sniper)
+                        {
+                            if (_sniperObserved.Add(vid))
+                            {
+                                DebugTools.EnableGameVerboseLogging();
+                                LogSniperObservation(murder, killer, victim);
+                            }
+                            bool sniperActive = murder.state == MurderController.MurderState.waitForLocation
+                                || murder.state == MurderController.MurderState.travellingTo
+                                || murder.state == MurderController.MurderState.executing
+                                || murder.state == MurderController.MurderState.post
+                                || murder.state == MurderController.MurderState.escaping
+                                || murder.state == MurderController.MurderState.unsolved;
+                            if (sniperActive)
+                            {
+                                float snow = NowHours();
+                                if (_sniperLiveVid != vid) { _sniperLiveVid = vid; _sniperLiveLastLogH = -999f; _sniperLiveCount = 0; }
+                                if (_sniperLiveCount < 200 && snow - _sniperLiveLastLogH >= 0.05f)
+                                {
+                                    _sniperLiveLastLogH = snow; _sniperLiveCount++;
+                                    LogSniperLive(murder, killer, victim);
+                                }
                             }
                         }
                     }
@@ -497,6 +540,76 @@ namespace SODMotives
             }
             catch (Exception e) { log.LogWarning($"[SODMotives][kidnap-live] err: {e.Message}"); }
         }
+
+        // SNIPER OBSERVER (dev-only, one-shot): compare a VANILLA sniper to a MOD-FORCED one — the pair's
+        // relationship, the killer archetype (MO) + its site/vantage flags, homes, and the initial target site +
+        // whether a vantage wall exists for it. Read-only.
+        private static void LogSniperObservation(MurderController.Murder murder, Human killer, Human victim)
+        {
+            var log = MotivesPlugin.Log;
+            try
+            {
+                bool ours = MurderSelector.OverriddenVictimIds.Contains(victim.humanID);
+                log.LogInfo($"[SODMotives][sniper-obs] ===== {(ours ? "MOD-FORCED" : "VANILLA")} SNIPER: {MotivesPlugin.Name(killer)} -> {MotivesPlugin.Name(victim)} =====");
+                log.LogInfo($"[SODMotives][sniper-obs]   relationship killer->victim: {DescribeEdge(killer, victim)}");
+                log.LogInfo($"[SODMotives][sniper-obs]   relationship victim->killer: {DescribeEdge(victim, killer)}");
+                string preset = "?"; try { if (murder.preset != null) preset = murder.preset.name; } catch { }
+                string mo = "?"; try { if (murder.mo != null) mo = murder.mo.name; } catch { }
+                string moFlags = "?";
+                try { var m = murder.mo; if (m != null) moFlags = $"requiresSniperVantageAtHome={m.requiresSniperVantageAtHome} allow home/work/public/streets/anywhere={m.allowHome}/{m.allowWork}/{m.allowPublic}/{m.allowStreets}/{m.allowAnywhere}"; } catch { }
+                log.LogInfo($"[SODMotives][sniper-obs]   preset={preset} mo={mo} ; {moFlags}");
+                NewAddress kh = null, vh = null; try { kh = killer.home; } catch { } try { vh = victim.home; } catch { }
+                log.LogInfo($"[SODMotives][sniper-obs]   killer.home={LName(kh)} ; victim.home={LName(vh)}");
+                NewGameLocation site = null; try { site = murder.sniperVictimSite; } catch { }
+                log.LogInfo($"[SODMotives][sniper-obs]   sniperVictimSite={LName(site)} ; {DescribeSniperVantage(killer, site)}");
+            }
+            catch (Exception e) { log.LogWarning($"[SODMotives][sniper-obs] error: {e.Message}"); }
+        }
+
+        // SNIPER LIVE SAMPLE (dev-only, throttled): where the target site is, whether the victim is AT it, where
+        // the killer is (and distances), the resolved kill-shot node, and whether a vantage wall exists for the
+        // killer+site RIGHT NOW. If the site keeps changing / no vantage is ever found, that is the travellingTo
+        // re-pick loop; if a vantage exists but the killer never reaches it, it is a travel/positioning problem.
+        private static void LogSniperLive(MurderController.Murder murder, Human killer, Human victim)
+        {
+            var log = MotivesPlugin.Log;
+            try
+            {
+                bool ours = false; try { ours = MurderSelector.OverriddenVictimIds.Contains(victim.humanID); } catch { }
+                string st = "?"; try { st = murder.state.ToString(); } catch { }
+                NewGameLocation site = null; try { site = murder.sniperVictimSite; } catch { }
+                NewGameLocation vloc = null, kloc = null;
+                try { vloc = victim.currentGameLocation; } catch { }
+                try { kloc = killer.currentGameLocation; } catch { }
+                bool vAtSite = false; try { vAtSite = vloc != null && site != null && vloc.Pointer == site.Pointer; } catch { }
+                float vDist = -1f, kDist = -1f, kvDist = -1f;
+                var sa = site != null ? SafeAnchor(site) : null;
+                try { var vn = victim.currentNode; if (vn != null && sa != null) vDist = Vector3.Distance(vn.position, sa.position); } catch { }
+                try { var kn = killer.currentNode; if (kn != null && sa != null) kDist = Vector3.Distance(kn.position, sa.position); } catch { }
+                try { var kn = killer.currentNode; var vn = victim.currentNode; if (kn != null && vn != null) kvDist = Vector3.Distance(kn.position, vn.position); } catch { }
+                string shot = "?"; try { shot = murder.sniperKillShotNode.ToString(); } catch { }
+                log.LogInfo($"[SODMotives][sniper-live] {(ours ? "OURS" : "VANILLA")} [{st}] site={LName(site)} victim@{LName(vloc)} V_AT_SITE={vAtSite} dist(victim->site)={vDist:0.0} ; killer@{LName(kloc)} dist(killer->site)={kDist:0.0} dist(killer->victim)={kvDist:0.0} ; killShotNode={shot} ; {DescribeSniperVantage(killer, site)}");
+            }
+            catch (Exception e) { log.LogWarning($"[SODMotives][sniper-live] err: {e.Message}"); }
+        }
+
+        // Does a vantage wall exist for this killer to shoot the given target site? Uses the game's OWN solver
+        // (Toolbox.TryGetSniperVantagePoint, target-site-first). Read-only; never throws.
+        private static string DescribeSniperVantage(Human killer, NewGameLocation site)
+        {
+            try
+            {
+                if (killer == null || site == null) return "vantage: killer/site null";
+                var tb = Toolbox.Instance; if (tb == null) return "vantage: no Toolbox";
+                float score = 0f; bool found;
+                try { found = tb.TryGetSniperVantagePoint(killer, site, out _, out score); }
+                catch (Exception e) { return "vantage: TryGetSniperVantagePoint threw: " + e.Message; }
+                return found ? $"vantage=FOUND score={score:0.00}" : "vantage=NONE (no wall covers this killer+site)";
+            }
+            catch (Exception e) { return "vantage: err " + e.Message; }
+        }
+
+        private static NewNode SafeAnchor(NewGameLocation l) { try { return l != null ? l.anchorNode : null; } catch { return null; } }
 
         // Seal the den behind the fleeing killer: CLOSE the front door(s) — matches vanilla's default (the killer
         // shuts doors on the way out; our swapped killer sometimes left them open). LOCK them too only if

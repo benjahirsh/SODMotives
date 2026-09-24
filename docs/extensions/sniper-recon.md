@@ -153,3 +153,39 @@ Two ways to close Q1/Q2 (the only ones that gate feasibility):
   the site-selection logic before writing code. Heavier; needs the tool fetched + run.
 
 Given the player already wants to test, **empirical first**, fall back to Cpp2IL only if it hangs.
+
+## 2026-09-24 — sniper diagnostics + tailing teleports built (RESUME HERE)
+
+**Context:** kidnaps shipped as 1.1.0. Resumed sniper work. (The ransom-payment victim glitch did NOT reproduce
+on a later test, so it is a WATCH item, not being fixed now.) Branch `sniper-wip` (fast-forwarded to `v2`).
+Prior playtest finding stands: a FORCED motivated sniper (F3) does NOT hang at `waitForLocation` like kidnaps —
+it gets a site but **loops in `travellingTo`, re-picking sites, never firing** (scene bounced apartment->
+street->street). So the crux is the `travellingTo -> executing` leg (reach a vantage + take the shot).
+
+**Built + deployed (builds clean 0-warn, ALL gated behind `[Debug] EnableDebugKeys`):** a sniper observer + live
+sampler in `MurderWatchdog.Tick`, firing for ANY sniper case (forced F3 OR vanilla), to capture the intended
+flow and diagnose the loop:
+- `[sniper-obs]` (once per case): OURS vs VANILLA, killer<->victim relationship, preset + MO name, MO flags
+  (`requiresSniperVantageAtHome` + allow home/work/public/streets/anywhere), killer/victim homes, the initial
+  `sniperVictimSite`, and whether a vantage wall exists for (killer, site) via the game's own solver
+  `Toolbox.Instance.TryGetSniperVantagePoint`. Also flips on the game's verbose `Murder:` narration (-> Player.log).
+- `[sniper-live]` (throttled 0.05 game-h, cap 200): state, `sniperVictimSite`, victim@site?, dist(victim->site),
+  killer@loc, dist(killer->site), dist(killer->victim), `sniperKillShotNode`, and the live vantage probe. Lets us
+  SEE whether the site keeps changing / no vantage is ever found (= the re-pick loop) vs a vantage exists but the
+  killer never reaches it (= a travel/positioning problem) vs killer reaches it but never fires (= weapon?).
+- **Tailing aid:** F8 now teleports to the KILLER's CURRENT position and F12 to the VICTIM's CURRENT position
+  (were killer-knower / victim-home). Jump straight to whoever you are tailing.
+
+**API confirmed this session (ilspycmd vs interop):** `Toolbox.Instance` (singleton) + `bool
+TryGetSniperVantagePoint(Human sniper, NewGameLocation requiredTargetSite, out NewWall vantage, out float score,
+List<NewNode.NodeAccess> = null)`; `Murder.sniperVictimSite` (NewGameLocation), `Murder.sniperKillShotNode`
+(Vector3Int), `Murder.TryPickNewVictimSite(out NewGameLocation)`; `MurderController.ExecuteSniperShot(...)`.
+
+**NEXT — USER playtest (vanilla first, to learn intended behaviour):** sandbox with Sniper case type ON,
+`[Debug] EnableDebugKeys=true`, NORMAL speed. Let a VANILLA sniper occur and TAIL the killer + victim (F8/F12).
+Read `[sniper-obs]`/`[sniper-live]` (BepInEx `LogOutput.log`) + the `Murder:` narration (`Player.log`). Watch:
+does the victim go to the `sniperVictimSite` (a routine/public spot)? does the killer walk to a vantage wall
+(vantage=FOUND) and fire (`executing -> post`)? Then force one with F3 (OURS) and DIFF where it diverges (no
+vantage for the chosen site? killer never reaches the wall? site re-picks forever? no weapon?). The diff points
+to the fix (constrain the victim to a sniper-viable exposed site, drive the killer to the vantage, or supply a
+weapon). Weapon/inventory logging is NOT in yet — add it for the OURS pass once the vanilla baseline is known.

@@ -284,19 +284,28 @@ namespace SODMotives
 
                 // A loaded MO + one of its compatible presets of the requested case type. Assets stay loaded
                 // even when the sandbox toggle for that type is OFF, so this works regardless of settings.
+                // For SNIPER, PREFER a street MO (requiresSniperVantageAtHome == false) so F3 tests the
+                // rooftop/public pattern that works for any pair, not the home-voyeur MO (VoyeurSniper) that
+                // needs a rare home-to-home vantage and force-resolves a nonsensical kill without one. Keep the
+                // first matching MO as a fallback if no street MO exists.
                 MurderMO useMo = null; MurderPreset usePreset = null;
+                MurderMO fbMo = null; MurderPreset fbPreset = null;
                 var mos = Resources.FindObjectsOfTypeAll<MurderMO>();
                 if (mos != null)
-                    for (int i = 0; i < mos.Length && usePreset == null; i++)
+                    for (int i = 0; i < mos.Length && useMo == null; i++)
                     {
                         var mo = mos[i]; if (mo == null) continue;
                         var compat = mo.compatibleWith; if (compat == null) continue;
                         for (int j = 0; j < compat.Count; j++)
                         {
                             var p = compat[j];
-                            if (p != null && p.caseType == caseType) { useMo = mo; usePreset = p; break; }
+                            if (p == null || p.caseType != caseType) continue;
+                            if (fbMo == null) { fbMo = mo; fbPreset = p; }
+                            bool prefer = caseType != MurderPreset.CaseType.sniper || !mo.requiresSniperVantageAtHome;
+                            if (prefer) { useMo = mo; usePreset = p; break; }
                         }
                     }
+                if (useMo == null) { useMo = fbMo; usePreset = fbPreset; }
                 if (useMo == null || usePreset == null)
                 { log.LogInfo($"[SODMotives][force:{tag}] no {caseType} preset/MO found among loaded assets."); return; }
 

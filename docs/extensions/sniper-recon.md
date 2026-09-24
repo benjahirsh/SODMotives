@@ -255,3 +255,53 @@ viable site among the victim's routine locations?
   (ruling out an acquire failure). If instead `vantage=FOUND` but the killer never reaches it, or `acquired=False`,
   the fix direction changes. Only after this confirmation do I build the vantage-viable constraint (Plugin.cs
   override un-guard behind a default-0 `MotivatedSniperShare` slider + a viability check in `MurderSelector`).
+
+### 2026-09-24 (playtest 1 of the slider) — A MOTIVATED SNIPER FIRED (big result). Read logs, findings below.
+User set `MotivatedSniperShare=1`, ran two natural sandbox snipers, fast-forwarded to trigger the shot (which then
+chained a second case because `[Troubleshooting] FastMurderCadence` was 0). I read `LogOutput.log` + `Player.log`.
+
+**THE HEADLINE: a motivated sniper actually fired and killed the victim** — the recon's "motivated snipers never
+fire, they loop forever" fear is WRONG for this MO.
+- Both cases used **preset `Sniper` / MO `VoyeurSniper`**, and `VoyeurSniper` has **`requiresSniperVantageAtHome=True`**
+  (allow home/work/public/streets/anywhere = T/T/F/F/F). So this MO does NOT use a routine/public `sniperVictimSite`
+  at all — it shoots the victim AT HOME. `SetMurderLocation` = the VICTIM'S HOME; `Murder.sniperVictimSite` stays
+  `<null>` the whole time. (This answers recon Q4: the loaded sniper MO is the home-voyeur type, not the street type.)
+- **Case 1 = Samantha Richardson#120 -> Violet Andrews#257, `[workTeam]` coworkers (like~0.59).** Killer waited in
+  their OWN apartment (1302 Zeng Terrace) with the rifle (`held=Hamilton Rifle`, `acquired=True`); victim at home
+  (1501 Etheridge Heights, ~55m away). State sat in `travellingTo` for ~194 samples, then the shot fired ->
+  `unsolved`. `killShotNode=(45,28,13)` (real geometry). Autopsy: **"A bullet wound from high calibre ammunition;
+  .309 or deer slug"** + an **Entry Wound** on the body. A REAL, solvable-ish sniper kill.
+- **Case 2 = Ru Bai#204 -> Finley Noel#133, strangers (NO EDGE).** Killer 402 Etheridge Heights, victim 704 Plaza
+  Orchid Hotel (different buildings). Only 32 samples, still `travellingTo`, never fired in the captured window =
+  the loop case (plausibly no vantage onto the victim's home). This is the pair the vantage-viable constraint filters.
+
+**So the determinant is GEOMETRY, as hypothesised — but "at home", not at a routine site:** case 1's coworkers happen
+to live ~55m apart with LOS (killer's apartment overlooks the victim's), so the shot connects; case 2's strangers are
+in different buildings, so it loops. The fix = only motivate a `VoyeurSniper` when the killer has a vantage onto the
+VICTIM'S HOME (`Toolbox.TryGetSniperVantagePoint(killer, victim.home, out wall, out score)`), else vanilla.
+
+**TWO PROBLEMS to resolve (from the same root):**
+1. **No window bullet-hole / trajectory evidence.** The kill produced only an Entry Wound + high-calibre autopsy; a
+   WHOLE-`Player.log` sweep found NO broken-window / bullet-hole / trajectory evidence object at all. Yet
+   `killShotNode` WAS computed. Leading hypothesis: our pair-swap override bypasses the game's normal vantage-first
+   setup (pick site -> score a `CachedSniperLocation{NewWall}` vantage wall -> `ExecuteSniperShot` through that wall
+   spawns the window evidence). Because `sniperVictimSite` stayed null and the case ran off `murder.location`, the
+   shot resolved WITHOUT establishing the vantage wall, so no window evidence spawned -> weaker as a solvable sniper
+   case. UNCONFIRMED vs a fast-forward artifact — the normal-speed retest decides (see NEXT).
+2. **Slow (waits in `travellingTo`), and the fast-forward + `FastMurderCadence=0` chained a second case immediately.**
+   The wait is somewhat inherent (the voyeur sniper lingers at the vantage until the victim is shootable at a window);
+   user will retest with `FastMurderCadence=OFF` and NO fast-forward. (Backlog item stands: FastMurderCadence doesn't
+   gate kidnaps either.)
+
+**DIAGNOSTIC BUG FIXED (commit `4ca928e`):** `[sniper-obs]`/`[sniper-live]` were probing the vantage against
+`sniperVictimSite` (null for VoyeurSniper) so `vantage` always read "killer/site null" — measured nothing. Now they
+probe `site = sniperVictimSite ?? murder.location` AND `victim.home` explicitly (logging `siteVantage` + `homeVantage`),
+and the distances/`V_AT_SITE` use that real site. So the next run will actually show FOUND/NONE.
+
+**NEXT (USER, normal speed):** `MotivatedSniperShare=1`, `[Debug] EnableDebugKeys=true`, **NORMAL speed, NO
+fast-forward, `FastMurderCadence=OFF`.** Let a motivated sniper run to the kill on its own. Two questions the logs +
+your eyes answer: (a) does `homeVantage=FOUND` for a firing pair and `NONE` for a looping one (confirms the
+constraint predicate)? (b) at normal speed, does the kill leave a WINDOW BULLET HOLE / trajectory evidence, or still
+none (fast-forward artifact vs a real setup gap)? Then I build: the vantage-viable constraint, and — if (b) shows no
+window evidence — establish the vantage wall so the game spawns proper sniper evidence (decode how ExecuteSniperShot
+spawns it).

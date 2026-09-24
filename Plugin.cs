@@ -165,7 +165,7 @@ namespace SODMotives
                 "TESTING: force the pause between murders to 0 so cases chain back-to-back with no gap. NOTE: this only compresses the wait BETWEEN murders — it does not speed the current murder's planning/enactment, and it does NOT force a sniper/kidnap case (those are picked by the game and can't be forced without a dev trigger). Leave false for normal play; restores the original cadence when turned off.",
                 v => DebugTools.FastMurderCadence = v);
             BindApply("Troubleshooting", "ForceVanillaSniperMO", false,
-                "TESTING (dev): force the game's OWN next scheduled murder to use the STREET sniper MO (ExCopSniper), which the game rarely picks on its own. Pair with [Motive Mix] MotivatedSniperShare=0 + MotiveCaseShare=0 (so the mod leaves the case untouched) + the sandbox 'Sniper cases' type ON to observe a pure VANILLA ExCopSniper. Leave false for normal play; restores the game's debug fields when turned off.",
+                "TESTING (dev): force the game's OWN next scheduled SNIPER to use the street MO (ExCopSniper), which the game rarely picks on its own, WITHOUT swapping the pair — so it stays a pure VANILLA ExCopSniper on the game's own pair, to observe. (Forced via the ExecuteNewMurder prefix's MO param; the game's debugMO field is not honored.) Needs the sandbox 'Sniper cases' type ON. Leave false for normal play.",
                 v => DebugTools.ForceVanillaSniperMO = v);
 
             // --- Debug (developer tooling) ---
@@ -567,6 +567,20 @@ namespace SODMotives
     {
         static void Prefix(MurderController __instance, ref Human newMurderer, ref Human newVictim, MurderPreset preset, ref MurderMO motive, ref NewGameLocation victimSite)
         {
+            // DEV: force the game's OWN next sniper to use ExCopSniper so we can observe a VANILLA one (the game's
+            // debugMurderPreset/debugMO fields are NOT honored by the scheduler; this ref param IS — it's how the
+            // fix-v2 MO-swap worked). We set the MO but DON'T swap the pair, so it stays a vanilla ExCopSniper on
+            // the game's own pair. Pair with MotivatedSniperShare=0 so the motive override below leaves it alone.
+            if (DebugTools.ForceVanillaSniperMO && preset != null && preset.caseType == MurderPreset.CaseType.sniper)
+            {
+                try
+                {
+                    var ex = MurderWatchdog.SniperMO(false);
+                    if (ex != null) { motive = ex; MotivesPlugin.Log.LogInfo($"[SODMotives] FORCE VANILLA ExCopSniper: MO -> {ex.name} on the game's OWN pair {MotivesPlugin.Name(newMurderer)} -> {MotivesPlugin.Name(newVictim)} (pair NOT swapped)."); }
+                }
+                catch { }
+                return;
+            }
             if (!MurderSelector.EnableOverride) return;
             // Only touch ordinary generated (proc-gen sandbox) MURDERS. Special case
             // types (kidnap, sniper) and cover-ups/story are left entirely to the game

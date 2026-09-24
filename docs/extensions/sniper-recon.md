@@ -240,8 +240,16 @@ viable site among the victim's routine locations?
   (200 samples x 0.05h), so a forced sniper yields plenty of loop samples before the clean revert. (Cosmetic: the
   cancel log line is kidnap-worded — "never WALKED into the den" — misleading for a sniper; the vantage-viable
   redesign will replace this path, so left as-is.)
-- **IMMEDIATE NEXT (USER playtest, then I read the logs myself):** sandbox, `[Debug] EnableDebugKeys=true`, NORMAL
-  speed, Sniper case type available. Press **F3** to force a motivated (OURS) sniper. Let it run; tail with F8
+- **`MotivatedSniperShare` slider added (commit `c6e44f6`):** a `[Motive Mix] MotivatedSniperShare` config slider
+  (default **0**), the sniper analogue of `MotivatedKidnapShare` — `MurderSelector.MotivatedSniperShare` +
+  `ShouldMotivateSniper()` + an `allowSniper` branch in `Patch_ExecuteNewMurder_Override`. Set it to **1** to
+  motivate NATURAL sandbox sniper cases (no F3 needed). Default 0 because motivated snipers still loop; this is a
+  test enabler (and the slider half of the eventual fix — the vantage-viable constraint is the other half).
+  Test setup for sniper-only cases: sandbox Procedural Murders ON + Sniper cases ON + Regular murders OFF +
+  Kidnapping OFF (so every generated case is a sniper, mirroring the kidnap-only setup), `MotivatedSniperShare=1`,
+  `[Debug] EnableDebugKeys=true`, NORMAL speed.
+- **IMMEDIATE NEXT (USER playtest, then I read the logs myself):** either force with **F3** OR set
+  `MotivatedSniperShare=1` and let a natural sniper occur; `[Debug] EnableDebugKeys=true`, NORMAL speed. Tail with F8
   (killer) / F12 (victim). Then I read `LogOutput.log` for `[sniper-obs]`/`[sniper-live]` to CONFIRM the hypothesis:
   `OURS` pairs should show `vantage=NONE` (validating geometry as the loop cause) with `weapon: acquired=True`
   (ruling out an acquire failure). If instead `vantage=FOUND` but the killer never reaches it, or `acquired=False`,

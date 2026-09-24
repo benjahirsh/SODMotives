@@ -518,3 +518,24 @@ used to time out now KEEP TRACKING (F9 SNIPE NEST + killer->nest) and eventually
 sniper for vantage point over <street>` narration + whether it reaches executing. If it still never fires within
 12 h, the victim genuinely never gets exposed for that pair -> tune SniperPatienceHours or accept vanilla fallback.
 (SOLVABILITY check #1 still pending once a case fires cleanly.)
+
+### 2026-09-24 (the real fix) — DON'T pin the site for ExCopSniper; let the game pick its own vantage (like vanilla)
+User's key insight: VoyeurSniper needs peeping-tom-compatible homes, but ExCopSniper is built to work with ANY pair
+(it finds its own public rooftop over a site the victim visits at runtime) — so why constrain it? Confirmed from the
+FULL playtest-6 narration counts: `Best sniper for vantage point over Offinex Systems` (the PINNED enclosed
+workplace) **321 times** vs `over Mingo Street` 42 times; every WORKING case computed its vantage exactly **once**
+and fired. So the pin trapped the game re-scanning an enclosed office where the victim sat inside/unexposed, instead
+of committing to a street where he'd be exposed while commuting. **The Daffodil Ward mystery:** that pinned site was
+one where the victim WAS exposed, so it resolved in a single scan; Offinex Systems was enclosed, so the pin kept it
+hammering an unshootable target.
+
+**FIX (commit `30c7666`, deployed):** for ExCopSniper the override now swaps the pair + sets MO=ExCopSniper and
+leaves `victimSite = NULL` — the game's own machinery picks the street site + rooftop vantage, exactly like vanilla.
+NO killer filter (any motivated pair; ExCopSniper handles anyone). Only VoyeurSniper still pins (its home site,
+gated on the killer's own home overlooking the victim). Sniper patience (`Patch_BlockSniperCancel` + cap) stays as
+the keep-tracking + safety-net layer for a victim who's slow to expose.
+
+**NEXT (USER, slider):** re-run motivated snipers. Expect: ExCopSniper cases now resolve like vanilla (the game
+commits to an exposed street + rooftop, fires when the victim walks it) instead of oscillating on a pinned interior.
+Watch F9 (SNIPE MO/NEST) + `[sniper]` logs + `Murder: Best sniper for vantage point over <street>` (should settle,
+not flip 300x). Then SOLVABILITY check #1 (does a clean kill leave findable sniper forensics).

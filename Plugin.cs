@@ -615,37 +615,22 @@ namespace SODMotives
                 bool isSniper = preset != null && preset.caseType == MurderPreset.CaseType.sniper;
                 if (MurderSelector.TryPickVictimCentric(out m, out v, out var suspectPool))
                 {
-                    NewGameLocation sniperSite = null;
                     if (isSniper)
                     {
-                        // Voyeur-viable = the killer's OWN HOME overlooks the victim's home/work (checked first inside
-                        // TryPickSniperSite via the location-centric solver). If so -> VoyeurSniper, shoot from home,
-                        // pin that site. Otherwise -> ExCopSniper, leave the site NULL so the game picks the street
-                        // site + rooftop vantage itself (works for any pair, like vanilla).
-                        bool voyeur = MurderWatchdog.TryPickSniperSite(m, v, out var vsite, out var nest, out bool uv) && uv;
-                        var wantMO = MurderWatchdog.SniperMO(voyeur);   // home MO if voyeur, street (ExCop) MO otherwise
-                        string moNote = "MO unchanged";
-                        if (wantMO != null && motive != null && motive.requiresSniperVantageAtHome != voyeur)
-                        {
-                            motive = wantMO;   // ref: the game builds the case with the matching MO
-                            moNote = $"MO -> {wantMO.name}";
-                        }
-                        if (voyeur)
-                        {
-                            sniperSite = vsite;   // pin the home/work site the killer's own home can see
-                            string sn = "?"; try { if (vsite != null) sn = vsite.name; } catch { }
-                            string nn = "?"; try { if (nest != null) nn = nest.position.ToString(); } catch { }
-                            MotivesPlugin.Log.LogInfo($"[SODMotives] override: SNIPER VOYEUR/home — {MotivesPlugin.Name(m)} -> {MotivesPlugin.Name(v)}, pinned site={sn}, nest@{nn} ({moNote}).");
-                        }
-                        else
-                        {
-                            MotivesPlugin.Log.LogInfo($"[SODMotives] override: SNIPER STREET/rooftop — {MotivesPlugin.Name(m)} -> {MotivesPlugin.Name(v)}, letting the game pick the site + vantage (no pin) ({moNote}).");
-                        }
+                        // DEFER TO THE GAME. Vanilla snipers are motiveless strangers the game picks and snipes via
+                        // its OWN site/vantage logic — which our Toolbox.TryGetSniperVantagePoint probe canNOT
+                        // reproduce (it reports NONE for vanilla snipers that fire fine, e.g. a killer shooting from
+                        // their own apartment window; confirmed in the vanilla baseline). Some vanilla voyeur snipers
+                        // even shoot the victim at WORK, not home. So gating / pinning / MO-swapping on that probe was
+                        // built on a bad reading. For a sniper we now ONLY swap in the motivated pair and let the game
+                        // choose the MO + site (home OR work) + vantage + shot exactly like vanilla. Sniper patience +
+                        // the watchdog fallback are the only safety net for a genuinely un-snipeable victim.
+                        MotivesPlugin.Log.LogInfo($"[SODMotives] override: SNIPER — swapped in motivated pair {MotivesPlugin.Name(m)} -> {MotivesPlugin.Name(v)}; deferring MO/site/vantage to the game (like vanilla).");
                     }
 
                     // Commit the override FIRST so a hiccup in the logging block below can't leave
                     // the vanilla pair in place while the mod victim is already in the bookkeeping.
-                    newMurderer = m; newVictim = v; victimSite = sniperSite;
+                    newMurderer = m; newVictim = v; victimSite = null;   // sniper: game picks the site (home/work); other cases: game derives it from the victim's home
                     __instance.currentMurderer = m; __instance.currentVictim = v;
 
                     // KIDNAP: the swapped-in killer needs a den or the case hangs at waitForLocation

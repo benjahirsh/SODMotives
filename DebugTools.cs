@@ -668,22 +668,18 @@ namespace SODMotives
                 {
                     if (mrd != null && mrd.preset != null && mrd.preset.caseType == MurderPreset.CaseType.sniper)
                     {
-                        // SCENE (above) is where the VICTIM is shot (the target site). Here show where the KILLER
-                        // shoots FROM — the NEST: the vantage wall from the game's own solver, its LOCATION and how
-                        // far the killer still is from it (watch it shrink as the killer travels to the nest).
+                        // Show the GAME'S OWN sniper state (reliable), not our vantage probe — the probe reports NONE
+                        // even for working snipers that shoot from the killer's own apartment, so it was misleading.
                         NewGameLocation target = null; try { target = mrd.sniperVictimSite; } catch { }
                         if (target == null) { try { target = mrd.location; } catch { } }
-                        string moName = "?"; bool voyeur = false; try { if (mrd.mo != null) { moName = mrd.mo.name; voyeur = mrd.mo.requiresSniperVantageAtHome; } } catch { }
-                        Overlay.Add($"SNIPE MO : {moName}  ({(voyeur ? "voyeur / shoots from home" : "street / travels to rooftop")})");
-                        NewWall nest = null; float score = 0f; bool found = false;
-                        try { var tb = Toolbox.Instance; if (tb != null && killer != null && target != null) found = tb.TryGetSniperVantagePoint(killer, target, out nest, out score); } catch { }
-                        if (found && nest != null)
-                        {
-                            string nestLoc = "?"; try { var nn = nest.node; var gl = nn != null ? nn.gameLocation : null; if (gl != null) nestLoc = gl.name; } catch { }
-                            float dist = -1f; try { var kn = killer.currentNode; if (kn != null) dist = Vector3.Distance(kn.position, nest.position); } catch { }
-                            Overlay.Add($"SNIPE NEST: {nestLoc}  (killer->nest {(dist < 0 ? "?" : dist.ToString("0") + "m")}, score {score:0.0})");
-                        }
-                        else Overlay.Add("SNIPE NEST: none (no vantage onto the scene right now)");
+                        string tname = "<none yet>"; try { if (target != null) tname = target.name; } catch { }
+                        Overlay.Add($"SNIPE SITE: {tname}  (game-chosen; can be the victim's home OR work)");
+                        string moName = "?"; try { if (mrd.mo != null) moName = mrd.mo.name; } catch { }
+                        Overlay.Add($"SNIPE MO : {moName}");
+                        // The game's OWN locked kill-shot node — non-zero once it has lined up a shot.
+                        string shot = "?"; bool hasShot = false;
+                        try { var n = mrd.sniperKillShotNode; hasShot = !(n.x == 0 && n.y == 0 && n.z == 0); shot = n.ToString(); } catch { }
+                        Overlay.Add($"SNIPE SHOT: {(hasShot ? "LOCKED @ " + shot : "lining up... (no shot node yet)")}");
                     }
                 }
                 catch { }

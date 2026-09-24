@@ -560,3 +560,27 @@ vanilla sniper play out. Then read: which MO vanilla uses (VoyeurSniper vs ExCop
 it picks (street? public? home/work?), whether the victim TRAVELS there (exposure), the nest location, and whether
 vanilla ever targets a homebody. That defines the gate: only motivate a sniper for a victim with a real
 exposed/vantage-viable site the way vanilla requires.
+
+### 2026-09-24 (VANILLA BASELINE READ) — MY VANTAGE PROBE IS UNRELIABLE; vanilla snipers are motiveless strangers
+Read the vanilla snipers already in the log (MotivatedSniperShare=0). Findings:
+- **5/5 vanilla snipers were VoyeurSniper, and ALL were STRANGERS (NO EDGE).** ExCopSniper is rare in vanilla (its
+  murdererJobBoost is `[Retired]+20`, so the game mostly picks it for retired-NPC killers) — that's why fresh
+  sandboxes keep serving VoyeurSniper. So vanilla snipers are motiveless voyeur/assassin killings, not
+  relationship-driven; forcing a MOTIVE onto a sniper is inherently un-vanilla.
+- **THE BOMBSHELL: my `Toolbox.TryGetSniperVantagePoint(killer, site)` probe returns NONE for vanilla snipers the
+  game itself created and RAN.** E.g. VANILLA VoyeurSniper Aniceta#49 -> Romone#9: `sniperVictimSite=Zeta Labs`
+  (the victim's WORK), yet my `siteVantage`, `homeVantage` AND `workVantage` all read NONE. And a vanilla sniper
+  FIRED this session (Player.log: ExecuteSniperShot x23 -> executing -> post -> escaping -> unsolved). So the game
+  snipes fine where my probe says NONE. **My probe does NOT match the game's own viability logic**, which means the
+  vantage GATE, the site PIN, and the voyeur-vs-street DECISION were all built on a reading that's wrong.
+- Also note: VoyeurSniper shot the victim at their WORKPLACE here, so `requiresSniperVantageAtHome=True` does NOT
+  mean "shoot from the killer's home" the way I assumed.
+
+**REVISED PLAN (defer to the game; stop second-guessing it with a bad probe):** strip the probe-based gate / pin /
+MO-swap. Do the MINIMAL thing: swap in the motivated pair and let the game pick the MO + site + vantage + shot
+exactly like vanilla (it handles vantage in ways my probe can't see). Keep SNIPER PATIENCE + the watchdog fallback
+(cancel -> vanilla) as the ONLY safety net for a genuinely un-snipeable victim (e.g. the basement homebody). Accept
+that, because vanilla snipers are geometry-picked strangers and we force a motive pair, some motivated snipers
+won't be snipeable and will fall back to vanilla — that's the ceiling, and it matches how the rest of the mod mixes
+motivated + vanilla. (Deeper alt if we want higher reliability: decode the game's REAL PickNewVictim/site-viability
+logic instead of the probe — heavy.) DECISION for user: do the strip-and-defer simplification, or keep digging.

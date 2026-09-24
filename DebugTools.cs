@@ -668,18 +668,20 @@ namespace SODMotives
                 {
                     if (mrd != null && mrd.preset != null && mrd.preset.caseType == MurderPreset.CaseType.sniper)
                     {
-                        NewGameLocation site = null; try { site = mrd.sniperVictimSite; } catch { }
-                        if (site == null) { try { site = mrd.location; } catch { } }
-                        string siteName = "<none>"; try { if (site != null) siteName = site.name; } catch { }
-                        Overlay.Add($"SNIPE SITE: {siteName}");
+                        // SCENE (above) is where the VICTIM is shot (the target site). Here show where the KILLER
+                        // shoots FROM — the NEST: the vantage wall from the game's own solver, its LOCATION and how
+                        // far the killer still is from it (watch it shrink as the killer travels to the nest).
+                        NewGameLocation target = null; try { target = mrd.sniperVictimSite; } catch { }
+                        if (target == null) { try { target = mrd.location; } catch { } }
                         NewWall nest = null; float score = 0f; bool found = false;
-                        try { var tb = Toolbox.Instance; if (tb != null && killer != null && site != null) found = tb.TryGetSniperVantagePoint(killer, site, out nest, out score); } catch { }
+                        try { var tb = Toolbox.Instance; if (tb != null && killer != null && target != null) found = tb.TryGetSniperVantagePoint(killer, target, out nest, out score); } catch { }
                         if (found && nest != null)
                         {
+                            string nestLoc = "?"; try { var nn = nest.node; var gl = nn != null ? nn.gameLocation : null; if (gl != null) nestLoc = gl.name; } catch { }
                             float dist = -1f; try { var kn = killer.currentNode; if (kn != null) dist = Vector3.Distance(kn.position, nest.position); } catch { }
-                            Overlay.Add($"NEST  : FOUND (score {score:0.0})  killer->nest {(dist < 0 ? "?" : dist.ToString("0") + "m")}");
+                            Overlay.Add($"SNIPE NEST: {nestLoc}  (killer->nest {(dist < 0 ? "?" : dist.ToString("0") + "m")}, score {score:0.0})");
                         }
-                        else Overlay.Add("NEST  : NONE (no wall covers killer+site right now)");
+                        else Overlay.Add("SNIPE NEST: none (no vantage onto the scene right now)");
                     }
                 }
                 catch { }

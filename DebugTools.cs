@@ -661,6 +661,29 @@ namespace SODMotives
                 }
                 catch { }
 
+                // Sniper: show the pinned target site, the intended NEST (the vantage wall from the game's OWN
+                // solver Toolbox.TryGetSniperVantagePoint), and the killer's live distance to it — so you can see
+                // whether the killer is actually travelling to the nest or idling somewhere with no line of sight.
+                try
+                {
+                    if (mrd != null && mrd.preset != null && mrd.preset.caseType == MurderPreset.CaseType.sniper)
+                    {
+                        NewGameLocation site = null; try { site = mrd.sniperVictimSite; } catch { }
+                        if (site == null) { try { site = mrd.location; } catch { } }
+                        string siteName = "<none>"; try { if (site != null) siteName = site.name; } catch { }
+                        Overlay.Add($"SNIPE SITE: {siteName}");
+                        NewWall nest = null; float score = 0f; bool found = false;
+                        try { var tb = Toolbox.Instance; if (tb != null && killer != null && site != null) found = tb.TryGetSniperVantagePoint(killer, site, out nest, out score); } catch { }
+                        if (found && nest != null)
+                        {
+                            float dist = -1f; try { var kn = killer.currentNode; if (kn != null) dist = Vector3.Distance(kn.position, nest.position); } catch { }
+                            Overlay.Add($"NEST  : FOUND (score {score:0.0})  killer->nest {(dist < 0 ? "?" : dist.ToString("0") + "m")}");
+                        }
+                        else Overlay.Add("NEST  : NONE (no wall covers killer+site right now)");
+                    }
+                }
+                catch { }
+
                 // MOTIVE + SUSPECT POOL read the REAL event-backed pool the killer was drawn from
                 // (MurderSelector), not the retired like-based Motive.Score.
                 if (victim != null && MurderSelector.MotiveByVictim.TryGetValue(victim.humanID, out var kmot))

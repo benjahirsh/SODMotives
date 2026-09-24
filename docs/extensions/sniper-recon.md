@@ -189,3 +189,35 @@ does the victim go to the `sniperVictimSite` (a routine/public spot)? does the k
 vantage for the chosen site? killer never reaches the wall? site re-picks forever? no weapon?). The diff points
 to the fix (constrain the victim to a sniper-viable exposed site, drive the killer to the vantage, or supply a
 weapon). Weapon/inventory logging is NOT in yet — add it for the OURS pass once the vanilla baseline is known.
+
+### Vanilla sniper flow — OBSERVED IN-GAME (2026-09-24, save/load position comparison)
+User ran several VANILLA sniper cases, save/reloading to freeze + compare the killer's and victim's positions at
+each state. Confirmed flow:
+1. **acquireEquipment** — the KILLER starts here (acquires the rifle).
+2. **waitForLocation** — the VICTIM travels to the murder scene (the `sniperVictimSite`). So waitForLocation is
+   the game WAITING FOR THE VICTIM to reach an exposed, shootable location — not (as the name might suggest) the
+   killer waiting for a nest.
+3. **travellingTo** — the KILLER moves to the sniping / vantage position (the nest wall).
+4. Killer **shoots** the victim -> **unsolved**.
+
+**THE KEY FINDING — vanilla pairs look GEOMETRY-constrained, not just motive/routine:** the game appears to pick
+the killer/victim pair from the RELATIVE POSITIONING of their locations — the victim must be VISIBLE FROM A
+WINDOW of a vantage the killer can reach. One run shot the victim at their WORKPLACE (not home), so the site can
+be home OR work OR (historically) a street. In normal play the user historically saw victims IN THE STREETS with
+the sniper firing from a PUBLICLY ACCESSIBLE ROOFTOP only one or two storeys up.
+
+**Why our motivated sniper loops (now explained):** vanilla guarantees a line-of-sight-viable pair by
+construction; our override picks the pair by RELATIONSHIP and ignores geometry, so the motive-chosen killer
+usually has NO reachable vantage covering any site the victim visits -> the site/vantage search keeps failing ->
+the `travellingTo` re-pick loop. This is the SAME shape as the kidnap "walk-reachable den" problem: a
+relationship-chosen pair breaks a geometric/access precondition vanilla never violates.
+
+**Fix direction (for when we return):** constrain the motivated-sniper choice to a VANTAGE-VIABLE pair/site —
+only motivate a sniper when the killer HAS a reachable vantage onto a site the victim actually visits
+(home/work/routine); else fall back to vanilla. Tools: the `[sniper-live]` vantage probe
+(`Toolbox.Instance.TryGetSniperVantagePoint(killer, site, ...)`) + `Murder.TryPickNewVictimSite(out site)` — pick
+the victim's exposed site, confirm a vantage exists for the killer, and only then swap the pair (mirrors
+`EnsureKidnapDen` / walk-reachable-den). NEXT playtest (forced F3 + the sniper diagnostics) should show
+`vantage=NONE` for our pairs, validating this before building the constraint. Open question: can we pre-filter
+the victim pool by "some site of theirs has a killer-reachable vantage", or do we pick the pair then search for a
+viable site among the victim's routine locations?

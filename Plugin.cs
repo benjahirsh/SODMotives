@@ -611,29 +611,30 @@ namespace SODMotives
                 // the shot even with no line of sight (the nonsensical no-window kills).
                 bool isSniper = preset != null && preset.caseType == MurderPreset.CaseType.sniper;
                 System.Func<Human, Human, bool> sniperFilter = isSniper
-                    ? (System.Func<Human, Human, bool>)((k, vic) => MurderWatchdog.TryPickSniperSite(k, vic, out _, out _))
+                    ? (System.Func<Human, Human, bool>)((k, vic) => MurderWatchdog.TryPickSniperSite(k, vic, out _, out _, out _))
                     : null;
                 if (MurderSelector.TryPickVictimCentric(out m, out v, out var suspectPool, sniperFilter))
                 {
-                    // For a sniper, re-derive + PIN the vantage-viable site the killer can actually shoot from (the
-                    // chosen killer passed the filter, so this succeeds), and SWAP the MO to the street/rooftop
-                    // sniper (ExCopSniper) so the killer TRAVELS to that public vantage. VoyeurSniper only shoots
-                    // from the killer's own home and won't go to a public nest, so it idled and the game force-fired
-                    // a no-line-of-sight kill. Other cases: null site (the game derives it from the victim's home).
+                    // For a sniper, re-derive the vantage-viable site + flavour, PIN victimSite to that site, and set
+                    // the MO (ref) to MATCH the vantage: VOYEUR (the killer's own home overlooks the site -> keep/use
+                    // VoyeurSniper, the killer shoots from home) or STREET (the killer travels to a public nest ->
+                    // ExCopSniper). We PREFER voyeur (TryPickSniperSite checks it first) and fall back to street. The
+                    // MO must match the vantage or the killer either idles at home (a public vantage on VoyeurSniper)
+                    // or the case makes no sense. Other cases: null site (the game derives it from the victim's home).
                     NewGameLocation sniperSite = null;
                     if (isSniper)
                     {
-                        MurderWatchdog.TryPickSniperSite(m, v, out sniperSite, out var nest);
+                        MurderWatchdog.TryPickSniperSite(m, v, out sniperSite, out var nest, out bool useVoyeur);
                         string moNote = "MO unchanged";
-                        var streetMO = MurderWatchdog.StreetSniperMO();
-                        if (streetMO != null && motive != null && motive.requiresSniperVantageAtHome)
+                        var wantMO = MurderWatchdog.SniperMO(useVoyeur);
+                        if (wantMO != null && motive != null && motive.requiresSniperVantageAtHome != useVoyeur)
                         {
-                            motive = streetMO;   // ref: the game builds the case with the street MO -> killer goes to the nest
-                            moNote = $"MO -> {streetMO.name}";
+                            motive = wantMO;   // ref: the game builds the case with the matching MO
+                            moNote = $"MO -> {wantMO.name}";
                         }
                         string sn = "?"; try { if (sniperSite != null) sn = sniperSite.name; } catch { }
                         string nn = "?"; try { if (nest != null) nn = nest.position.ToString(); } catch { }
-                        MotivesPlugin.Log.LogInfo($"[SODMotives] override: SNIPER vantage OK — {MotivesPlugin.Name(m)} -> {MotivesPlugin.Name(v)}, site={sn}, nest@{nn} ({moNote}).");
+                        MotivesPlugin.Log.LogInfo($"[SODMotives] override: SNIPER vantage OK ({(useVoyeur ? "VOYEUR/home" : "STREET/rooftop")}) — {MotivesPlugin.Name(m)} -> {MotivesPlugin.Name(v)}, site={sn}, nest@{nn} ({moNote}).");
                     }
 
                     // Commit the override FIRST so a hiccup in the logging block below can't leave

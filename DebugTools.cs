@@ -673,6 +673,8 @@ namespace SODMotives
                         // far the killer still is from it (watch it shrink as the killer travels to the nest).
                         NewGameLocation target = null; try { target = mrd.sniperVictimSite; } catch { }
                         if (target == null) { try { target = mrd.location; } catch { } }
+                        string moName = "?"; bool voyeur = false; try { if (mrd.mo != null) { moName = mrd.mo.name; voyeur = mrd.mo.requiresSniperVantageAtHome; } } catch { }
+                        Overlay.Add($"SNIPE MO : {moName}  ({(voyeur ? "voyeur / shoots from home" : "street / travels to rooftop")})");
                         NewWall nest = null; float score = 0f; bool found = false;
                         try { var tb = Toolbox.Instance; if (tb != null && killer != null && target != null) found = tb.TryGetSniperVantagePoint(killer, target, out nest, out score); } catch { }
                         if (found && nest != null)

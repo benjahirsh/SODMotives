@@ -37,10 +37,23 @@ The whole loop is native and verified in-game:
 3. **SHIPPED 1.1.0** — released on Thunderstore (by user); `v2` pushed to origin (`69cfcc8`) + lightweight tag
    `v1.1.0` pushed. GitHub `v2` and the Thunderstore page are both live at 1.1.0.
 
-## NEXT (1.1.x) — RANSOM-PAYMENT VICTIM POLISH (user chose 2026-09-24; start next session)
-**Symptom:** after a kidnap victim is freed by the player PAYING the ransom (not by a rescue), the victim runs
-around their apartment as if still being attacked/restrained. First question: **is this OURS or vanilla?** (The
-rescue path was proven vanilla earlier; the PAYMENT path hasn't been isolated.)
+## 1.1.1 (2026-09-24) — kidnap SAVE/LOAD fix (committed `59b8193` on v2; pending reload-test + upload)
+**Bug:** the kidnapper kill-block (`MurderWatchdog.ShouldBlockKidnapKill`) only fires while the victim is in
+`KidnapReachedHold`, which is in-memory + cleared on EVERY game start (including a load) and was only ever set on
+the SetMurderState transition INTO the hold. A kidnapping loaded already in the hold never re-transitions, so the
+block never re-armed after a reload and the held victim could be killed before the ransom deadline. **Fix:**
+re-arm `KidnapReachedHold` each tick in the watchdog's hold branch (post/escaping/unsolved), restoring the block
+on the first tick after load (only in the hold states, so it never mislabels the abduction's own pre-hold
+travellingTo/executing). Version bumped 1.1.0 -> 1.1.1 (manifest/plugin/csproj), CHANGELOG updated, zip built.
+**PENDING USER:** reload-test (F2 kidnap -> victim held at unsolved -> SAVE -> RELOAD -> victim stays held,
+survives to the ransom deadline, case still solvable), then `git push origin v2` + tag `v1.1.1` + upload the zip.
+(Current NEW-feature dev = motivated snipers on branch `sniper-wip`; see `docs/extensions/sniper-recon.md`.)
+
+## WATCH ITEM (did NOT reproduce on retest — not being fixed) — ransom-payment victim state
+**Symptom (seen once):** after a kidnap victim was freed by the player PAYING the ransom (not by a rescue), the
+victim ran around their apartment as if still being attacked/restrained. On a later test it did NOT recur, so it
+is parked. First question if it returns: **is this OURS or vanilla?** (The rescue path was proven vanilla
+earlier; the PAYMENT path hasn't been isolated.)
 **Plan:**
 1. **Reproduce + compare.** Force a kidnap (F2, normal speed, EnableDebugKeys on), pay the ransom, watch the
    freed victim. Then do the same on a VANILLA kidnap (Kidnapping type on, MotivatedKidnapShare 0, or just let

@@ -66,6 +66,17 @@ namespace SODMotives
         private static float _sniperLiveLastLogH = -999f;
         private static int _sniperLiveCount = 0;
 
+        // SNIPER PATIENCE (user idea): a motivated STREET sniper (ExCopSniper) tracks a MOVING victim — the game
+        // keeps recomputing the best vantage until the victim is exposed. But the game GIVES UP quickly
+        // (CancelCurrentMurder from waitForLocation) when it can't line up a shot, so a motivated street sniper
+        // often times out with no kill even though it would connect given more time. We BLOCK that give-up for our
+        // street-sniper cases for up to SniperPatienceHours (letting it keep tracking), then allow the cancel so it
+        // can't hang forever. Voyeur (shoots from home) is not blocked (no moving-target tracking needed).
+        internal static float SniperPatienceHours = 12f;
+        internal static readonly Dictionary<int, float> SniperSince = new Dictionary<int, float>();   // first-seen gameTime of our sniper case
+        private static readonly HashSet<int> _sniperCancelBlockLogged = new HashSet<int>();
+        private static readonly HashSet<int> _sniperPatienceDone = new HashSet<int>();                // cases we've stopped protecting after the cap
+
         // Seal the den behind the fleeing killer. Vanilla (confirmed in-game across 2 sandboxes: frontDoors
         // locked=0 the whole hold, AND a web-search confirmed vacant-address kidnap dens stay UNLOCKED) only
         // CLOSES the doors (default NPC flee behaviour), never locks the unowned den. So we CLOSE to match that
@@ -98,6 +109,7 @@ namespace SODMotives
             _observed.Clear();
             _liveVid = -1; _liveLastLogH = -999f; _liveCount = 0;
             _sniperObserved.Clear(); _sniperLiveVid = -1; _sniperLiveLastLogH = -999f; _sniperLiveCount = 0;
+            SniperSince.Clear(); _sniperCancelBlockLogged.Clear(); _sniperPatienceDone.Clear();
             _ransomTried.Clear(); _killTimeReasserted.Clear();
             _killBlockLogged.Clear(); KidnapReachedHold.Clear(); _denSealed.Clear(); _denGoalLogged.Clear();
         }
@@ -129,6 +141,30 @@ namespace SODMotives
                 if (kt > 0.5f && NowHours() >= kt) return false;   // deadline reached — let the kidnapper kill
                 if (_killBlockLogged.Add(vid))
                     MotivesPlugin.Log.LogInfo($"[SODMotives][kidnap-kill] BLOCKING the kidnapper's kill (state=>{newState}) until the game's killTime={kt:0.0} (now={NowHours():0.0}); victim held + rescuable until then.");
+                return true;
+            }
+            catch { return false; }
+        }
+
+        // SNIPER PATIENCE: block the game's give-up (CancelCurrentMurder) for our overridden STREET-sniper cases so
+        // the killer keeps tracking the MOVING victim (recomputing vantages) until it lines up a shot, up to
+        // SniperPatienceHours. After the cap we stop protecting it (and the watchdog force-cancels -> vanilla) so a
+        // truly stuck case can't hang. Voyeur snipers (shoot from home, no tracking) are never blocked. Called from
+        // the CancelCurrentMurder prefix; returns true = skip the cancel this frame.
+        internal static bool ShouldBlockSniperCancel(MurderController.Murder m)
+        {
+            try
+            {
+                if (m == null || m.preset == null || m.preset.caseType != MurderPreset.CaseType.sniper) return false;
+                var mo = m.mo; if (mo == null || mo.requiresSniperVantageAtHome) return false;   // only STREET (ExCopSniper)
+                var v = m.victim; if (v == null) return false;
+                int vid = v.humanID;
+                if (!MurderSelector.OverriddenVictimIds.Contains(vid)) return false;
+                if (_sniperPatienceDone.Contains(vid)) return false;   // patience already spent -> allow the cancel
+                float since; if (!SniperSince.TryGetValue(vid, out since)) { since = NowHours(); SniperSince[vid] = since; }
+                if (NowHours() - since >= SniperPatienceHours) { _sniperPatienceDone.Add(vid); return false; }   // give up now
+                if (_sniperCancelBlockLogged.Add(vid))
+                    MotivesPlugin.Log.LogInfo($"[SODMotives][sniper] keeping the ExCopSniper case alive past the game's give-up so it can keep tracking the moving victim (patience {SniperPatienceHours:0.#}h from {since:0.#}h).");
                 return true;
             }
             catch { return false; }
@@ -266,6 +302,28 @@ namespace SODMotives
                 }
 
                 if (!MurderSelector.OverriddenVictimIds.Contains(vid)) return;   // INTERVENTIONS below are OURS only — vanilla cases just get observed above
+
+                // SNIPER patience: record when our STREET-sniper case started; while under SniperPatienceHours the
+                // CancelCurrentMurder prefix keeps it alive so the killer keeps tracking the moving victim. Once the
+                // patience is spent without a shot, force-cancel it here -> vanilla so a stuck case can't hang. We
+                // return afterwards so a sniper skips the kidnap-oriented interventions (incl. the waitForLocation
+                // stall-cancel, which would otherwise fight the patience block).
+                if (murder.preset != null && murder.preset.caseType == MurderPreset.CaseType.sniper
+                    && murder.mo != null && !murder.mo.requiresSniperVantageAtHome)
+                {
+                    float ssince; if (!SniperSince.TryGetValue(vid, out ssince)) { ssince = NowHours(); SniperSince[vid] = ssince; }
+                    bool resolved = murder.state == MurderController.MurderState.executing
+                        || murder.state == MurderController.MurderState.post
+                        || murder.state == MurderController.MurderState.escaping
+                        || murder.state == MurderController.MurderState.unsolved;
+                    if (!resolved && NowHours() - ssince >= SniperPatienceHours && !_sniperPatienceDone.Contains(vid))
+                    {
+                        _sniperPatienceDone.Add(vid);
+                        MotivesPlugin.Log.LogWarning($"[SODMotives][sniper] patience {SniperPatienceHours:0.#}h exhausted for {MotivesPlugin.Name(killer)} -> {MotivesPlugin.Name(victim)} without a shot — cancelling to vanilla.");
+                        try { murder.CancelCurrentMurder(); } catch (Exception ce) { MotivesPlugin.Log.LogWarning($"[SODMotives][sniper] cancel err: {ce.Message}"); }
+                    }
+                    return;
+                }
 
                 // KILL DEADLINE (our kidnaps only) = the game's OWN Murder.killTime — the value the ransom note
                 // counts down to. We deliberately do NOT override killTime, so the note's stated kill time and the
@@ -736,11 +794,6 @@ namespace SODMotives
             {
                 if (killer == null || victim == null) return false;
                 var tb = Toolbox.Instance; if (tb == null) return false;
-                // Exclude COHABITING pairs: a sniper who lives with the victim is thematically odd (they could just
-                // kill them at home) and the worst case for the game's AI — no cross-home vantage, and their shared
-                // routine keeps the killer at the victim's side instead of travelling to a distant nest, so the case
-                // oscillates and never fires. Not a viable sniper pair.
-                try { var kh0 = killer.home; var vh0 = victim.home; if (kh0 != null && vh0 != null && kh0.Pointer == vh0.Pointer) return false; } catch { }
                 NewGameLocation home = null; try { home = victim.home; } catch { }
                 NewGameLocation work = null;
                 try { var job = victim.job; var emp = job != null ? job.employer : null; if (emp != null) work = emp.placeOfBusiness; } catch { }

@@ -143,6 +143,9 @@ namespace SODMotives
             BindApply("Troubleshooting", "WaitLocationStallHours", 12f,
                 "In-game hours a mod case may sit stalled in 'waitForLocation' (no seatable location — e.g. a kidnap with no valid holding den) before the watchdog CANCELS it so it can't hang the case indefinitely. A one-time IsValidLocation den probe is logged the moment it stalls.",
                 v => MurderWatchdog.WaitLocationStallHours = v);
+            BindApply("Troubleshooting", "SniperPatienceHours", 12f,
+                "In-game hours to keep a motivated STREET sniper (ExCopSniper) case alive past the game's OWN give-up, so the killer keeps tracking the moving victim until it lines up a shot instead of the case timing out with no kill. After this it falls back to vanilla so it can't hang. Voyeur snipers (shoot from home) are unaffected.",
+                v => MurderWatchdog.SniperPatienceHours = v);
             BindApply("Troubleshooting", "StripSignatures", true,
                 "Remove serial-killer calling card / moniker / graffiti from motivated cases so they read as personal crimes. (Off = motive cases keep the vanilla serial-killer signatures.)",
                 v => MurderSelector.StripSignatures = v);
@@ -703,6 +706,22 @@ namespace SODMotives
             string site = "<null>";
             try { if (newLoc != null) site = newLoc.name; } catch { site = "<err>"; }
             MotivesPlugin.Log.LogInfo($"[SODMotives] [flow] SetMurderLocation -> {site}");
+        }
+    }
+
+    // SNIPER PATIENCE: the game gives up on a sniper it can't line up (CancelCurrentMurder from waitForLocation).
+    // For our motivated STREET snipers (ExCopSniper) that give-up is premature — the recomputing IS the killer
+    // tracking the moving victim, and it would connect given more time. Skip the cancel for our ExCopSniper victims
+    // until MurderWatchdog's SniperPatienceHours cap, after which it's allowed (and the watchdog force-cancels to
+    // vanilla) so a truly stuck case can't hang. Voyeur snipers (shoot from home) are never blocked.
+    [HarmonyPatch(typeof(MurderController.Murder), nameof(MurderController.Murder.CancelCurrentMurder))]
+    internal static class Patch_BlockSniperCancel
+    {
+        static bool Prefix(MurderController.Murder __instance)
+        {
+            try { if (MurderWatchdog.ShouldBlockSniperCancel(__instance)) return false; }
+            catch { }
+            return true;
         }
     }
 

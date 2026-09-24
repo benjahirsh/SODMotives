@@ -597,3 +597,18 @@ logic instead of the probe — heavy.) DECISION for user: do the strip-and-defer
   whether the game's scheduler honours debugMurderPreset/debugMO — if the next murder isn't ExCopSniper, it doesn't,
   and we find another route. Read `[sniper-obs]`/`[sniper-live]` to learn how vanilla ExCopSniper picks its
   site/vantage/victim (esp. whether it only targets exposable victims).
+
+### 2026-09-24 (cohabiting MO + debugMO dead) — force ExCopSniper for cohabiting pairs
+- **debugMO is NOT honored** by the scheduler (user tested ForceVanillaSniperMO via debugMurderPreset/debugMO: all
+  snipers stayed VoyeurSniper). Reworked ForceVanillaSniperMO to force the MO in the ExecuteNewMurder prefix via the
+  `ref motive` param (which IS honored, like the fix-v2 swap) WITHOUT swapping the pair -> a vanilla ExCopSniper on
+  the game's own pair (commit `3b3ed34`). Just toggle it on; no share-slider setup.
+- **Motivated cohabiting pair got VoyeurSniper (the strip's game-default) = nonsensical** (Live#301->Eliza#300,
+  killer.home==victim.home==403 Zeng Terrace; also victim.work==home = homebody). VoyeurSniper shoots the victim at
+  their own home/work from a vantage, which makes no sense when the killer lives there. FIX (commit `9c8cee7`): for
+  COHABITING pairs (killer.home==victim.home) the override forces the street MO ExCopSniper (a public assassination);
+  non-cohabiting pairs keep the game's MO. Site/vantage still deferred to the game. A cohabiting HOMEBODY victim
+  (work==home, never exposed) still can't be lined up by ExCopSniper -> patience -> vanilla (acceptable; add an
+  upfront homebody gate later if the 12h wait is annoying).
+- NEXT (user): rerun motivated snipers — cohabiting pairs should now be street/ExCopSniper (or fall back if the
+  victim's a homebody), non-cohabiting stay home-voyeur. Then the SOLVABILITY check.

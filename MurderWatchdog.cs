@@ -643,6 +643,7 @@ namespace SODMotives
                 log.LogInfo($"[SODMotives][sniper-obs]   killer.home={LName(kh)} ; victim.home={LName(vh)}");
                 NewGameLocation site = null; try { site = murder.sniperVictimSite; } catch { }
                 log.LogInfo($"[SODMotives][sniper-obs]   sniperVictimSite={LName(site)} ; {DescribeSniperVantage(killer, site)}");
+                log.LogInfo($"[SODMotives][sniper-obs]   {DescribeSniperWeapon(murder)}");
             }
             catch (Exception e) { log.LogWarning($"[SODMotives][sniper-obs] error: {e.Message}"); }
         }
@@ -669,7 +670,7 @@ namespace SODMotives
                 try { var kn = killer.currentNode; if (kn != null && sa != null) kDist = Vector3.Distance(kn.position, sa.position); } catch { }
                 try { var kn = killer.currentNode; var vn = victim.currentNode; if (kn != null && vn != null) kvDist = Vector3.Distance(kn.position, vn.position); } catch { }
                 string shot = "?"; try { shot = murder.sniperKillShotNode.ToString(); } catch { }
-                log.LogInfo($"[SODMotives][sniper-live] {(ours ? "OURS" : "VANILLA")} [{st}] site={LName(site)} victim@{LName(vloc)} V_AT_SITE={vAtSite} dist(victim->site)={vDist:0.0} ; killer@{LName(kloc)} dist(killer->site)={kDist:0.0} dist(killer->victim)={kvDist:0.0} ; killShotNode={shot} ; {DescribeSniperVantage(killer, site)}");
+                log.LogInfo($"[SODMotives][sniper-live] {(ours ? "OURS" : "VANILLA")} [{st}] site={LName(site)} victim@{LName(vloc)} V_AT_SITE={vAtSite} dist(victim->site)={vDist:0.0} ; killer@{LName(kloc)} dist(killer->site)={kDist:0.0} dist(killer->victim)={kvDist:0.0} ; killShotNode={shot} ; {DescribeSniperVantage(killer, site)} ; {DescribeSniperWeapon(murder)}");
             }
             catch (Exception e) { log.LogWarning($"[SODMotives][sniper-live] err: {e.Message}"); }
         }
@@ -688,6 +689,25 @@ namespace SODMotives
                 return found ? $"vantage=FOUND score={score:0.00}" : "vantage=NONE (no wall covers this killer+site)";
             }
             catch (Exception e) { return "vantage: err " + e.Message; }
+        }
+
+        // Sniper WEAPON/equipment probe (dev-only, OURS-diagnosis aid): did the killer actually acquire a rifle?
+        // The acquireEquipment phase sets Murder.acquiredEquipment and fills Murder.weapon (the real Interactable);
+        // weaponPreset is the intended weapon. A sniper that reaches travellingTo has PASSED acquire, so this should
+        // read acquired=True with a real held weapon — if it does NOT, an acquire failure (not geometry) is the loop
+        // cause, and the fix is different. Read-only; never throws.
+        private static string DescribeSniperWeapon(MurderController.Murder murder)
+        {
+            try
+            {
+                if (murder == null) return "weapon: murder null";
+                bool acquired = false; try { acquired = murder.acquiredEquipment; } catch { }
+                string preset = "?"; try { var wp = murder.weaponPreset; preset = wp != null ? wp.name : "<null>"; } catch { }
+                string held = "?"; try { var w = murder.weapon; held = w != null ? w.name : "<none>"; } catch { }
+                string wstr = "?"; try { wstr = string.IsNullOrEmpty(murder.weaponStr) ? "<empty>" : murder.weaponStr; } catch { }
+                return $"weapon: acquired={acquired} preset={preset} held={held} weaponStr='{wstr}'";
+            }
+            catch (Exception e) { return "weapon: err " + e.Message; }
         }
 
         private static NewNode SafeAnchor(NewGameLocation l) { try { return l != null ? l.anchorNode : null; } catch { return null; } }

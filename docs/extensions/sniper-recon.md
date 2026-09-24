@@ -584,3 +584,16 @@ that, because vanilla snipers are geometry-picked strangers and we force a motiv
 won't be snipeable and will fall back to vanilla — that's the ceiling, and it matches how the rest of the mod mixes
 motivated + vanilla. (Deeper alt if we want higher reliability: decode the game's REAL PickNewVictim/site-viability
 logic instead of the probe — heavy.) DECISION for user: do the strip-and-defer simplification, or keep digging.
+
+### 2026-09-24 (tooling) — ForceVanillaSniperMO toggle + defer-to-game strip deployed
+- **Strip deployed** (`83a4e63`): override no longer probes/gates/pins/MO-swaps a sniper; it just swaps in the
+  motivated pair and defers MO+site+vantage+shot to the game (probe proven unreliable). F9 shows the game's own
+  SNIPE SITE/MO/sniperKillShotNode. Patience + waitForLocation stall-cancel are the safety net.
+- **New dev toggle `[Troubleshooting] ForceVanillaSniperMO`** (`dc0b0a1`): vanilla rarely schedules ExCopSniper
+  (its MO scoring favours Retired killers; user got 5/5 VoyeurSniper hunting it). This sets the game's OWN
+  `MurderController.debugMurderPreset=Sniper` + `debugMO=ExCopSniper` every frame while on (captures/restores on
+  off), so the game's next scheduled murder is an ExCopSniper. To observe a PURE vanilla ExCopSniper: enable it +
+  `MotivatedSniperShare=0` + `MotiveCaseShare=0` (override leaves it untouched) + sandbox Sniper cases ON. UNVERIFIED
+  whether the game's scheduler honours debugMurderPreset/debugMO — if the next murder isn't ExCopSniper, it doesn't,
+  and we find another route. Read `[sniper-obs]`/`[sniper-live]` to learn how vanilla ExCopSniper picks its
+  site/vantage/victim (esp. whether it only targets exposable victims).

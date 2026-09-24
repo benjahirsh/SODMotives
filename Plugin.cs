@@ -634,15 +634,23 @@ namespace SODMotives
                 {
                     if (isSniper)
                     {
-                        // DEFER TO THE GAME. Vanilla snipers are motiveless strangers the game picks and snipes via
-                        // its OWN site/vantage logic — which our Toolbox.TryGetSniperVantagePoint probe canNOT
-                        // reproduce (it reports NONE for vanilla snipers that fire fine, e.g. a killer shooting from
-                        // their own apartment window; confirmed in the vanilla baseline). Some vanilla voyeur snipers
-                        // even shoot the victim at WORK, not home. So gating / pinning / MO-swapping on that probe was
-                        // built on a bad reading. For a sniper we now ONLY swap in the motivated pair and let the game
-                        // choose the MO + site (home OR work) + vantage + shot exactly like vanilla. Sniper patience +
-                        // the watchdog fallback are the only safety net for a genuinely un-snipeable victim.
-                        MotivesPlugin.Log.LogInfo($"[SODMotives] override: SNIPER — swapped in motivated pair {MotivesPlugin.Name(m)} -> {MotivesPlugin.Name(v)}; deferring MO/site/vantage to the game (like vanilla).");
+                        // Site/vantage are DEFERRED to the game (no pin, no probe — the probe reports NONE for
+                        // vanilla snipers that fire fine, e.g. a killer shooting from their own apartment). But the
+                        // MO is chosen by whether the pair COHABITS: the game's usual pick, VoyeurSniper, shoots the
+                        // victim at their OWN home/work from a vantage — nonsensical when the killer LIVES THERE TOO.
+                        // So for a cohabiting pair force the STREET MO (ExCopSniper): a public assassination, which
+                        // makes sense for a cohabitant killer. Non-cohabiting: leave the game's MO (VoyeurSniper is
+                        // fine — the killer snipes the victim's home/work from elsewhere, like vanilla). A cohabiting
+                        // homebody victim (never exposed) can't be lined up by ExCopSniper -> patience -> vanilla.
+                        bool cohabit = false;
+                        try { var kh = m.home; var vh = v.home; cohabit = kh != null && vh != null && kh.Pointer == vh.Pointer; } catch { }
+                        string moNote = "MO left to the game";
+                        if (cohabit)
+                        {
+                            var street = MurderWatchdog.SniperMO(false);   // ExCopSniper
+                            if (street != null) { motive = street; moNote = $"COHABITING -> forced street MO {street.name}"; }
+                        }
+                        MotivesPlugin.Log.LogInfo($"[SODMotives] override: SNIPER — motivated pair {MotivesPlugin.Name(m)} -> {MotivesPlugin.Name(v)}; {moNote}; site/vantage left to the game.");
                     }
 
                     // Commit the override FIRST so a hiccup in the logging block below can't leave

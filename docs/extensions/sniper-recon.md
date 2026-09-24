@@ -494,3 +494,27 @@ close pairs from snipers (a sniper who lives with the victim is odd anyway). Res
 pairs, clean vanilla fallback otherwise. (Open alt: a stricter gate that predicts exposure/stability — hard, since
 exposure is a runtime property of the victim's routine.) DECISION NEEDED from user: ship gate+fallback, or keep
 chasing higher reliability.
+
+### 2026-09-24 (playtest 6 decode + SNIPER PATIENCE) — user chose "keep chasing"; the game GIVES UP, so keep it alive
+Decoded playtest 6's ending from Player.log: `travellingTo (x190) -> waitForLocation -> Murder: Cancelling current
+murder... -> CancelCurrentMurder() -> unsolved`. **The GAME abandoned the case itself** (no watchdog line), right
+after it fell back to waitForLocation. So it stopped recomputing because the game gave up, not because recomputing
+is wrong. User's read: for an ExCopSniper the recomputing IS the killer TRACKING the moving victim — let it keep
+going. User also: (a) revert the cohabiting exclusion (cohabiting couples can work — REVERTED), (b) allow the AI to
+keep recomputing for a moving target if it's an ExCopSniper MO.
+
+**BUILT — SNIPER PATIENCE (commit `5a012ed`, deployed):** `Patch_BlockSniperCancel` (Harmony prefix on
+`MurderController.Murder.CancelCurrentMurder`) SKIPS the cancel for our overridden STREET-sniper victims
+(`requiresSniperVantageAtHome==false`, ExCopSniper) until `[Troubleshooting] SniperPatienceHours` (default 12
+game-h) via `MurderWatchdog.ShouldBlockSniperCancel`, so the case stays alive and keeps recomputing/tracking the
+moving victim. `MurderWatchdog.Tick` records `SniperSince` on first sight and, once patience is spent without a shot,
+force-cancels -> vanilla (so a stuck case can't hang). Voyeur snipers (shoot from home, no tracking) are never
+blocked. Murder fields noted for later: `creationTime`, `waitingTimestamp`, `killTime`, `sniperShotDelay`,
+`MurderController.locationUpdateTimer`.
+
+**NEXT (USER, slider):** run motivated snipers (normal speed, FastMurderCadence off). Watch: does an ExCopSniper that
+used to time out now KEEP TRACKING (F9 SNIPE NEST + killer->nest) and eventually FIRE when the victim gets exposed
+(walks a street), within the patience window? Read `[sniper]` (patience keep-alive / exhausted) + `Murder: Best
+sniper for vantage point over <street>` narration + whether it reaches executing. If it still never fires within
+12 h, the victim genuinely never gets exposed for that pair -> tune SniperPatienceHours or accept vanilla fallback.
+(SOLVABILITY check #1 still pending once a case fires cleanly.)

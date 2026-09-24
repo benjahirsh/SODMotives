@@ -305,3 +305,39 @@ constraint predicate)? (b) at normal speed, does the kill leave a WINDOW BULLET 
 none (fast-forward artifact vs a real setup gap)? Then I build: the vantage-viable constraint, and — if (b) shows no
 window evidence — establish the vantage wall so the game spawns proper sniper evidence (decode how ExecuteSniperShot
 spawns it).
+
+### 2026-09-24 (playtest 2, corrected diagnostic) — CONFIRMED: game force-resolves a no-LOS kill. PIVOT to a street MO.
+Ran a natural motivated sniper with the corrected diagnostic (`siteVantage`/`homeVantage`).
+- **Case: Jimena Isaac#192 -> Jayla Price#166, `[familiarResidence]` (building neighbours).** killer.home=**1701 Zeng
+  Terrace**, victim.home=**1503 Zeng Terrace** = the SAME building, different floors. `SetMurderLocation`=1503 Zeng
+  Terrace (victim home). MO again `VoyeurSniper`.
+- **`homeVantage=NONE` for ALL 200 samples** — the killer has NO reachable vantage onto the victim's home (no
+  cross-unit LOS within one building). The corrected diagnostic works and proves the geometry.
+- **The kill still happened, and it was the GAME, not our watchdog.** Player.log: `MurderController.ExecuteSniperShot`
+  was invoked ~21x, then `Murder: Set murder state: executing -> post -> escaping -> unsolved`. NO `[SODMotives][watchdog]`
+  line at all; and our executing force-finish has a co-location gate (killer must be AT the victim) which this pair
+  fails, so it could not have fired. **So the game's own sniper resolution force-fires the shot even with
+  `homeVantage=NONE`** (retries ExecuteSniperShot then resolves) -> the nonsensical kill the user saw: victim shot in
+  a back room, no window broken, no line of sight. (Vanilla never hits this because vanilla picks LOS-viable pairs by
+  construction; our relationship pair-swap breaks that invariant.)
+
+**KEY REFRAME (drives the fix):** the loaded home-voyeur MO (`VoyeurSniper`, `requiresSniperVantageAtHome=True`) needs
+a RARE home-to-home vantage, and when forced without one the game produces a nonsensical kill. The player's
+instinct is right: motivated snipers should use a STREET/rooftop MO that shoots the victim at a PUBLIC/routine site
+(works for any pair regardless of where they live), i.e. an MO with `requiresSniperVantageAtHome=False`. Candidate
+from the asset bundle: **`ExCopSniper`** (flags unconfirmed). The home-voyeur MO should only be used when the killer
+genuinely has a vantage onto the victim's home (rare), else use the street MO, else vanilla.
+
+**BUILT this session (deployed, committed):**
+- **MO enumerator `[mo-dump]`** (commit `4cf667f`): logs every loaded sniper-compatible MurderMO + its
+  `requiresSniperVantageAtHome` and allow flags on game start (behind `EnableDebugKeys`). Gives the authoritative MO
+  list (is there a street MO? what are its flags?).
+- **F3 now prefers a STREET sniper MO** (commit `67c3372`): `ForceCase` picks a sniper MO with
+  `requiresSniperVantageAtHome==false` if one exists (fallback = first match). So F3 tests the rooftop/public pattern.
+
+**NEXT (USER):** relaunch (all of the above is deployed). On startup `[mo-dump]` prints the sniper MO list — I read it
+to confirm a street MO + flags. Then press **F3**: it now forces a STREET sniper (if one exists). Let it run at
+NORMAL speed (FastMurderCadence OFF). I read `[sniper-obs]`/`[sniper-live]` (does `siteVantage=FOUND` on a public
+`sniperVictimSite`? does it shoot from a rooftop and leave a window/trajectory clue?) to see whether the street MO
+gives a coherent, solvable sniper case for an arbitrary motivated pair. That decides the fix: route motivated snipers
+to the street MO (+ a `siteVantage`-viable site check), and only use VoyeurSniper when `homeVantage=FOUND`.

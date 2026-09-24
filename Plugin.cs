@@ -44,8 +44,11 @@ namespace SODMotives
                 "MAIN KNOB: fraction (0..1) of murders that are relationship-MOTIVE cases; the rest are left as vanilla serial-killer cases. Default 1 = every case is a motive case (so the mod always shows). Lower it to mix in some classic untraceable serial-killer hunts (with their signatures) for variety; 0 = all vanilla. Applies to the next case.",
                 v => MurderSelector.MotiveCaseShare = v, R01(), Order(100));
             BindApply("Motive Mix", "MotivatedKidnapShare", 1f,
-                "KIDNAP analogue of MotiveCaseShare: fraction (0..1) of KIDNAP cases that get a motivated killer->victim pair (a walk-native abduction to a real holding den — the victim walks there and is restrained, leaving a real trail); the rest run vanilla. Default 1 = every kidnap is motivated; 0 = kidnaps stay vanilla. Requires the sandbox 'Kidnapping' case type ON. Sniper cases always stay vanilla. Applies to the next kidnap.",
+                "KIDNAP analogue of MotiveCaseShare: fraction (0..1) of KIDNAP cases that get a motivated killer->victim pair (a walk-native abduction to a real holding den — the victim walks there and is restrained, leaving a real trail); the rest run vanilla. Default 1 = every kidnap is motivated; 0 = kidnaps stay vanilla. Requires the sandbox 'Kidnapping' case type ON. Sniper cases have their own slider (MotivatedSniperShare). Applies to the next kidnap.",
                 v => MurderSelector.MotivatedKidnapShare = v, R01(), Order(95));
+            BindApply("Motive Mix", "MotivatedSniperShare", 0f,
+                "SNIPER analogue of MotiveCaseShare / MotivatedKidnapShare: fraction (0..1) of SNIPER cases that get a motivated killer->victim pair; the rest run vanilla. Requires the sandbox 'Sniper cases' type ON. DEFAULT 0 because motivated snipers are still WORK-IN-PROGRESS: the relationship-chosen killer usually has no reachable vantage onto a site the victim visits, so the case loops in travellingTo and never fires (the watchdog reverts it to vanilla after WaitLocationStallHours). Set it to 1 to TEST motivated snipers via natural sandbox cases (watch the [sniper-obs]/[sniper-live] diagnostics with [Debug] EnableDebugKeys on) instead of the F3 force key. Applies to the next sniper.",
+                v => MurderSelector.MotivatedSniperShare = v, R01(), Order(90));
             // The five motive families — each a 0..1 weight, NORMALISED together, so any mix works (they need
             // not sum to 1). Set one to 0 to drop that motive from the blend.
             BindApply("Motive Mix", "AffairShare", 0.35f,
@@ -571,16 +574,22 @@ namespace SODMotives
                 }
                 if (preset != null && preset.caseType != MurderPreset.CaseType.murder)
                 {
-                    // KIDNAP: motivate it with probability [Motive Mix] MotivatedKidnapShare (the mixer slider);
-                    // otherwise leave it vanilla. SNIPER always stays vanilla (its motivated form stalls in a
-                    // travellingTo loop). A motivated kidnap runs the walk-native abduction (den picked below).
+                    // Special case types: motivate KIDNAP with probability [Motive Mix] MotivatedKidnapShare and
+                    // SNIPER with [Motive Mix] MotivatedSniperShare (both mixer sliders); otherwise leave vanilla.
+                    // A motivated kidnap runs the walk-native abduction (den picked below). A motivated SNIPER is
+                    // still WIP (default share 0): the relationship-chosen killer usually has no reachable vantage,
+                    // so it loops in travellingTo until the watchdog reverts it to vanilla. The slider exists to
+                    // TEST/observe motivated snipers via the natural path (see the [sniper-obs]/[sniper-live] logs).
                     bool allowKidnap = preset.caseType == MurderPreset.CaseType.kidnap && MurderSelector.ShouldMotivateKidnap();
-                    if (!allowKidnap)
+                    bool allowSniper = preset.caseType == MurderPreset.CaseType.sniper && MurderSelector.ShouldMotivateSniper();
+                    if (!allowKidnap && !allowSniper)
                     {
-                        MotivesPlugin.Log.LogInfo($"[SODMotives] override: special case type '{preset.caseType}' — leaving vanilla, untouched (kidnap share {MurderSelector.MotivatedKidnapShare:0.##}; sniper always vanilla).");
+                        MotivesPlugin.Log.LogInfo($"[SODMotives] override: special case type '{preset.caseType}' left vanilla, untouched (kidnap share {MurderSelector.MotivatedKidnapShare:0.##}, sniper share {MurderSelector.MotivatedSniperShare:0.##}).");
                         return;
                     }
-                    MotivesPlugin.Log.LogInfo("[SODMotives] override: motivating a KIDNAP case (walk-native abduction to a real den).");
+                    MotivesPlugin.Log.LogInfo(allowSniper
+                        ? "[SODMotives] override: motivating a SNIPER case (WIP test path; expect a travellingTo loop until the vantage-viable constraint lands)."
+                        : "[SODMotives] override: motivating a KIDNAP case (walk-native abduction to a real den).");
                 }
                 if (MurderSelector.ShouldForceVanilla())
                 {

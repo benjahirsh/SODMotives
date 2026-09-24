@@ -18,6 +18,13 @@ namespace SODMotives
         // running fully vanilla — the kidnap analogue of MotiveCaseShare for murders. 1 (default) = every kidnap
         // is motivated; 0 = kidnaps stay vanilla. Sniper cases always stay vanilla. Read once per kidnap case.
         internal static float MotivatedKidnapShare = 1f;
+        // The mixer's SNIPER slider ([Motive Mix] MotivatedSniperShare): probability [0..1] that a SNIPER case
+        // gets a motivated killer -> victim pair instead of running fully vanilla. Default 0 = snipers stay
+        // vanilla, because a motivated sniper still LOOPS in travellingTo (the relationship-chosen killer usually
+        // has no reachable vantage onto a site the victim visits; the vantage-viable constraint isn't built yet).
+        // Set it to 1 to TEST motivated snipers via the natural sandbox path (the [sniper-obs]/[sniper-live]
+        // diagnostics observe them) without the F3 force key. Read once per sniper case.
+        internal static float MotivatedSniperShare = 0f;
         internal static int MinSuspects = 3;            // PREFER victims with at least this many real suspects
         internal static int KillerPoolSize = 10;        // killer = uniform-random among the victim's top-N suspects
         // THE MAIN MIX KNOB: probability [0..1] a case is a relationship-MOTIVE case; the rest are left
@@ -206,6 +213,15 @@ namespace SODMotives
             if (MotivatedKidnapShare <= 0f) return false;
             if (MotivatedKidnapShare >= 1f) return true;
             return _rng.NextDouble() < MotivatedKidnapShare;
+        }
+
+        // Should THIS sniper case be motivated? Drawn per sniper by the mixer's MotivatedSniperShare slider.
+        // Default share 0 => snipers stay vanilla (a motivated sniper still loops; see the field comment).
+        internal static bool ShouldMotivateSniper()
+        {
+            if (MotivatedSniperShare <= 0f) return false;
+            if (MotivatedSniperShare >= 1f) return true;
+            return _rng.NextDouble() < MotivatedSniperShare;
         }
 
         // ---- bookkeeping shared with the clue injector / signature stripping / F9 ----

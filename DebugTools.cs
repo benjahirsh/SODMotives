@@ -360,6 +360,32 @@ namespace SODMotives
                     if (!seen.Add(nm)) continue;   // dedupe repeated copies of the same asset
                     count++;
                     log.LogInfo($"[SODMotives][mo-dump]   SNIPER MO '{nm}': requiresSniperVantageAtHome={mo.requiresSniperVantageAtHome} ; allow home/work/public/streets/den/anywhere={mo.allowHome}/{mo.allowWork}/{mo.allowPublic}/{mo.allowStreets}/{mo.allowDen}/{mo.allowAnywhere} ; compatibleWith=[{presets}]");
+                    // What ACTUALLY biases which killer this MO fits (data, not the asset name). These are SCORING
+                    // boosts, NOT hard requirements: a murdererJobBoost of [occupations]+N just adds N to the MO's fit
+                    // score when the killer holds one of those jobs; it never forbids other killers. Empty here means
+                    // the MO has no occupation lean at all.
+                    string jobBoosts = "";
+                    try
+                    {
+                        var jms = mo.murdererJobModifiers;
+                        if (jms != null)
+                            for (int k = 0; k < jms.Count; k++)
+                            {
+                                var jm = jms[k]; if (jm == null) continue;
+                                string js = ""; var jl = jm.jobs;
+                                if (jl != null) for (int t = 0; t < jl.Count; t++) { var op = jl[t]; if (op != null) js += (js.Length > 0 ? "/" : "") + op.name; }
+                                jobBoosts += (jobBoosts.Length > 0 ? " ; " : "") + $"[{js}]+{jm.jobBoost}";
+                            }
+                    }
+                    catch { }
+                    int mtm = 0, vtm = 0;
+                    try { mtm = mo.murdererTraitModifiers != null ? mo.murdererTraitModifiers.Count : 0; } catch { }
+                    try { vtm = mo.victimTraitModifiers != null ? mo.victimTraitModifiers.Count : 0; } catch { }
+                    bool useClass = false; string classRange = "";
+                    try { useClass = mo.useMurdererSocialClassRange; } catch { }
+                    try { var cr = mo.murdererClassRange; classRange = $"{cr.x:0.#}-{cr.y:0.#}"; } catch { }
+                    bool useHex = false; try { useHex = mo.useHexaco; } catch { }
+                    log.LogInfo($"[SODMotives][mo-dump]       killer-fit (SCORE boosts, not hard reqs): murdererJobBoosts={{{jobBoosts}}} murdererTraitModifiers={mtm} victimTraitModifiers={vtm} useMurdererSocialClassRange={useClass} classRange={classRange} useHexaco={useHex}");
                 }
                 log.LogInfo($"[SODMotives][mo-dump] {count} distinct sniper-compatible MO(s) loaded.");
             }

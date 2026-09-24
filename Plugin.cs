@@ -604,11 +604,31 @@ namespace SODMotives
                 // V2.1: pick a victim rich in real, event-backed enemies (affairs + workplace),
                 // then a RANDOM killer from that mixed-motive pool. Every suspect is a real red
                 // herring; vanilla's physical evidence (built around the chosen killer) convicts.
-                if (MurderSelector.TryPickVictimCentric(out m, out v, out var suspectPool))
+                // SNIPER: require the killer to have a real line-of-sight vantage onto a site the victim uses
+                // (home/work) via the game's own Toolbox.TryGetSniperVantagePoint. Passed as a killer filter so the
+                // selector picks a motivated suspect WITH line of sight (motive bookkeeping stays consistent); if
+                // none qualifies the pick fails and we leave the case vanilla. Needed because the game force-fires
+                // the shot even with no line of sight (the nonsensical no-window kills).
+                bool isSniper = preset != null && preset.caseType == MurderPreset.CaseType.sniper;
+                System.Func<Human, Human, bool> sniperFilter = isSniper
+                    ? (System.Func<Human, Human, bool>)((k, vic) => MurderWatchdog.TryPickSniperSite(k, vic, out _))
+                    : null;
+                if (MurderSelector.TryPickVictimCentric(out m, out v, out var suspectPool, sniperFilter))
                 {
+                    // For a sniper, re-derive + PIN the vantage-viable site the killer can actually shoot from (the
+                    // chosen killer passed the filter, so this succeeds). Other cases: null (the game derives the
+                    // site from the victim's home as before).
+                    NewGameLocation sniperSite = null;
+                    if (isSniper)
+                    {
+                        MurderWatchdog.TryPickSniperSite(m, v, out sniperSite);
+                        string sn = "?"; try { if (sniperSite != null) sn = sniperSite.name; } catch { }
+                        MotivesPlugin.Log.LogInfo($"[SODMotives] override: SNIPER vantage OK — {MotivesPlugin.Name(m)} -> {MotivesPlugin.Name(v)}, pinning the shot to {sn}.");
+                    }
+
                     // Commit the override FIRST so a hiccup in the logging block below can't leave
                     // the vanilla pair in place while the mod victim is already in the bookkeeping.
-                    newMurderer = m; newVictim = v; victimSite = null;
+                    newMurderer = m; newVictim = v; victimSite = sniperSite;
                     __instance.currentMurderer = m; __instance.currentVictim = v;
 
                     // KIDNAP: the swapped-in killer needs a den or the case hangs at waitForLocation

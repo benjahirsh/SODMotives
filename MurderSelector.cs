@@ -312,7 +312,10 @@ namespace SODMotives
 
         // Pick a victim rich in real, event-backed enemies, then a random killer from that pool.
         // Returns the full ranked suspect pool (strongest first) via `pool` for clue injection.
-        internal static bool TryPickVictimCentric(out Human murderer, out Human victim, out List<SuspectEdge> pool)
+        // killerFilter (optional): when set (SNIPER cases), the chosen killer MUST satisfy it — a
+        // (candidateKiller, victim) -> bool test, used to require a real sniper vantage. If none of the
+        // victim's top suspects pass, the method fails (returns false) so the caller leaves the case vanilla.
+        internal static bool TryPickVictimCentric(out Human murderer, out Human victim, out List<SuspectEdge> pool, System.Func<Human, Human, bool> killerFilter = null)
         {
             murderer = null; victim = null; pool = null;
 
@@ -448,8 +451,27 @@ namespace SODMotives
             suspects.Sort((x, y) => y.score.CompareTo(x.score));
             int poolN = Math.Min(Math.Max(1, KillerPoolSize), suspects.Count);
 
-            // 5) Uniform-random killer among the top pool.
-            var killerEdge = suspects[_rng.Next(poolN)];
+            // 5) Killer among the top pool. If a killerFilter is supplied (SNIPER: the killer must have a real
+            //    line-of-sight vantage onto a site the victim uses), restrict to passing suspects and pick among
+            //    them; if NONE of this victim's top suspects pass, fail so the caller leaves the case vanilla.
+            //    Otherwise pick uniform-random as before. All downstream bookkeeping uses the chosen killerEdge,
+            //    so the motive data stays consistent with whoever is selected.
+            SuspectEdge killerEdge;
+            if (killerFilter != null)
+            {
+                var viable = new List<SuspectEdge>();
+                for (int i = 0; i < poolN; i++)
+                {
+                    var e = suspects[i];
+                    try { if (e.suspect != null && killerFilter(e.suspect, victim)) viable.Add(e); } catch { }
+                }
+                if (viable.Count == 0) { murderer = null; pool = null; return false; }
+                killerEdge = viable[_rng.Next(viable.Count)];
+            }
+            else
+            {
+                killerEdge = suspects[_rng.Next(poolN)];
+            }
             murderer = killerEdge.suspect;
 
             // 6) Record for clue injection / diagnostics.

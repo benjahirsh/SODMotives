@@ -716,6 +716,31 @@ namespace SODMotives
             catch (Exception e) { return "weapon: err " + e.Message; }
         }
 
+        // Pick a site the killer can ACTUALLY snipe the victim at, using the GAME'S OWN vantage solver
+        // (Toolbox.TryGetSniperVantagePoint = the same line-of-sight check the game uses to build vanilla sniper
+        // cases). The game force-fires ExecuteSniperShot even with NO line of sight (the nonsensical no-window
+        // kills), so the override calls this at SELECTION time and only motivates the sniper if a real vantage
+        // exists, pinning the murder to the returned site; else it leaves the case vanilla. Checks the victim's
+        // HOME then their WORKPLACE (the sites a home/work sniper uses). Read-only; never throws.
+        // TODO(v2): also scan public/routine sites (rooftop assassinations) + pick the killer BY vantage from the
+        // victim's enemy pool, to raise the hit rate for pairs with no home/work line of sight.
+        internal static bool TryPickSniperSite(Human killer, Human victim, out NewGameLocation site)
+        {
+            site = null;
+            try
+            {
+                if (killer == null || victim == null) return false;
+                var tb = Toolbox.Instance; if (tb == null) return false;
+                NewGameLocation home = null; try { home = victim.home; } catch { }
+                if (home != null) { try { if (tb.TryGetSniperVantagePoint(killer, home, out _, out _)) { site = home; return true; } } catch { } }
+                NewGameLocation work = null;
+                try { var job = victim.job; var emp = job != null ? job.employer : null; if (emp != null) work = emp.placeOfBusiness; } catch { }
+                if (work != null) { try { if (tb.TryGetSniperVantagePoint(killer, work, out _, out _)) { site = work; return true; } } catch { } }
+                return false;
+            }
+            catch { return false; }
+        }
+
         private static NewNode SafeAnchor(NewGameLocation l) { try { return l != null ? l.anchorNode : null; } catch { return null; } }
 
         // Seal the den behind the fleeing killer: CLOSE the front door(s) — matches vanilla's default (the killer

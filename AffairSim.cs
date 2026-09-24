@@ -87,6 +87,11 @@ namespace SODMotives
             // victim id after a reload.
             try { MurderWatchdog.ResetForNewGame(); } catch { }
 
+            // DEV: one-shot enumerate the loaded sniper MOs (name + requiresSniperVantageAtHome + allow flags) so we
+            // know every sniper archetype and which are home-vantage vs street/routine — the input to the
+            // vantage-viable constraint. Gated behind EnableDebugKeys; harmless to re-run on each load.
+            try { if (DebugTools.EnableDebugKeys) DebugTools.DumpSniperMOs(); } catch { }
+
             // OnStartGame fires on a LOAD as well as a new game (confirmed in-game 2026-09-08). On a
             // load we must NOT re-seed/reset — that would clobber the sidecar import (EventStore + the
             // per-case maps). Persistence raises a load flag in the LoadSaveState hook (which fires

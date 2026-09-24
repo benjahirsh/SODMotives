@@ -320,6 +320,43 @@ namespace SODMotives
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][force:{tag}] error: {e.Message}"); }
         }
 
+        // DEV one-shot: enumerate every LOADED MurderMO compatible with a SNIPER preset, with the flags that decide
+        // its behaviour (requiresSniperVantageAtHome = shoot the victim at HOME vs a routine/public site; the allow
+        // location flags). Answers "what sniper archetypes exist, and which are home-vantage?" — the input to the
+        // vantage-viable constraint. Deduped by asset name (FindObjectsOfTypeAll can return multiple copies). Called
+        // once per game start from the OnStartGame seed hook, gated behind EnableDebugKeys.
+        internal static void DumpSniperMOs()
+        {
+            var log = MotivesPlugin.Log;
+            try
+            {
+                var mos = Resources.FindObjectsOfTypeAll<MurderMO>();
+                if (mos == null || mos.Length == 0) { log.LogInfo("[SODMotives][mo-dump] no MurderMO assets loaded yet."); return; }
+                var seen = new System.Collections.Generic.HashSet<string>();
+                int count = 0;
+                for (int i = 0; i < mos.Length; i++)
+                {
+                    var mo = mos[i]; if (mo == null) continue;
+                    var compat = mo.compatibleWith; if (compat == null) continue;
+                    bool isSniper = false; string presets = "";
+                    for (int j = 0; j < compat.Count; j++)
+                    {
+                        var p = compat[j]; if (p == null) continue;
+                        if (presets.Length > 0) presets += ",";
+                        presets += p.name + "(" + p.caseType + ")";
+                        if (p.caseType == MurderPreset.CaseType.sniper) isSniper = true;
+                    }
+                    if (!isSniper) continue;
+                    string nm = mo.name ?? "<null>";
+                    if (!seen.Add(nm)) continue;   // dedupe repeated copies of the same asset
+                    count++;
+                    log.LogInfo($"[SODMotives][mo-dump]   SNIPER MO '{nm}': requiresSniperVantageAtHome={mo.requiresSniperVantageAtHome} ; allow home/work/public/streets/den/anywhere={mo.allowHome}/{mo.allowWork}/{mo.allowPublic}/{mo.allowStreets}/{mo.allowDen}/{mo.allowAnywhere} ; compatibleWith=[{presets}]");
+                }
+                log.LogInfo($"[SODMotives][mo-dump] {count} distinct sniper-compatible MO(s) loaded.");
+            }
+            catch (Exception e) { log.LogWarning($"[SODMotives][mo-dump] error: {e.Message}"); }
+        }
+
         // Testing accelerator: while FastMurderCadence is on, hold MurderController.pauseBetweenMurders at 0
         // so the game never waits between murders (subsequent cases chain immediately). Called every frame;
         // captures the original on first apply and restores it when toggled off. No-op when off.

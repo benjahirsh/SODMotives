@@ -49,6 +49,39 @@ travellingTo/executing). Version bumped 1.1.0 -> 1.1.1 (manifest/plugin/csproj),
 survives to the ransom deadline, case still solvable), then `git push origin v2` + tag `v1.1.1` + upload the zip.
 (Current NEW-feature dev = motivated snipers on branch `sniper-wip`; see `docs/extensions/sniper-recon.md`.)
 
+### Executing-reload bug (2026-09-24) — CONFIRMED OURS, decoded from side-by-side logs
+Reloading a save taken during the `executing` phase (the killer actively restraining the victim in the den,
+BEFORE the "knocked out and restrained" that flips to post) breaks OUR kidnaps: on load the victim walks to
+their own home and the killer walks to theirs, `executing` never completes, the case soft-locks. (Our watchdog
+does NOT force-finish kidnaps, so nothing recovers it.)
+- **VANILLA does NOT break** (user tested multiple executing reloads): the `[kidnap-live] VANILLA [executing]`
+  lines show `KILLER_AT_DEN=True` + `VICTIM_AT_DEN=True` throughout — the vanilla killer STAYS in the den with
+  the victim for the whole restrain, leaving only at post/unsolved (`KILLER_AT_DEN=False`, victim stays). Our
+  `OURS [executing]` post-reload lines show both drifting to their homes (`VICTIM_AT_DEN=False victim@<home>`).
+- **Den persists fine** for both (`den=` unchanged across reloads); the den was NOT the cause.
+- **The HOLD persists fine for us too:** once the case reaches post/unsolved the victim is RESTRAINED (a
+  persistent state) and stays at the den across reloads — that's why the 1.1.1 hold-reload fix works. Only the
+  pre-restrain `executing` window is fragile.
+- **Root cause:** our swapped/forced pair never gets the full persistent kidnap-abduction setup a real vanilla
+  kidnapper gets (the setup is distributed across the game's own PickNewMurderer/PickNewVictim, which run before
+  our swap). During normal play the LIVE abduction AI goals carry it through; on RELOAD those live goals are
+  lost and, unlike vanilla, ours aren't re-driven from persistent state.
+- **Also seen:** our forced kidnaps show `killTime=0.0` the whole time (never a real deadline); the vanilla one
+  set `killTime=51.8` at unsolved. So the block holds forever for forced cases (victim never auto-killed).
+  Separate from the reload bug; verify whether a NATURAL motivated kidnap gets a real killTime.
+- **FIXED (approach B, 2026-09-24) — VERIFIED IN-GAME.** Root nailed via the `[kidnap-reload]` diag (diff of a
+  vanilla vs an ours reload): a VANILLA victim keeps a `GoTo@den` goal (pri10) through waitForLocation +
+  travellingTo that survives save/load; OUR swapped victim loses it on reload (`currentGoal=null`, all routine
+  goals pri0), so nothing pins them. The killer is fine either way (`murderGoal@den` restores). FIX =
+  `MurderWatchdog.EnsureVictimDenGoal`: during the pre-restrain phases, find the victim's den-targeting goal or,
+  if it's gone (post-reload), recreate it from the game's own `RoutineControls.Instance.toGoGoal` preset
+  (`newPassedGameLocation`=den, `newMurderRef`=murder) and pin it on top (re-asserted each tick). It stops at
+  `executing` (the abduction then injects `Flee@den(pri12)`, which pins them). A WALK, not a teleport — physical
+  trail unchanged. Log confirmed: `[kidnap-hold] rebuilt victim GoTo-den goal ...`, and post-reload
+  `victim currentGoal=GoTo@den(pri100000)`; save/reload now holds at travellingTo AND executing (and the earlier
+  hold-reload kill-block re-arm covers post/unsolved). Ships in 1.1.1. The `[kidnap-reload]` diag is kept, gated
+  behind `[Debug] EnableDebugKeys`, as the tool for any future save/load regression.
+
 ## WATCH ITEM (did NOT reproduce on retest — not being fixed) — ransom-payment victim state
 **Symptom (seen once):** after a kidnap victim was freed by the player PAYING the ransom (not by a rescue), the
 victim ran around their apartment as if still being attacked/restrained. On a later test it did NOT recur, so it

@@ -65,6 +65,7 @@ namespace SODMotives
         // (a "vanilla+" sealed hold) is left as a toggle but off by default, matching vanilla.
         internal static bool KidnapLockDen = false;
         private static readonly HashSet<int> _denSealed = new HashSet<int>();
+        private static readonly HashSet<int> _denGoalLogged = new HashSet<int>();  // victims we've logged rebuilding the GoTo-den goal for (save/load fix, once each)
 
         // Kidnap RANSOM-LEAD assist. Our victim-swap bypasses the vanilla kidnap Case/objective chain, so the
         // ransom note is never delivered + no "Examine the ransom note found at <home>" objective ever appears
@@ -89,7 +90,7 @@ namespace SODMotives
             _observed.Clear();
             _liveVid = -1; _liveLastLogH = -999f; _liveCount = 0;
             _ransomTried.Clear(); _killTimeReasserted.Clear();
-            _killBlockLogged.Clear(); KidnapReachedHold.Clear(); _denSealed.Clear();
+            _killBlockLogged.Clear(); KidnapReachedHold.Clear(); _denSealed.Clear(); _denGoalLogged.Clear();
         }
 
         // BLOCK THE PREMATURE KILL. Decoded (ISIL) + confirmed in-game: our victim-swap leaves the kidnap's kill
@@ -191,6 +192,7 @@ namespace SODMotives
                         {
                             DebugTools.EnableGameVerboseLogging();
                             LogKidnapObservation(murder, killer, victim);
+                            LogKidnapReloadDiag(murder, killer, victim);   // post-load state dump (diff vanilla vs ours to find what our setup fails to restore)
                         }
                     }
                     catch { }
@@ -242,6 +244,20 @@ namespace SODMotives
                         }
                     }
                     catch (Exception ke) { MotivesPlugin.Log.LogWarning($"[SODMotives][kidnap-kill] error: {ke.Message}"); }
+                }
+
+                // SAVE/LOAD FIX (B): keep the victim's GoTo-den goal alive during the PRE-RESTRAIN phases
+                // (waitForLocation + travellingTo) so a reload can't strand them. DECODED (2026-09-24, side-by-side
+                // reload logs): a VANILLA kidnap victim keeps a GoTo@den goal (pri10) through these phases and it
+                // survives save/load; OUR swapped victim loses it on reload (currentGoal=null, all routine goals
+                // pri0), so nothing pins them -> they wander out of the den -> the seat condition breaks -> the case
+                // reverts to waitForLocation. Rebuild + pin the goal so the victim commits to the den like vanilla
+                // (a WALK, not a teleport). Stops at 'executing' (the abduction then injects Flee@den, which pins them).
+                if (murder.preset != null && murder.preset.caseType == MurderPreset.CaseType.kidnap
+                    && (murder.state == MurderController.MurderState.waitForLocation || murder.state == MurderController.MurderState.travellingTo))
+                {
+                    NewAddress vgDen = null; try { vgDen = killer.den; } catch { }
+                    if (vgDen != null) EnsureVictimDenGoal(victim, vgDen, murder, vid);
                 }
 
                 // waitForLocation stall (a kidnap with no seatable holding 'den', a sniper with no vantage
@@ -432,6 +448,62 @@ namespace SODMotives
             catch (Exception e) { log.LogWarning($"[SODMotives][kidnap-obs] error: {e.Message}"); }
         }
 
+        // KIDNAP RELOAD DIAG (dev-only): dump the RESTORED state of a kidnap right after it's (re)observed —
+        // fires once per game start incl. every load, so a save/reload captures exactly what the game rebuilt.
+        // The executing-reload bug is OURS (vanilla keeps killer+victim at the den; ours sends both home), so we
+        // diff this line between a VANILLA and an OURS mid-executing reload to find what our swapped setup fails
+        // to restore. Prime suspect: murderGoal (the killer's abduction AI goal) + the actors' current AI goals.
+        private static void LogKidnapReloadDiag(MurderController.Murder murder, Human killer, Human victim)
+        {
+            var log = MotivesPlugin.Log;
+            try
+            {
+                bool ours = false; try { ours = MurderSelector.OverriddenVictimIds.Contains(victim.humanID); } catch { }
+                string st = "?"; try { st = murder.state.ToString(); } catch { }
+                string mg = "?"; try { mg = murder.murderGoal != null ? DescribeGoal(murder.murderGoal) : "NULL"; } catch { mg = "err"; }
+                string g1 = "?", g2 = "?";
+                try { g1 = murder.meetGoal1 != null ? "set" : "null"; } catch { }
+                try { g2 = murder.meetGoal2 != null ? "set" : "null"; } catch { }
+                string ids = "?";
+                try { ids = $"victimID={murder.victimID} victimSiteID={murder.victimSiteID} victimSiteIsStreet={murder.victimSiteIsStreet} kidnapKillPhase={murder.kidnapKillPhase} killTime={murder.killTime:0.0} ransomPhase={murder.ransomPhase}"; } catch { ids = "err"; }
+                log.LogInfo($"[SODMotives][kidnap-reload] {(ours ? "OURS" : "VANILLA")} state={st} murderGoal={mg} meetGoal1={g1} meetGoal2={g2} ; {ids}");
+                log.LogInfo($"[SODMotives][kidnap-reload]   killer.ai: {DescribeActorGoals(killer)}");
+                log.LogInfo($"[SODMotives][kidnap-reload]   victim.ai: {DescribeActorGoals(victim)}");
+            }
+            catch (Exception e) { log.LogWarning($"[SODMotives][kidnap-reload] err: {e.Message}"); }
+        }
+
+        // Compact one-goal description: preset name @ target location (priority). Never throws.
+        private static string DescribeGoal(NewAIGoal g)
+        {
+            try
+            {
+                if (g == null) return "null";
+                string p = "?"; try { p = g.preset != null ? g.preset.name : "?"; } catch { }
+                NewGameLocation gl = null; try { gl = g.gameLocation; } catch { }
+                if (gl == null) { try { gl = g.passedGameLocation; } catch { } }
+                float pr = 0f; try { pr = g.priority; } catch { }
+                return $"{p}@{LName(gl)}(pri{pr:0})";
+            }
+            catch { return "err"; }
+        }
+
+        // Dump an actor's current AI goal + its goal list (compact) so we can see whether the abduction goals
+        // (den-targeting) survived the reload, or whether the actor reverted to routine goals (home/needs).
+        private static string DescribeActorGoals(Human h)
+        {
+            try
+            {
+                NewAIController ai = null; try { ai = h.ai; } catch { }
+                if (ai == null) return "no ai";
+                string cur = "?"; try { cur = ai.currentGoal != null ? DescribeGoal(ai.currentGoal) : "null"; } catch { }
+                var parts = new List<string>();
+                try { var goals = ai.goals; if (goals != null) for (int i = 0; i < goals.Count && i < 10; i++) { var g = goals[i]; if (g != null) parts.Add(DescribeGoal(g)); } } catch { }
+                return $"currentGoal={cur} ; goals=[{string.Join(", ", parts.ToArray())}]";
+            }
+            catch { return "err"; }
+        }
+
         // Describe the directed acquaintance edge a->b: connection types + like + known (or "NO EDGE").
         private static string DescribeEdge(Human a, Human b)
         {
@@ -531,6 +603,59 @@ namespace SODMotives
                 MotivesPlugin.Log.LogInfo($"[SODMotives][kidnap-seal] {MotivesPlugin.Name(killer)} closed {closed}{(KidnapLockDen ? $" + locked {locked}" : " (unlocked, like vanilla)")} front door(s) at {LName(den)}.");
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][kidnap-seal] err: {e.Message}"); }
+        }
+
+        // SAVE/LOAD FIX (B): give the kidnap victim the same persistent "GoTo the den" goal a VANILLA victim has
+        // during the pre-restrain phases. Vanilla's victim carries a GoTo@den goal (pri10) through waitForLocation
+        // + travellingTo that survives save/load; ours loses it on reload, so nothing pins them and they wander
+        // out of the den. We find that goal (present in normal play) or, if it's gone (after a reload), recreate it
+        // from the game's own "go to" preset (RoutineControls.toGoGoal) targeting the den, then pin it on top so
+        // the victim commits to walking to / staying in the den. Re-asserted each tick (the AI recomputes
+        // priority). This is a WALK, not a teleport — the physical trail is unchanged. Never throws.
+        private static void EnsureVictimDenGoal(Human victim, NewAddress den, MurderController.Murder murder, int vid)
+        {
+            try
+            {
+                if (victim == null || den == null) return;
+                NewAIController ai = null; try { ai = victim.ai; } catch { }
+                if (ai == null) return;
+
+                // Find an existing goal already targeting the den (the game's own GoTo-den routine in normal play).
+                NewAIGoal denGoal = null;
+                try
+                {
+                    var goals = ai.goals;
+                    if (goals != null)
+                        for (int i = 0; i < goals.Count; i++)
+                        {
+                            var g = goals[i]; if (g == null) continue;
+                            NewGameLocation gl = null, pg = null;
+                            try { gl = g.gameLocation; } catch { }
+                            try { pg = g.passedGameLocation; } catch { }
+                            if ((gl != null && gl.Pointer == den.Pointer) || (pg != null && pg.Pointer == den.Pointer)) { denGoal = g; break; }
+                        }
+                }
+                catch { }
+
+                // Missing (typically after a reload) -> recreate it from the game's own "go to" goal preset.
+                if (denGoal == null)
+                {
+                    AIGoalPreset preset = null; try { preset = RoutineControls.Instance != null ? RoutineControls.Instance.toGoGoal : null; } catch { }
+                    if (preset == null) return;
+                    try { denGoal = ai.CreateNewGoal(preset, NowHours(), 999f, null, null, den, null, murder, -2); }
+                    catch (Exception ce) { MotivesPlugin.Log.LogWarning($"[SODMotives][kidnap-hold] CreateNewGoal(GoTo den) threw: {ce.Message}"); return; }
+                    if (denGoal != null && DebugTools.EnableDebugKeys && _denGoalLogged.Add(vid))
+                        MotivesPlugin.Log.LogInfo($"[SODMotives][kidnap-hold] rebuilt victim GoTo-den goal for {MotivesPlugin.Name(victim)} -> {LName(den)} (save/load recovery; matches vanilla's persistent GoTo@den).");
+                }
+                if (denGoal == null) return;
+
+                // Pin it on top so the victim commits to the den (re-asserted each tick; the AI recomputes priority).
+                try { denGoal.basePriority = 100000f; } catch { }
+                try { denGoal.priority = 100000f; } catch { }
+                try { denGoal.isActive = true; } catch { }
+                try { ai.currentGoal = denGoal; } catch { }
+            }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][kidnap-hold] EnsureVictimDenGoal err: {e.Message}"); }
         }
 
         // Spawn the vanilla ransom-note lead item (the preset lead tagged JobTag.U) and register it in

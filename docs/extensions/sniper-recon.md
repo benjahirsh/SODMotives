@@ -367,3 +367,33 @@ no MO works for arbitrary pairs, so the fix is the vantage-viable CONSTRAINT (on
 viable site+vantage, else vanilla) which makes motivated snipers rarer but coherent. NOTE: the game force-fires
 `ExecuteSniperShot` even at `siteVantage=NONE` (seen twice), so a `siteVantage`/`homeVantage` gate is needed
 regardless of which MO we use.
+
+### 2026-09-24 (fix v1) — use the game's OWN line-of-sight solver to gate + pin
+The game already has the LOS check it uses to build vanilla sniper cases: `Toolbox.TryGetSniperVantagePoint(Human
+sniper, NewGameLocation targetSite, out NewWall, out float)` (plus the inverse overload
+`TryGetSniperVantagePoint(vantageLocation, out wall, out score, out possibleTargetSites)`, and low-level
+`RaycastCheck` + `sniperLOSMask`). That is the same call the `[sniper-live]` probe uses. The problem is the game
+does NOT re-check it once a case exists — it force-fires `ExecuteSniperShot` even at `NONE` — so we apply it at
+selection.
+
+**Built (commit `586e2f2`, deployed):**
+- `MurderWatchdog.TryPickSniperSite(killer, victim, out site)` — asks the game's solver whether the killer has a
+  reachable vantage onto the victim's HOME (`victim.home`) then WORKPLACE (`victim.job.employer.placeOfBusiness`),
+  returning the first viable site.
+- `MurderSelector.TryPickVictimCentric(..., Func<Human,Human,bool> killerFilter=null)` — for sniper cases the
+  override passes `(k,vic) => TryPickSniperSite(k,vic,out _)`, so the selector picks a motivated suspect from the
+  victim's pool WHO HAS line of sight (all motive bookkeeping is built from the chosen killerEdge, so it stays
+  consistent). If no top-pool suspect has a vantage, the pick fails and the case is left vanilla.
+- The override pins `victimSite` to the vantage-viable site.
+
+So a motivated sniper is only created when the killer genuinely has line of sight to a site the victim uses, and the
+shot is pinned there — no more no-LOS bathroom kills. Uses the slider (no F3 needed); the natural VoyeurSniper
+picks a home/work target, which is exactly what this gate covers.
+
+**OPEN / NEXT:**
+1. Confirm the PIN works: does setting `victimSite` make the killer actually travel to the vantage and shoot from it
+   (leaving a proper window/trajectory clue), or does the game still pick its own site? Watch `[flow]
+   SetMurderLocation` + `[sniper-live]` `siteVantage=FOUND` + whether a window/entry-wound clue spawns.
+2. Hit rate: home+work LOS pairs may be uncommon -> motivated snipers could be rare (most -> vanilla). If so, v2
+   adds public/routine ROOFTOP sites (the street pattern) so pairs with no home/work LOS can still be sniped from a
+   public vantage; the inverse solver overload (vantage -> possibleTargetSites) may help enumerate these.

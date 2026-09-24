@@ -612,3 +612,30 @@ logic instead of the probe — heavy.) DECISION for user: do the strip-and-defer
   upfront homebody gate later if the 12h wait is annoying).
 - NEXT (user): rerun motivated snipers — cohabiting pairs should now be street/ExCopSniper (or fall back if the
   victim's a homebody), non-cohabiting stay home-voyeur. Then the SOLVABILITY check.
+
+### 2026-09-24 (VANILLA ExCopSniper flow DECODED — validates the strip) ⭐
+Forced a vanilla ExCopSniper (ForceVanillaSniperMO, MO forced via prefix ref) on a SAME-BUILDING stranger pair
+(Thomas#229->Ashley#286, killer 503 / victim 604 Etheridge Heights). It WORKED, and the internals show the intended
+ExCopSniper flow via `[flow] SetMurderLocation`:
+1. `-> Zeta Labs` (the victim's WORKPLACE) — the game's first target; it waits there.
+2. `-> Zeta Labs` (still; victim not exposed inside).
+3. `-> <null>` (the game CLEARS the site).
+4. `-> Mingo Street` (the game RE-PICKS a STREET the victim walks — where they're exposed).
+Player.log narration: `Best sniper for vantage point over Zeta Labs` then **3x** `over Mingo Street in The Fathoms
+Zone Indigo`; then ExecuteSniperShot x7 -> executing -> post -> escaping -> unsolved (rooftop kill).
+
+**So the game's ExCopSniper DYNAMICALLY RE-TARGETS the site (work -> clear -> a street) until the victim is exposed,
+then shoots from a rooftop over it. The "long wait" the player saw = the game waiting + re-picking sites.** This is
+`Murder.TryPickNewVictimSite` running its own loop. It waits patiently WITHOUT giving up (no CancelCurrentMurder),
+and it works for a SAME-BUILDING pair.
+
+**VALIDATES THE STRIP:** our earlier PIN (sniperVictimSite=Offinex Systems) FROZE the site and prevented this
+re-target to a street -> the game couldn't expose the victim -> gave up (playtest 6). No pin (the strip) lets the
+game re-target freely like this vanilla case. So: defer site/vantage to the game (no pin), and it re-targets
+work->street until the victim is exposed. Patience is a bonus safety net but the game largely waits on its own once
+the site isn't frozen. Also confirms cohabiting/same-building pairs ARE snipeable via ExCopSniper (the street
+re-target), per the user.
+
+**NEXT (user):** run a MOTIVATED sniper (MotivatedSniperShare=1). A cohabiting pair -> ExCopSniper (our fix) with no
+pin should now behave like this vanilla case: wait, re-target work->street, rooftop shot. Watch `[flow]
+SetMurderLocation` for the work->null->street progression + the kill. Then SOLVABILITY.

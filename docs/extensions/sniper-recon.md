@@ -426,3 +426,29 @@ TRAVEL to the nest (killer->nest shrinks) and shoot from it (window/trajectory c
 TryPickNewVictimSite) or still won't path to the nest -> we drive the killer to the nest node ourselves, OR fall back
 to DESIGN A (home-voyeur: gate on the KILLER'S HOME having LOS via the location-centric solver overload so
 VoyeurSniper shoots from home coherently; rarer but simpler).
+
+### 2026-09-24 (playtest 5) — IT WORKS. A motivated street sniper fired from a public nest and killed the victim.
+Slider case: Shandrel Beckford#210 -> Denzel Holland#109, `[familiarWork]` coworkers, DIFFERENT buildings (killer
+702 Lovelace View, victim home 1201 Zeng Terrace). The override log: `SNIPER vantage OK ... site=Daffodil Ward,
+nest@(58.5,10.8,-13.4) (MO -> ExCopSniper)`. sniper-obs confirms `mo=ExCopSniper`, `sniperVictimSite=Daffodil Ward`
+(the pin took AND ExCopSniper uses it), `siteVantage=FOUND score=3.05`, `homeVantage=NONE`. States progressed
+waitForLocation -> travellingTo -> `unsolved` (only ~31 samples = resolved quickly). Player.log: `ExecuteSniperShot`
+x13 then executing -> post -> escaping -> unsolved (the killer missed the first shot, hit the second, per the user).
+**So fix v2 is confirmed: swapping to ExCopSniper makes the killer TRAVEL to a public rooftop nest and shoot the
+victim at their workplace — the street-assassination pattern, for an arbitrary motivated pair.** ExCopSniper DOES
+honour the pinned `sniperVictimSite` (no re-pick), so DESIGN A / self-driving the killer are NOT needed.
+
+**F9 fix (commit `bc9056f`, per user):** the snipe line showed the target twice (SCENE == SNIPE SITE). Now `SCENE` =
+the victim's location and `SNIPE NEST` = the nest's location (`nest.node.gameLocation.name`) + killer->nest distance
++ score.
+
+**REMAINING (feature works; polish + verify):**
+1. **Solvability/evidence** — the case reaches `unsolved`, but does it leave the proper sniper forensics (entry
+   wound + a window/trajectory/bullet-hole clue at the scene, and a findable nest) so a player can actually solve it?
+   Verify next (the earlier VoyeurSniper force-fire left only an entry wound; a real nest shot should leave more).
+2. **Hit rate** — some sniper cases still go vanilla when no pool suspect has a home/work vantage; measure how often
+   motivated snipers occur. If too rare, add public/routine sites (not just home/work) to `TryPickSniperSite`.
+3. **Flavour** — right now ALL motivated snipers become ExCopSniper (street). Optionally keep VoyeurSniper for pairs
+   with a genuine home vantage (homeVantage=FOUND) for variety.
+4. **Cleanup before ship** — gate/strip the `[sniper-obs]`/`[sniper-live]`/`[mo-dump]` diagnostics (like the kidnap
+   cleanup), keep F9. Wire the `MotivatedSniperShare` default (0 while WIP) once shipping.

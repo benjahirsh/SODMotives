@@ -639,3 +639,9 @@ re-target), per the user.
 **NEXT (user):** run a MOTIVATED sniper (MotivatedSniperShare=1). A cohabiting pair -> ExCopSniper (our fix) with no
 pin should now behave like this vanilla case: wait, re-target work->street, rooftop shot. Watch `[flow]
 SetMurderLocation` for the work->null->street progression + the kill. Then SOLVABILITY.
+
+Refinement (user): during the wait/re-target the KILLER STAYS HOME (idle) — it does NOT wander. It only travels to
+the rooftop once the game has locked a viable exposed site (Mingo Street) + vantage. Scene during the wait = the
+victim's WORKPLACE (Zeta Labs), not home. So the correct picture: killer idle at home -> game re-targets site
+work->street until the victim is exposed -> killer goes straight to the nest -> shot. (Our old PINNED cases instead
+had the killer milling ~115m out because the frozen unviable site never resolved; no pin fixes that.)

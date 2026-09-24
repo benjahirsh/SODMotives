@@ -724,21 +724,51 @@ namespace SODMotives
         // HOME then their WORKPLACE (the sites a home/work sniper uses). Read-only; never throws.
         // TODO(v2): also scan public/routine sites (rooftop assassinations) + pick the killer BY vantage from the
         // victim's enemy pool, to raise the hit rate for pairs with no home/work line of sight.
-        internal static bool TryPickSniperSite(Human killer, Human victim, out NewGameLocation site)
+        internal static bool TryPickSniperSite(Human killer, Human victim, out NewGameLocation site, out NewWall nest)
         {
-            site = null;
+            site = null; nest = null;
             try
             {
                 if (killer == null || victim == null) return false;
                 var tb = Toolbox.Instance; if (tb == null) return false;
                 NewGameLocation home = null; try { home = victim.home; } catch { }
-                if (home != null) { try { if (tb.TryGetSniperVantagePoint(killer, home, out _, out _)) { site = home; return true; } } catch { } }
+                if (home != null) { try { if (tb.TryGetSniperVantagePoint(killer, home, out var w1, out _)) { site = home; nest = w1; return true; } } catch { } }
                 NewGameLocation work = null;
                 try { var job = victim.job; var emp = job != null ? job.employer : null; if (emp != null) work = emp.placeOfBusiness; } catch { }
-                if (work != null) { try { if (tb.TryGetSniperVantagePoint(killer, work, out _, out _)) { site = work; return true; } } catch { } }
+                if (work != null) { try { if (tb.TryGetSniperVantagePoint(killer, work, out var w2, out _)) { site = work; nest = w2; return true; } } catch { } }
                 return false;
             }
             catch { return false; }
+        }
+
+        // The STREET/rooftop sniper MO (requiresSniperVantageAtHome == false, e.g. ExCopSniper): unlike VoyeurSniper
+        // it sends the killer to a PUBLIC vantage overlooking the target instead of shooting only from their own
+        // home. The override swaps motivated snipers to this MO so the killer actually TRAVELS to the vantage our
+        // gate confirmed (VoyeurSniper just idles at home and never reaches a public nest). Cached; its per-MO score
+        // boosts (a "Retired" job boost) are only preferences, so forcing it onto any motivated killer is fine.
+        private static MurderMO _streetSniperMO; private static bool _streetSniperMOSearched;
+        internal static MurderMO StreetSniperMO()
+        {
+            if (_streetSniperMOSearched) return _streetSniperMO;
+            _streetSniperMOSearched = true;
+            try
+            {
+                var mos = Resources.FindObjectsOfTypeAll<MurderMO>();
+                if (mos != null)
+                    for (int i = 0; i < mos.Length; i++)
+                    {
+                        var mo = mos[i]; if (mo == null || mo.requiresSniperVantageAtHome) continue;
+                        var compat = mo.compatibleWith; if (compat == null) continue;
+                        for (int j = 0; j < compat.Count; j++)
+                        {
+                            var p = compat[j];
+                            if (p != null && p.caseType == MurderPreset.CaseType.sniper) { _streetSniperMO = mo; break; }
+                        }
+                        if (_streetSniperMO != null) break;
+                    }
+            }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] StreetSniperMO error: {e.Message}"); }
+            return _streetSniperMO;
         }
 
         private static NewNode SafeAnchor(NewGameLocation l) { try { return l != null ? l.anchorNode : null; } catch { return null; } }

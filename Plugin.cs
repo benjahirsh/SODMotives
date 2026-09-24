@@ -559,7 +559,7 @@ namespace SODMotives
     [HarmonyPriority(Priority.First)]
     internal static class Patch_ExecuteNewMurder_Override
     {
-        static void Prefix(MurderController __instance, ref Human newMurderer, ref Human newVictim, MurderPreset preset, MurderMO motive, ref NewGameLocation victimSite)
+        static void Prefix(MurderController __instance, ref Human newMurderer, ref Human newVictim, MurderPreset preset, ref MurderMO motive, ref NewGameLocation victimSite)
         {
             if (!MurderSelector.EnableOverride) return;
             // Only touch ordinary generated (proc-gen sandbox) MURDERS. Special case
@@ -611,19 +611,29 @@ namespace SODMotives
                 // the shot even with no line of sight (the nonsensical no-window kills).
                 bool isSniper = preset != null && preset.caseType == MurderPreset.CaseType.sniper;
                 System.Func<Human, Human, bool> sniperFilter = isSniper
-                    ? (System.Func<Human, Human, bool>)((k, vic) => MurderWatchdog.TryPickSniperSite(k, vic, out _))
+                    ? (System.Func<Human, Human, bool>)((k, vic) => MurderWatchdog.TryPickSniperSite(k, vic, out _, out _))
                     : null;
                 if (MurderSelector.TryPickVictimCentric(out m, out v, out var suspectPool, sniperFilter))
                 {
                     // For a sniper, re-derive + PIN the vantage-viable site the killer can actually shoot from (the
-                    // chosen killer passed the filter, so this succeeds). Other cases: null (the game derives the
-                    // site from the victim's home as before).
+                    // chosen killer passed the filter, so this succeeds), and SWAP the MO to the street/rooftop
+                    // sniper (ExCopSniper) so the killer TRAVELS to that public vantage. VoyeurSniper only shoots
+                    // from the killer's own home and won't go to a public nest, so it idled and the game force-fired
+                    // a no-line-of-sight kill. Other cases: null site (the game derives it from the victim's home).
                     NewGameLocation sniperSite = null;
                     if (isSniper)
                     {
-                        MurderWatchdog.TryPickSniperSite(m, v, out sniperSite);
+                        MurderWatchdog.TryPickSniperSite(m, v, out sniperSite, out var nest);
+                        string moNote = "MO unchanged";
+                        var streetMO = MurderWatchdog.StreetSniperMO();
+                        if (streetMO != null && motive != null && motive.requiresSniperVantageAtHome)
+                        {
+                            motive = streetMO;   // ref: the game builds the case with the street MO -> killer goes to the nest
+                            moNote = $"MO -> {streetMO.name}";
+                        }
                         string sn = "?"; try { if (sniperSite != null) sn = sniperSite.name; } catch { }
-                        MotivesPlugin.Log.LogInfo($"[SODMotives] override: SNIPER vantage OK — {MotivesPlugin.Name(m)} -> {MotivesPlugin.Name(v)}, pinning the shot to {sn}.");
+                        string nn = "?"; try { if (nest != null) nn = nest.position.ToString(); } catch { }
+                        MotivesPlugin.Log.LogInfo($"[SODMotives] override: SNIPER vantage OK — {MotivesPlugin.Name(m)} -> {MotivesPlugin.Name(v)}, site={sn}, nest@{nn} ({moNote}).");
                     }
 
                     // Commit the override FIRST so a hiccup in the logging block below can't leave

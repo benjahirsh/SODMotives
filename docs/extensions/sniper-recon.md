@@ -452,3 +452,14 @@ the victim's location and `SNIPE NEST` = the nest's location (`nest.node.gameLoc
    with a genuine home vantage (homeVantage=FOUND) for variety.
 4. **Cleanup before ship** — gate/strip the `[sniper-obs]`/`[sniper-live]`/`[mo-dump]` diagnostics (like the kidnap
    cleanup), keep F9. Wire the `MotivatedSniperShare` default (0 while WIP) once shipping.
+
+### 2026-09-24 (flavour) — prefer VoyeurSniper (shoot from home) before ExCopSniper (commit `36d9347`)
+Per the user (and matching vanilla: the MO's geometry requirement shapes the pair, so vanilla only makes a
+VoyeurSniper case for a killer whose home has a vantage). `TryPickSniperSite` now returns `useVoyeur` and checks the
+two flavours in order: (1) VOYEUR — the KILLER'S OWN HOME has line of sight to the victim's home/work (via the
+location-centric solver overload `TryGetSniperVantagePoint(killerHome, …, requiredTargetSite)`), so VoyeurSniper
+shoots from home with no travel; (2) STREET — the killer can reach any public vantage overlooking the victim's
+home/work (sniper-centric overload), so ExCopSniper travels to that nest. The override sets the MO (ref) to match
+via `MurderWatchdog.SniperMO(useVoyeur)` (home-voyeur MO vs street MO). F9 now shows `SNIPE MO: <name> (voyeur/street)`.
+NEXT: playtest — confirm a voyeur-viable pair keeps VoyeurSniper + shoots from home coherently, and a no-home-LOS
+pair still uses ExCopSniper (the log line shows `VOYEUR/home` vs `STREET/rooftop`). Then the solvability check (#1).

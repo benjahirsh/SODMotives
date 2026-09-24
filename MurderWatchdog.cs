@@ -736,6 +736,11 @@ namespace SODMotives
             {
                 if (killer == null || victim == null) return false;
                 var tb = Toolbox.Instance; if (tb == null) return false;
+                // Exclude COHABITING pairs: a sniper who lives with the victim is thematically odd (they could just
+                // kill them at home) and the worst case for the game's AI — no cross-home vantage, and their shared
+                // routine keeps the killer at the victim's side instead of travelling to a distant nest, so the case
+                // oscillates and never fires. Not a viable sniper pair.
+                try { var kh0 = killer.home; var vh0 = victim.home; if (kh0 != null && vh0 != null && kh0.Pointer == vh0.Pointer) return false; } catch { }
                 NewGameLocation home = null; try { home = victim.home; } catch { }
                 NewGameLocation work = null;
                 try { var job = victim.job; var emp = job != null ? job.employer : null; if (emp != null) work = emp.placeOfBusiness; } catch { }

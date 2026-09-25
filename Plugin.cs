@@ -47,7 +47,7 @@ namespace SODMotives
                 "KIDNAP analogue of MotiveCaseShare: fraction (0..1) of KIDNAP cases that get a motivated killer->victim pair (a walk-native abduction to a real holding den — the victim walks there and is restrained, leaving a real trail); the rest run vanilla. Default 1 = every kidnap is motivated; 0 = kidnaps stay vanilla. Requires the sandbox 'Kidnapping' case type ON. Sniper cases have their own slider (MotivatedSniperShare). Applies to the next kidnap.",
                 v => MurderSelector.MotivatedKidnapShare = v, R01(), Order(95));
             BindApply("Motive Mix", "MotivatedSniperShare", 0f,
-                "SNIPER analogue of MotiveCaseShare / MotivatedKidnapShare: fraction (0..1) of SNIPER cases that get a motivated killer->victim pair; the rest run vanilla. Requires the sandbox 'Sniper cases' type ON. DEFAULT 0 because motivated snipers are still WORK-IN-PROGRESS: the relationship-chosen killer usually has no reachable vantage onto a site the victim visits, so the case loops in travellingTo and never fires (the watchdog reverts it to vanilla after WaitLocationStallHours). Set it to 1 to TEST motivated snipers via natural sandbox cases (watch the [sniper-obs]/[sniper-live] diagnostics with [Debug] EnableDebugKeys on) instead of the F3 force key. Applies to the next sniper.",
+                "SNIPER analogue of MotiveCaseShare / MotivatedKidnapShare: fraction (0..1) of SNIPER cases that get a motivated killer->victim pair; the rest run vanilla. Requires the sandbox 'Sniper cases' type ON. Mimics vanilla: the MO is chosen by a killer-home line-of-sight test (VoyeurSniper if the killer's home overlooks the victim's home/work, else the street/rooftop ExCopSniper), the watchdog seeds a shot site via the game's OWN picker, and the shot plus the game's own force-kill fallback are left to the game. DEFAULT 0 while it's being validated. Set it to 1 to TEST motivated snipers via natural sandbox cases (watch the [sniper-obs]/[sniper-live] diagnostics with [Debug] EnableDebugKeys on) instead of the F3 force key. Applies to the next sniper.",
                 v => MurderSelector.MotivatedSniperShare = v, R01(), Order(90));
             // The five motive families — each a 0..1 weight, NORMALISED together, so any mix works (they need
             // not sum to 1). Set one to 0 to drop that motive from the blend.
@@ -143,9 +143,18 @@ namespace SODMotives
             BindApply("Troubleshooting", "WaitLocationStallHours", 12f,
                 "In-game hours a mod case may sit stalled in 'waitForLocation' (no seatable location — e.g. a kidnap with no valid holding den) before the watchdog CANCELS it so it can't hang the case indefinitely. A one-time IsValidLocation den probe is logged the moment it stalls.",
                 v => MurderWatchdog.WaitLocationStallHours = v);
-            BindApply("Troubleshooting", "SniperPatienceHours", 12f,
-                "In-game hours to keep a motivated STREET sniper (ExCopSniper) case alive past the game's OWN give-up, so the killer keeps tracking the moving victim until it lines up a shot instead of the case timing out with no kill. After this it falls back to vanilla so it can't hang. Voyeur snipers (shoot from home) are unaffected.",
-                v => MurderWatchdog.SniperPatienceHours = v);
+            BindApply("Troubleshooting", "SniperPinStallHours", 8f,
+                "In-game hours a motivated ExCop sniper may hold a pinned LOCAL nest (the victim's home/work, for a believable 'Daffodil Ward'-style site) before, if it has not fired, RELEASING to the game's own default site (its best-vantage rooftop). Guards against a solver false-positive pinning a site that never lines up. Only affects sniper cases where a local vantage was found; others use the game's default from the start.",
+                v => MurderWatchdog.SniperPinStallHours = v);
+            BindApply("Troubleshooting", "SniperMaxNestMeters", 55f,
+                "Max distance (metres) a pinned LOCAL sniper nest may sit from its target site. The game's vantage solver over-reports and will offer the city's dominant rooftop as a 'vantage' over a site two blocks away (a nonsensical cross-city shot that never lines up). A genuine overlooking nest is across a street, so pins whose nest is farther than this are rejected and the case uses the game's default site instead. Raise it to allow longer shots, lower it to be stricter.",
+                v => MurderWatchdog.SniperMaxNestMeters = v);
+            BindApply("Troubleshooting", "SniperForceLosNest", true,
+                "Fix wrong-window sniper shots. The game's vantage solver scores windows with a random term and can send the killer to a window facing the wrong way with no real line of sight (he then sits there and never fires). With this ON, for a motivated sniper the mod re-checks candidate windows for the chosen site and forces the killer to one with a VERIFIED clear line of sight to where the victim will stand, preferring the closest (a believable across-the-street nest). Off = use the game's own window pick. Only affects motivated sniper cases; vanilla snipers are untouched.",
+                v => MurderWatchdog.SniperForceLosNest = v);
+            BindApply("Troubleshooting", "ForceVictimWorkplace", "",
+                "DEV/TEST: when non-empty, motivated cases only target a victim who WORKS at a place whose name contains this text (case-insensitive) -- e.g. set it to 'Daffodil Ward' and press F3 to force ward-employee sniper victims and reproduce the ward -> Lovelace-window shot. Empty = normal victim selection.",
+                v => DebugTools.ForceVictimWorkplace = v);
             BindApply("Troubleshooting", "StripSignatures", true,
                 "Remove serial-killer calling card / moniker / graffiti from motivated cases so they read as personal crimes. (Off = motive cases keep the vanilla serial-killer signatures.)",
                 v => MurderSelector.StripSignatures = v);
@@ -596,10 +605,11 @@ namespace SODMotives
                 {
                     // Special case types: motivate KIDNAP with probability [Motive Mix] MotivatedKidnapShare and
                     // SNIPER with [Motive Mix] MotivatedSniperShare (both mixer sliders); otherwise leave vanilla.
-                    // A motivated kidnap runs the walk-native abduction (den picked below). A motivated SNIPER is
-                    // still WIP (default share 0): the relationship-chosen killer usually has no reachable vantage,
-                    // so it loops in travellingTo until the watchdog reverts it to vanilla. The slider exists to
-                    // TEST/observe motivated snipers via the natural path (see the [sniper-obs]/[sniper-live] logs).
+                    // A motivated kidnap runs the walk-native abduction (den picked below). A motivated SNIPER mimics
+                    // vanilla: the MO is chosen by a killer-home LOS test (voyeur else ExCop) and the watchdog seeds a
+                    // shot site via the game's own picker, then defers the shot AND the game's own force-kill fallback
+                    // to the game (default share 0 while it's being validated). The slider exists to TEST it via the
+                    // natural path (see the [sniper-obs]/[sniper-live] logs).
                     bool allowKidnap = preset.caseType == MurderPreset.CaseType.kidnap && MurderSelector.ShouldMotivateKidnap();
                     bool allowSniper = preset.caseType == MurderPreset.CaseType.sniper && MurderSelector.ShouldMotivateSniper();
                     if (!allowKidnap && !allowSniper)
@@ -608,7 +618,7 @@ namespace SODMotives
                         return;
                     }
                     MotivesPlugin.Log.LogInfo(allowSniper
-                        ? "[SODMotives] override: motivating a SNIPER case (WIP test path; expect a travellingTo loop until the vantage-viable constraint lands)."
+                        ? "[SODMotives] override: motivating a SNIPER case (mimic-vanilla: voyeur/ExCop MO by LOS, watchdog seeds the site, shot + force-kill deferred to the game)."
                         : "[SODMotives] override: motivating a KIDNAP case (walk-native abduction to a real den).");
                 }
                 if (MurderSelector.ShouldForceVanilla())
@@ -621,42 +631,45 @@ namespace SODMotives
             try
             {
                 Human m, v;
-                // V2.1: pick a victim rich in real, event-backed enemies (affairs + workplace),
-                // then a RANDOM killer from that mixed-motive pool. Every suspect is a real red
-                // herring; vanilla's physical evidence (built around the chosen killer) convicts.
-                // SNIPER flavour is decided AFTER the pick, with NO killer filter: VoyeurSniper needs peeping-tom-
-                // compatible homes (the killer's OWN home overlooks the victim), but ExCopSniper is built to work
-                // with ANY pair — it finds its own public rooftop over a site the victim visits, at runtime. So we
-                // don't constrain the pair; we set the matching MO and, crucially, for ExCopSniper DON'T pin a site
-                // (our pin fought the game's own site-picking and made the vantage oscillate). Only voyeur pins.
+                // V2.1: pick a victim rich in real, event-backed enemies (affairs + workplace), then a killer from
+                // that mixed-motive pool. Every suspect is a real red herring; vanilla's physical evidence (built
+                // around the chosen killer) convicts. SNIPER: PREFER a killer whose OWN home overlooks the victim
+                // (soft preference, no motive cost -- the whole pool is real suspects), so the case can be a
+                // VoyeurSniper (shot from the killer's window at the victim's home/work). That mirrors vanilla (whose
+                // snipers are mostly voyeur) and spreads the sites out, instead of every ExCop case funnelling to the
+                // city's single best sniper street. If no pool suspect is voyeur-viable, it falls back to a random
+                // motivated killer + ExCopSniper (street/rooftop). The MO is set to match the chosen pair below.
                 bool isSniper = preset != null && preset.caseType == MurderPreset.CaseType.sniper;
-                if (MurderSelector.TryPickVictimCentric(out m, out v, out var suspectPool))
+                System.Func<Human, Human, bool> preferKiller = isSniper
+                    ? (System.Func<Human, Human, bool>)((k, vv) => MurderWatchdog.SniperVoyeurViable(k, vv))
+                    : null;
+                if (MurderSelector.TryPickVictimCentric(out m, out v, out var suspectPool, preferKiller))
                 {
                     if (isSniper)
                     {
-                        // Site/vantage are DEFERRED to the game (no pin, no probe — the probe reports NONE for
-                        // vanilla snipers that fire fine, e.g. a killer shooting from their own apartment). But the
-                        // MO is chosen by whether the pair COHABITS: the game's usual pick, VoyeurSniper, shoots the
-                        // victim at their OWN home/work from a vantage — nonsensical when the killer LIVES THERE TOO.
-                        // So for a cohabiting pair force the STREET MO (ExCopSniper): a public assassination, which
-                        // makes sense for a cohabitant killer. Non-cohabiting: leave the game's MO (VoyeurSniper is
-                        // fine — the killer snipes the victim's home/work from elsewhere, like vanilla). A cohabiting
-                        // homebody victim (never exposed) can't be lined up by ExCopSniper -> patience -> vanilla.
-                        bool cohabit = false;
-                        try { var kh = m.home; var vh = v.home; cohabit = kh != null && vh != null && kh.Pointer == vh.Pointer; } catch { }
-                        string moNote = "MO left to the game";
-                        if (cohabit)
-                        {
-                            var street = MurderWatchdog.SniperMO(false);   // ExCopSniper
-                            if (street != null) { motive = street; moNote = $"COHABITING -> forced street MO {street.name}"; }
-                        }
-                        MotivesPlugin.Log.LogInfo($"[SODMotives] override: SNIPER — motivated pair {MotivesPlugin.Name(m)} -> {MotivesPlugin.Name(v)}; {moNote}; site/vantage left to the game.");
+                        // MO by vantage flavour, mirroring the game's two sniper types. Selection already PREFERRED a
+                        // voyeur-viable killer; re-test the chosen pair: the killer's own home overlooks the victim's
+                        // home/work (non-cohabiting) -> VoyeurSniper (shoot from the window, works even for a homebody
+                        // victim); else ExCopSniper (street/rooftop). Site/vantage/shot AND the force-kill fallback are
+                        // DEFERRED to the game; the watchdog seeds the site via the game's own picker so the state
+                        // machine engages exactly like vanilla. No pin, no patience net.
+                        bool voyeur = MurderWatchdog.SniperVoyeurViable(m, v);
+                        var chosen = MurderWatchdog.SniperMO(voyeur);
+                        if (chosen != null) motive = chosen;
+                        if (DebugTools.EnableDebugKeys)
+                            MotivesPlugin.Log.LogInfo($"[SODMotives][sniper] voyeur-viable suspects in the victim's pool: {MurderSelector.LastPreferViableCount}/{MurderSelector.LastPoolScanned} (voyeur preferred at selection).");
+                        MotivesPlugin.Log.LogInfo($"[SODMotives] override: SNIPER -- motivated pair {MotivesPlugin.Name(m)} -> {MotivesPlugin.Name(v)}; MO {(chosen != null ? chosen.name : "left to the game")} ({(voyeur ? "voyeur: killer home overlooks victim" : "street/rooftop")}); site/shot deferred to the game (watchdog seeds the site).");
                     }
 
                     // Commit the override FIRST so a hiccup in the logging block below can't leave
                     // the vanilla pair in place while the mod victim is already in the bookkeeping.
                     newMurderer = m; newVictim = v; victimSite = null;   // sniper: game picks the site (home/work); other cases: game derives it from the victim's home
                     __instance.currentMurderer = m; __instance.currentVictim = v;
+
+                    // Register (or clear) the active motivated sniper pair so the vantage-solver postfix
+                    // (Patch_SniperVantage_ForceLosNest) forces an LOS-verified nest window for OUR case only.
+                    if (isSniper) MurderWatchdog.SetActiveMotivatedSniper(m, v);
+                    else MurderWatchdog.ClearActiveMotivatedSniper();
 
                     // KIDNAP: the swapped-in killer needs a den or the case hangs at waitForLocation
                     // (IsValidLocation accepts only murderer.den). Assign a vacant, walk-in-able "Vacant address"
@@ -719,22 +732,6 @@ namespace SODMotives
             string site = "<null>";
             try { if (newLoc != null) site = newLoc.name; } catch { site = "<err>"; }
             MotivesPlugin.Log.LogInfo($"[SODMotives] [flow] SetMurderLocation -> {site}");
-        }
-    }
-
-    // SNIPER PATIENCE: the game gives up on a sniper it can't line up (CancelCurrentMurder from waitForLocation).
-    // For our motivated STREET snipers (ExCopSniper) that give-up is premature — the recomputing IS the killer
-    // tracking the moving victim, and it would connect given more time. Skip the cancel for our ExCopSniper victims
-    // until MurderWatchdog's SniperPatienceHours cap, after which it's allowed (and the watchdog force-cancels to
-    // vanilla) so a truly stuck case can't hang. Voyeur snipers (shoot from home) are never blocked.
-    [HarmonyPatch(typeof(MurderController.Murder), nameof(MurderController.Murder.CancelCurrentMurder))]
-    internal static class Patch_BlockSniperCancel
-    {
-        static bool Prefix(MurderController.Murder __instance)
-        {
-            try { if (MurderWatchdog.ShouldBlockSniperCancel(__instance)) return false; }
-            catch { }
-            return true;
         }
     }
 
@@ -833,6 +830,47 @@ namespace SODMotives
         {
             if (SignatureStrip.ShouldStrip(__instance)) { return false; }
             return true;
+        }
+    }
+
+    // WINDOW FIX. Toolbox.TryGetSniperVantagePoint(Human sniper, NewGameLocation requiredTargetSite, out NewWall,
+    // out float, List) is the choke point the game calls at FIRE TIME (NewAIAction.OnActivate) to derive the sniper's
+    // nest node -- its out NewWall becomes the node the killer walks to and shoots from (decoded in
+    // docs/extensions/sniper-nest-decode.md). For our motivated sniper's ONE pinned local site we replace the pick with
+    // a nest we verified has line of sight to the victim (computed at seeding, cached).
+    //
+    // CRITICAL SCOPE: the SAME overload is also called by the game's own site picker (Murder.TryPickNewVictimSite) to
+    // score EVERY candidate site. If we override those, we flatten the game's real vantage ranking (all candidates come
+    // back 999) and it picks the same street every time -- the "Chandani everywhere, never Mingo" regression. So we
+    // override ONLY when requiredTargetSite is exactly our pinned site (MurderWatchdog.TryGetPinnedNest enforces this);
+    // candidate-scoring queries pass through untouched, leaving the game's own picking (and vanilla snipers) intact.
+    [HarmonyPatch]
+    internal static class Patch_SniperVantage_ForceLosNest
+    {
+        static System.Reflection.MethodBase TargetMethod()
+        {
+            // Overload 1 is the only TryGetSniperVantagePoint whose first two params are (Human, NewGameLocation).
+            foreach (var mth in typeof(Toolbox).GetMethods())
+            {
+                if (mth.Name != nameof(Toolbox.TryGetSniperVantagePoint)) continue;
+                var ps = mth.GetParameters();
+                if (ps.Length >= 2 && ps[0].ParameterType == typeof(Human) && ps[1].ParameterType == typeof(NewGameLocation))
+                    return mth;
+            }
+            return null;
+        }
+
+        // Param names match the interop (confirmed present in metadata), same as the ExecuteNewMurder prefix's ref args.
+        static void Postfix(Human sniper, NewGameLocation requiredTargetSite, ref NewWall vantagePoint, ref float vantageScore, ref bool __result)
+        {
+            try
+            {
+                if (MurderWatchdog.TryGetPinnedNest(sniper, requiredTargetSite, out var wall) && wall != null)
+                {
+                    vantagePoint = wall; vantageScore = 999f; __result = true;
+                }
+            }
+            catch { }
         }
     }
 

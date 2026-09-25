@@ -42,6 +42,9 @@ namespace SODMotives
         // null = don't refine by event type (fall back to the ForceMotiveType filter only). When set, F6 also sets
         // ForceMotiveType to the mapped motive so the selector's existing motive filter + bucketing-skip still fire.
         internal static SocialEventType? ForceEventType = null;
+        // DEV/TEST: when non-empty, the victim selector only picks victims who WORK at a place whose name contains this
+        // text (case-insensitive), e.g. "Daffodil Ward" to reproduce the ward->Lovelace sniper geometry. Empty = normal.
+        internal static string ForceVictimWorkplace = "";
 
         // RELEASE GATE (D2): master switch for the developer tooling. Bound to [Debug] EnableDebugKeys
         // (default FALSE for a shipped build). When OFF, every dev hotkey below is inert, the on-screen
@@ -680,13 +683,18 @@ namespace SODMotives
                         NewGameLocation target = null; try { target = mrd.sniperVictimSite; } catch { }
                         if (target == null) { try { target = mrd.location; } catch { } }
                         string tname = "<none yet>"; try { if (target != null) tname = target.name; } catch { }
-                        Overlay.Add($"SNIPE SITE: {tname}  (game-chosen; can be the victim's home OR work)");
                         string moName = "?"; try { if (mrd.mo != null) moName = mrd.mo.name; } catch { }
-                        Overlay.Add($"SNIPE MO : {moName}");
-                        // The game's OWN locked kill-shot node — non-zero once it has lined up a shot.
-                        string shot = "?"; bool hasShot = false;
-                        try { var n = mrd.sniperKillShotNode; hasShot = !(n.x == 0 && n.y == 0 && n.z == 0); shot = n.ToString(); } catch { }
-                        Overlay.Add($"SNIPE SHOT: {(hasShot ? "LOCKED @ " + shot : "lining up... (no shot node yet)")}");
+                        Overlay.Add($"SNIPE MO  : {moName}");
+                        Overlay.Add($"SNIPE SITE: {tname}  (where the victim is exposed)");
+                        // The DEN: the nest the mod forced the killer to (where he shoots FROM), + his live distance to it.
+                        // Distinguishes our pinned LOCAL nest (an across-the-street overlook) from the game's default rooftop.
+                        if (MurderWatchdog.ActiveSniperNest(killer, victim, out var nestName, out var kDist, out var pinnedLocal, out var wander))
+                        {
+                            string where = kDist < 0 ? "?" : (kDist <= 3f ? "IN POSITION" : "travelling, " + kDist.ToString("0") + "m away");
+                            Overlay.Add($"SNIPE NEST: {nestName}  ({(pinnedLocal ? "pinned local overlook" : "game default rooftop")}; killer {where})");
+                            if (pinnedLocal) Overlay.Add($"           victim herded to wander {wander} spot(s) in the nest's sightline");
+                        }
+                        else Overlay.Add("SNIPE NEST: <none yet>  (deferred to the game's own site/vantage)");
                     }
                 }
                 catch { }

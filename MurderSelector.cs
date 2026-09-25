@@ -27,6 +27,12 @@ namespace SODMotives
         internal static float MotivatedSniperShare = 0f;
         internal static int MinSuspects = 3;            // PREFER victims with at least this many real suspects
         internal static int KillerPoolSize = 10;        // killer = uniform-random among the victim's top-N suspects
+        // Diagnostic: after a TryPickVictimCentric call with a preferKiller, how many of the scanned top-pool
+        // suspects passed it (e.g. how many of the victim's motivated aggressors are voyeur-sniper-viable) and how
+        // many were scanned. Read by the sniper override to measure the voyeur supply. Single-threaded game, so a
+        // shared static is fine.
+        internal static int LastPreferViableCount = 0;
+        internal static int LastPoolScanned = 0;
         // THE MAIN MIX KNOB: probability [0..1] a case is a relationship-MOTIVE case; the rest are left
         // entirely to vanilla (serial-killer, signature and all). Release default 1.0 = every case is a
         // motive case (the mod always shows); lower it to mix in classic vanilla serial hunts for variety.
@@ -315,7 +321,7 @@ namespace SODMotives
         // killerFilter (optional): when set (SNIPER cases), the chosen killer MUST satisfy it — a
         // (candidateKiller, victim) -> bool test, used to require a real sniper vantage. If none of the
         // victim's top suspects pass, the method fails (returns false) so the caller leaves the case vanilla.
-        internal static bool TryPickVictimCentric(out Human murderer, out Human victim, out List<SuspectEdge> pool, System.Func<Human, Human, bool> killerFilter = null)
+        internal static bool TryPickVictimCentric(out Human murderer, out Human victim, out List<SuspectEdge> pool, System.Func<Human, Human, bool> preferKiller = null)
         {
             murderer = null; victim = null; pool = null;
 
@@ -384,6 +390,24 @@ namespace SODMotives
             foreach (var kv in byVictim) if (kv.Value.Count >= floor) candVictims.Add(kv.Key);
             if (candVictims.Count == 0) return false;
 
+            // DEV/TEST: restrict the victim to someone who WORKS at a specific place (DebugTools.ForceVictimWorkplace,
+            // e.g. "Daffodil Ward") to reproduce a particular sniper geometry. Only applies when a matching victim with
+            // motivated suspects exists; otherwise falls back to the normal pool so it never dead-ends a playtest.
+            string wpFilter = null; try { wpFilter = DebugTools.ForceVictimWorkplace; } catch { }
+            if (!string.IsNullOrEmpty(wpFilter))
+            {
+                var matched = new List<int>();
+                for (int i = 0; i < candVictims.Count; i++)
+                {
+                    Human vh = victimRef.TryGetValue(candVictims[i], out var h) ? h : null;
+                    string wp = null;
+                    try { var j = vh != null ? vh.job : null; var em = j != null ? j.employer : null; var pob = em != null ? em.placeOfBusiness : null; wp = pob != null ? pob.name : null; } catch { }
+                    if (wp != null && wp.IndexOf(wpFilter, StringComparison.OrdinalIgnoreCase) >= 0) matched.Add(candVictims[i]);
+                }
+                if (matched.Count > 0) { candVictims = matched; MotivesPlugin.Log.LogInfo($"[SODMotives] ForceVictimWorkplace='{wpFilter}': restricted victim pool to {matched.Count} employee(s) there."); }
+                else MotivesPlugin.Log.LogWarning($"[SODMotives] ForceVictimWorkplace='{wpFilter}': no candidate victim with motivated suspects works there; using the normal pool.");
+            }
+
             // 3) Balance case FAMILIES by the per-motive weights (F6 force OFF only). Bucket victims by
             //    which motive families their suspects cover (a mixed victim sits in several), then draw a
             //    family by the NORMALISED weights so no single motive swamps the rest.
@@ -451,27 +475,30 @@ namespace SODMotives
             suspects.Sort((x, y) => y.score.CompareTo(x.score));
             int poolN = Math.Min(Math.Max(1, KillerPoolSize), suspects.Count);
 
-            // 5) Killer among the top pool. If a killerFilter is supplied (SNIPER: the killer must have a real
-            //    line-of-sight vantage onto a site the victim uses), restrict to passing suspects and pick among
-            //    them; if NONE of this victim's top suspects pass, fail so the caller leaves the case vanilla.
-            //    Otherwise pick uniform-random as before. All downstream bookkeeping uses the chosen killerEdge,
-            //    so the motive data stays consistent with whoever is selected.
+            // 5) Killer among the top pool, uniform-random (every suspect is a real motivated red herring). A soft
+            //    preferKiller (SNIPER: prefer a killer whose OWN home overlooks the victim, so the case can be a
+            //    VoyeurSniper -- more varied + more vanilla-like than every ExCop case funnelling to the city's one
+            //    best sniper street) restricts the pick to pool members that pass it, but falls back to the full
+            //    uniform-random pick when NONE pass (still a real motivated killer, just an ExCop sniper). No motive
+            //    is lost either way: the whole pool is event-backed suspects. Bookkeeping uses the chosen killerEdge.
             SuspectEdge killerEdge;
-            if (killerFilter != null)
+            int preferViable = 0;
+            if (preferKiller != null)
             {
                 var viable = new List<SuspectEdge>();
                 for (int i = 0; i < poolN; i++)
                 {
                     var e = suspects[i];
-                    try { if (e.suspect != null && killerFilter(e.suspect, victim)) viable.Add(e); } catch { }
+                    try { if (e.suspect != null && preferKiller(e.suspect, victim)) viable.Add(e); } catch { }
                 }
-                if (viable.Count == 0) { murderer = null; pool = null; return false; }
-                killerEdge = viable[_rng.Next(viable.Count)];
+                preferViable = viable.Count;
+                killerEdge = viable.Count > 0 ? viable[_rng.Next(viable.Count)] : suspects[_rng.Next(poolN)];
             }
             else
             {
                 killerEdge = suspects[_rng.Next(poolN)];
             }
+            LastPreferViableCount = preferViable; LastPoolScanned = poolN;
             murderer = killerEdge.suspect;
 
             // 6) Record for clue injection / diagnostics.

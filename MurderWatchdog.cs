@@ -108,6 +108,29 @@ namespace SODMotives
         private static NewWall _moNestWall;                 // cached chosen nest for the current site (null = "checked, nothing better than the game's pick")
         private static System.IntPtr _moNestSitePtr = System.IntPtr.Zero;   // site the cache is for; recompute when the site changes (re-target/clobber)
 
+        // PHYSICS-LOS NEST RESCUE (docs/extensions/sniper-nest-decode.md pt.4). The node-graph vantage check above
+        // (DataRaycastController.NodeRaycast) only registers windows a site DIRECTLY faces; it is BLIND to a real
+        // overlook across a park / on another building side / a few floors up (the Lovelace-8th-over-Laster's case:
+        // every node-graph candidate scored cover=0, so the case fell to Mingo). The live fire gate is a
+        // UnityEngine.Physics ray, so when the node-graph pass finds NO nest we fall back to a physics raycast
+        // (window-opening to window-opening, mirroring the gate) over nearby self-enumerated ACCESSIBLE windows, and
+        // pin the one that physically overlooks the MOST of the site's own windows (broadest overlook, e.g. a Plaza
+        // Orchid landing that sees many ward windows beats a single-window Lovelace landing). Additive +
+        // false-negative-biased: runs only when Stage 1 found nothing, so working cases are byte-for-byte unchanged
+        // and cast zero rays. Behind a toggle so it can be A/B'd or shipped off. All interop members are probe-verified
+        // against BepInEx/interop (scratch reflection probe), and every call is try/catch'd.
+        internal static bool SniperPhysicsLosNest = true;   // [Troubleshooting] toggle
+        private const float PhysEyeUp = 1.4f;               // gun/eye height above a nest node (~killer.transform.position + aim)
+        private const float PhysBodyUp = 1.1f;              // victim torso height above a stand node (~GetBodyAnchor)
+        private const float PhysEdge = 0.35f;               // pull ray ends in from each window opening so we don't hit the opening's own frame
+        private const int   PhysMaxNestWindows = 90;        // cap on self-enumerated candidate nest windows per (failing) case
+        private const int   PhysMaxSiteWindows = 24;        // cap on the site windows we aim at
+        private static int  _rainGlassLayer = int.MinValue; // RainWindowGlass layer index (int.MinValue = unresolved, -1 = absent)
+        private static bool _physLayersDumped = false;      // one-time layer/mask diagnostic guard
+        private static bool _lastNestWasPhysics = false;    // FindBestPublicNest: did the LAST pick come from the physics rescue?
+        private static bool _moNestPhys = false;            // the active pinned nest came from the physics rescue (enables arrival re-validation)
+        private static bool _moNestRevalidated = false;     // one-shot: have we re-validated the physics pin once the killer reached it?
+
         // Seal the den behind the fleeing killer. Vanilla (confirmed in-game across 2 sandboxes: frontDoors
         // locked=0 the whole hold, AND a web-search confirmed vacant-address kidnap dens stay UNLOCKED) only
         // CLOSES the doors (default NPC flee behaviour), never locks the unowned den. So we CLOSE to match that
@@ -141,6 +164,7 @@ namespace SODMotives
             _liveVid = -1; _liveLastLogH = -999f; _liveCount = 0;
             _sniperObserved.Clear(); _sniperLiveVid = -1; _sniperLiveLastLogH = -999f; _sniperLiveCount = 0;
             _sniperSeeded.Clear(); _sniperPin.Clear(); _sniperPinSince.Clear(); _sniperHerdLogged.Clear(); _sniperWander.Clear(); _sniperHerdNode.Clear(); _sniperWanderPick.Clear();
+            _physLayersDumped = false; _rainGlassLayer = int.MinValue; _lastNestWasPhysics = false; _moNestPhys = false; _moNestRevalidated = false;
             ClearActiveMotivatedSniper();
             _ransomTried.Clear(); _killTimeReasserted.Clear();
             _killBlockLogged.Clear(); KidnapReachedHold.Clear(); _denSealed.Clear(); _denGoalLogged.Clear();
@@ -384,6 +408,29 @@ namespace SODMotives
                         seenNodes = thisSeen;
                     }
                 }
+                // STAGE 2 -- PHYSICS-LOS RESCUE. Only when node-graph (Stage 1) found NO nest: enumerate nearby
+                // ACCESSIBLE windows ourselves and pick one with a real physics line to the site's own windows (which
+                // the node-graph check is blind to). Runs on the failing case only, so working cases are untouched.
+                _lastNestWasPhysics = false;
+                bool physicsOn = false; try { physicsOn = SniperPhysicsLosNest; } catch { }
+                if (physicsOn && bestWall == null && haveRef)
+                {
+                    if (PhysicsRescueNest(killer, targetLoc, refPos, kh, out var pWall, out var pDist, out var pPub, out var pSeen) && pWall != null)
+                    {
+                        bestWall = pWall; bestDist = pDist; bestPublic = pPub;
+                        bestCover = pSeen != null ? pSeen.Count : 1; seenNodes = pSeen; _lastNestWasPhysics = true;
+                    }
+                }
+                else if (physicsOn && bestWall != null && haveRef && diag)
+                {
+                    // LOG-ONLY A/B (debug only): the node-graph pass already found a nest (e.g. the working Daffodil Ward
+                    // case), so we do NOT run the rescue for real -- adopting a physics pick over a firing node-graph pick
+                    // could regress it. But we run it here purely to LOG what physics WOULD choose, so the tester can see
+                    // whether physics finds a broader overlook (Plaza Orchid vs Lovelace) on the very cases that don't
+                    // reach the rescue. No behavioural effect -- the node-graph pick stands.
+                    if (PhysicsRescueNest(killer, targetLoc, refPos, kh, out var cWall, out var cDist, out var cPub, out var cSeen) && cWall != null)
+                        MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los][compare] node-graph PICK {LName(NestLoc(bestWall))} cover={bestCover}/{targets.Count} (kept) vs physics-would-pick {LName(NestLoc(cWall))} {cDist:0}m sees {(cSeen != null ? cSeen.Count : 0)} site-windows -- NOT adopted (node-graph pick already works).");
+                }
                 // Expand the wander set: with only the ~2 strictly-visible nodes the victim just paces a straight line
                 // between them, and if that line is furniture-blocked the shot never clears. Add the ward nodes NEAR the
                 // visible ones so the victim wanders a small CLUSTER around the windows and steps into a physics-clear
@@ -431,6 +478,318 @@ namespace SODMotives
                     if (_sniperWander.TryGetValue(victim.humanID, out var wl) && wl != null) wanderCount = wl.Count;
                 }
                 return true;
+            }
+            catch { return false; }
+        }
+
+        // ============================ PHYSICS-LOS NEST RESCUE ======================================================
+        // UnityEngine.Physics / Ray / RaycastHit / LayerMask / QueryTriggerInteraction resolve from the interop
+        // PhysicsModule + CoreModule DLLs (probe-confirmed). Vector3 operator overloads are NOT exposed by this
+        // interop build (probe-confirmed: only Vector3.Distance, the (x,y,z) ctor and Vector3.up), so all vector math
+        // here is component-wise. This is the mod's first use of the Physics idiom, so every call is try/catch'd.
+
+        private static int RainGlassLayer()
+        {
+            if (_rainGlassLayer == int.MinValue)
+            { try { _rainGlassLayer = LayerMask.NameToLayer("RainWindowGlass"); } catch { _rainGlassLayer = -1; } }
+            return _rainGlassLayer;
+        }
+
+        // The ray mask = the game's OWN Toolbox.sniperLOSMask (probe-confirmed Int32 property -- the exact mask the
+        // live fire gate uses), with the RainWindowGlass bit STRIPPED so a single closest-hit Raycast passes cleanly
+        // through window glass exactly as the gate treats it. Falls back to DefaultRaycastLayers, then ~0.
+        private static int SniperPhysMask()
+        {
+            int m = 0;
+            try { var tb = Toolbox.Instance; if (tb != null) m = tb.sniperLOSMask; } catch { m = 0; }
+            if (m == 0) { try { m = UnityEngine.Physics.DefaultRaycastLayers; } catch { m = ~0; } }
+            if (m == 0) m = ~0;                                   // never mask 0 (hits nothing -> everything looks clear)
+            int g = RainGlassLayer();
+            if (g >= 0) { try { m &= ~(1 << g); } catch { } }     // window glass must never block the shot
+            return m;
+        }
+
+        // One-time diagnostic (behind EnableDebugKeys): dump the 32 layer names + the game's raw sniperLOSMask + the
+        // resolved RainWindowGlass index + the mask we actually use, so one log line confirms the layer exists and
+        // that glass is stripped from the ray before we trust any physics result.
+        internal static void DumpLayers()
+        {
+            try
+            {
+                var sb = new System.Text.StringBuilder("[SODMotives][phys-los] layers ");
+                for (int i = 0; i < 32; i++)
+                { string nm = null; try { nm = LayerMask.LayerToName(i); } catch { } if (!string.IsNullOrEmpty(nm)) sb.Append(i).Append('=').Append(nm).Append(' '); }
+                int raw = 0; try { var tb = Toolbox.Instance; if (tb != null) raw = tb.sniperLOSMask; } catch { }
+                sb.Append("| sniperLOSMask=0x").Append(raw.ToString("X8")).Append(" RainWindowGlass=").Append(RainGlassLayer()).Append(" usedMask=0x").Append(SniperPhysMask().ToString("X8"));
+                MotivesPlugin.Log.LogInfo(sb.ToString());
+            }
+            catch { }
+        }
+
+        // True when nothing SOLID (non-glass, non-trigger) blocks the straight line strictly BETWEEN two window
+        // openings. Both ends are openings in open air just outside the glass, so we pull each end in by PhysEdge to
+        // avoid self-hitting the opening's own frame, and cap the ray just short of the far opening (we only care
+        // about what is IN BETWEEN, not the far wall). Component-wise math. Never throws.
+        private static bool PhysLosClearBetween(Vector3 a, Vector3 b, int mask)
+        {
+            try
+            {
+                float dist = Vector3.Distance(a, b);
+                if (dist < 0.2f) return true;                                   // effectively the same opening
+                if (dist > SniperMaxNestMeters + 6f) return false;             // never a long cross-city ray
+                float dx = (b.x - a.x) / dist, dy = (b.y - a.y) / dist, dz = (b.z - a.z) / dist;
+                var origin = new Vector3(a.x + dx * PhysEdge, a.y + dy * PhysEdge, a.z + dz * PhysEdge);
+                var dir = new Vector3(dx, dy, dz);
+                float maxD = dist - PhysEdge * 2f;                             // stop just before the far opening
+                if (maxD <= 0.1f) return true;
+                RaycastHit hit; bool got;
+                try { got = UnityEngine.Physics.Raycast(origin, dir, out hit, maxD, mask, QueryTriggerInteraction.Ignore); }
+                catch { return false; }
+                return !got;                                                    // no solid collider in between == clear line
+            }
+            catch { return false; }
+        }
+
+        // Cheap "is this area's geometry actually streamed in?" probe: cast straight DOWN from just above a point and
+        // require a floor hit. At case creation a site far from the player may not be loaded (no colliders), which
+        // would make every LOS ray falsely read "clear"; if the floor under the site isn't there we DON'T trust
+        // physics and let the case use the game default instead. Never throws.
+        private static bool SceneLoadedAt(Vector3 p, int mask)
+        {
+            try
+            {
+                var origin = new Vector3(p.x, p.y + 2.0f, p.z);
+                var down = new Vector3(0f, -1f, 0f);
+                RaycastHit hit; bool got;
+                try { got = UnityEngine.Physics.Raycast(origin, down, out hit, 10f, mask, QueryTriggerInteraction.Ignore); }
+                catch { return false; }
+                return got;
+            }
+            catch { return false; }
+        }
+
+        // The user's accessibility rule: a nest must be somewhere the KILLER can legitimately be -- a rooftop / public
+        // or common area (lobby, hallway, stairwell landing), OR an address the suspect has access to (their own home,
+        // their workplace, or a place they own). NOT a stranger's private flat or a locked business.
+        // The RELIABLE access signal is a NON-TRESPASS safe spot: killer.FindSafeTeleport(nl, false, allowTrespass:false)
+        // returns a node only where the killer can stand WITHOUT trespassing (public/common/owned) -- our own kidnap
+        // decode (docs/extensions/kidnap-abduction-handover.md) established that IsPublicallyOpen is NOT the walk-in
+        // signal (a walk-in-able unit read NPC_OPEN=false; access is gated by trespass). So we lead with the
+        // FindSafeTeleport test; home/owns/works are kept as definite-yes fast-paths. Out-params expose the reasons for
+        // diagnostics. All members probe-confirmed. FindSafeTeleport is the costlier call, so callers gate it behind the
+        // window/distance filters (only locations with an in-range window are ever tested).
+        private static bool KillerCanAccess(Human killer, NewGameLocation nl, out bool owned, out bool reach)
+        {
+            owned = false; reach = false;
+            try
+            {
+                if (nl == null) return false;
+                NewAddress addr = null; try { addr = nl.thisAsAddress; } catch { }
+                if (addr != null)
+                {
+                    try { var kh = killer != null ? killer.home : null; if (kh != null && kh.Pointer == addr.Pointer) owned = true; } catch { }
+                    if (!owned) try { var own = addr.owners; if (own != null) { int c = own.Count; for (int i = 0; i < c; i++) { var o = own[i]; if (o != null && killer != null && o.Pointer == killer.Pointer) { owned = true; break; } } } } catch { }
+                }
+                if (!owned) try { var j = killer != null ? killer.job : null; var e = j != null ? j.employer : null; var pob = e != null ? e.placeOfBusiness : null; if (pob != null && pob.Pointer == nl.Pointer) owned = true; } catch { }
+                if (owned) { reach = true; return true; }
+                try { reach = killer != null && killer.FindSafeTeleport(nl, false, false) != null; } catch { reach = false; }
+                return reach;
+            }
+            catch { return false; }
+        }
+
+        // Collect a location's WINDOW entrances (NodeAccess.accessType == window). openings = the world opening point
+        // (the aim/fire point); stands = the node on the 'inside' side (where the victim is exposed / the killer
+        // stands); walls = the window wall (what the killer travels to). Probe-confirmed NodeAccess members.
+        private static void CollectWindows(NewGameLocation loc, NewGameLocation inside, List<Vector3> openings, List<NewNode> stands, List<NewWall> walls, int cap)
+        {
+            try
+            {
+                var ents = loc != null ? loc.entrances : null;
+                if (ents == null) return;
+                int c = 0; try { c = ents.Count; } catch { }
+                for (int i = 0; i < c && openings.Count < cap; i++)
+                {
+                    NewNode.NodeAccess e = null; try { e = ents[i]; } catch { }
+                    if (e == null) continue;
+                    bool isWin = false; try { isWin = e.accessType == NewNode.NodeAccess.AccessType.window; } catch { }
+                    if (!isWin) continue;
+                    NewWall ww = null; try { ww = e.wall; } catch { }
+                    NewNode fn = null, tn = null; try { fn = e.fromNode; } catch { } try { tn = e.toNode; } catch { }
+                    NewNode stand = null;
+                    try { if (fn != null && inside != null && fn.gameLocation != null && fn.gameLocation.Pointer == inside.Pointer) stand = fn; } catch { }
+                    try { if (stand == null && tn != null && inside != null && tn.gameLocation != null && tn.gameLocation.Pointer == inside.Pointer) stand = tn; } catch { }
+                    if (stand == null) stand = fn != null ? fn : tn;
+                    Vector3 op = default; bool haveOp = false;
+                    try { op = e.worldAccessPoint; haveOp = true; } catch { }
+                    if (!haveOp && stand != null) { try { op = new Vector3(stand.position.x, stand.position.y + PhysBodyUp, stand.position.z); haveOp = true; } catch { } }
+                    if (!haveOp) continue;
+                    openings.Add(op); stands.Add(stand); walls.Add(ww);
+                }
+            }
+            catch { }
+        }
+
+        // Node-graph found no nest. Enumerate the site's own windows (aim points) and nearby ACCESSIBLE building
+        // windows (candidate nests), and pick the nest that physically overlooks the MOST of the site's windows.
+        // Window-opening-to-window-opening rays mirror the live fire gate and avoid threading interior furniture.
+        // Only pins a reachable, killer-accessible nest; logs the coverage so the success test is measurable.
+        private static bool PhysicsRescueNest(Human killer, NewGameLocation targetLoc, Vector3 refPos, NewGameLocation kh,
+            out NewWall bestWall, out float bestDist, out bool bestPublic, out List<NewNode> seenNodes)
+        {
+            bestWall = null; bestDist = float.MaxValue; bestPublic = false; seenNodes = null;
+            bool diag = false; try { diag = DebugTools.EnableDebugKeys; } catch { }
+            try
+            {
+                int mask = SniperPhysMask();
+                if (diag && !_physLayersDumped) { _physLayersDumped = true; DumpLayers(); }
+
+                // Bail if the site's geometry isn't streamed in (else every ray falsely reads "clear").
+                if (!SceneLoadedAt(refPos, mask))
+                { if (diag) MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los] {LName(targetLoc)}: site geometry not loaded at case time -> skip physics rescue (game default)."); return false; }
+
+                // 1) The SITE's own windows = the aim points (where the victim is exposed, and where we herd them).
+                var siteOpen = new List<Vector3>(); var siteStand = new List<NewNode>(); var siteWalls = new List<NewWall>();
+                CollectWindows(targetLoc, targetLoc, siteOpen, siteStand, siteWalls, PhysMaxSiteWindows);
+                if (siteOpen.Count == 0)
+                {
+                    // No enumerable windows (e.g. an open site): fall back to the site's nodes as aim points.
+                    try { var ns = targetLoc.nodes; if (ns != null) { int c = ns.Count; for (int i = 0; i < c && siteOpen.Count < PhysMaxSiteWindows; i++) { var n = ns[i]; if (n == null) continue; try { siteOpen.Add(new Vector3(n.position.x, n.position.y + PhysBodyUp, n.position.z)); siteStand.Add(n); } catch { } } } } catch { }
+                }
+                if (siteOpen.Count == 0) { if (diag) MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los] {LName(targetLoc)}: no site windows/nodes to aim at."); return false; }
+
+                // 2) Candidate NEST windows from nearby ACCESSIBLE addresses.
+                var nestWalls = new List<NewWall>(); var nestOpen = new List<Vector3>(); var nestNode = new List<NewNode>(); var nestPub = new List<bool>();
+                var nestSeen = new HashSet<System.IntPtr>();
+                int scanned = 0, accessible = 0, candLogged = 0;
+                _inNestScan = true;
+                try
+                {
+                    var cd = CityData.Instance; var dir = cd != null ? cd.gameLocationDirectory : null;
+                    int lc = 0; try { lc = dir != null ? dir.Count : 0; } catch { }
+                    for (int li = 0; li < lc && nestWalls.Count < PhysMaxNestWindows; li++)
+                    {
+                        NewGameLocation loc = null; try { loc = dir[li]; } catch { }
+                        if (loc == null) continue;
+                        try { if (loc.Pointer == targetLoc.Pointer) continue; } catch { }        // can't nest in the target itself
+                        NewNode an = null; try { an = loc.anchorNode; } catch { }
+                        if (an == null) continue;
+                        float ld; try { ld = Vector3.Distance(an.position, refPos); } catch { continue; }
+                        if (ld > SniperNestSearchMeters) continue;
+                        // Collect this location's windows FIRST and keep only those whose nest node is in range, so the
+                        // costlier access test (FindSafeTeleport) runs ONLY on locations that actually have a candidate
+                        // window near the site.
+                        var wOpen = new List<Vector3>(); var wStand = new List<NewNode>(); var wWall = new List<NewWall>();
+                        CollectWindows(loc, loc, wOpen, wStand, wWall, 16);
+                        int windowsInRange = 0;
+                        for (int wi = 0; wi < wStand.Count; wi++)
+                        { var n0 = wStand[wi]; if (n0 == null) continue; float d0; try { d0 = Vector3.Distance(n0.position, refPos); } catch { continue; } if (d0 <= SniperMaxNestMeters) windowsInRange++; }
+                        if (windowsInRange == 0) continue;
+                        scanned++;
+                        bool owned = false, reach = false, acc = false;
+                        try { acc = KillerCanAccess(killer, loc, out owned, out reach); } catch { owned = false; reach = false; acc = false; }
+                        if (diag && candLogged < 30)
+                        { candLogged++; MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los]   cand {LName(loc)} {ld:0}m windows-in-range={windowsInRange} owned={owned} reach={reach} -> {(acc ? "ACCEPT" : "reject (killer cannot access without trespass)")}"); }
+                        if (!acc) continue;
+                        accessible++;
+                        for (int wi = 0; wi < wWall.Count && nestWalls.Count < PhysMaxNestWindows; wi++)
+                        {
+                            var nn = wStand[wi]; var ww = wWall[wi]; if (nn == null || ww == null) continue;
+                            System.IntPtr np; try { np = nn.Pointer; } catch { continue; }
+                            float nd; try { nd = Vector3.Distance(nn.position, refPos); } catch { continue; }
+                            if (nd > SniperMaxNestMeters) continue;
+                            if (!nestSeen.Add(np)) continue;
+                            nestWalls.Add(ww); nestOpen.Add(wOpen[wi]); nestNode.Add(nn);
+                            bool pub = true; try { pub = kh == null || loc.Pointer != kh.Pointer; } catch { }
+                            nestPub.Add(pub);
+                        }
+                    }
+                }
+                catch (Exception ee) { if (diag) MotivesPlugin.Log.LogWarning($"[SODMotives][phys-los] enumerate err: {ee.Message}"); }
+                finally { _inNestScan = false; }
+
+                // 3) Score each candidate nest by how many SITE windows it physically overlooks (broadest wins).
+                int rays = 0, bestCover = 0; bool bestPrimary = false;
+                for (int ci = 0; ci < nestWalls.Count; ci++)
+                {
+                    var from = nestOpen[ci];
+                    int cover = 0; bool seesPrimary = false; var thisSeen = new List<NewNode>();
+                    for (int si = 0; si < siteOpen.Count; si++)
+                    {
+                        rays++;
+                        if (PhysLosClearBetween(from, siteOpen[si], mask))
+                        { cover++; if (si == 0) seesPrimary = true; var sn = siteStand[si]; if (sn != null && !thisSeen.Contains(sn)) thisSeen.Add(sn); }
+                    }
+                    if (cover < 1) continue;
+                    float d = float.MaxValue; try { d = Vector3.Distance(nestNode[ci].position, refPos); } catch { }
+                    bool pub = nestPub[ci];
+                    bool better = bestWall == null
+                        || (cover != bestCover ? cover > bestCover               // BROADEST overlook first (the user's criterion)
+                            : pub != bestPublic ? pub                            // then public/accessible over killer-home
+                            : seesPrimary != bestPrimary ? seesPrimary
+                            : d < bestDist);
+                    if (better)
+                    { bestWall = nestWalls[ci]; bestDist = d; bestPublic = pub; bestCover = cover; bestPrimary = seesPrimary; seenNodes = thisSeen; }
+                }
+
+                // (Reachability is already guaranteed: every accepted candidate location passed KillerCanAccess, which
+                //  requires the killer to own/work/live there OR to have a non-trespass safe spot there -- so the winning
+                //  nest's location is walk-reachable by construction. No separate winner re-check needed.)
+
+                if (diag)
+                    MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los] {LName(targetLoc)}: siteWindows={siteOpen.Count} nearScanned={scanned} accessibleLocs={accessible} nestWindows={nestWalls.Count} rays={rays} -> {(bestWall != null ? "PHYS-PICK " + LName(NestLoc(bestWall)) + " " + bestDist.ToString("0") + "m " + (bestPublic ? "public" : "killer-home") + " sees " + bestCover + "/" + siteOpen.Count + " site-windows" : "NONE (fall to game default)")}.");
+                return bestWall != null;
+            }
+            catch (Exception e) { if (diag) MotivesPlugin.Log.LogWarning($"[SODMotives][phys-los] {LName(targetLoc)} FATAL: {e.Message}"); return false; }
+        }
+
+        // Once the killer is IN POSITION at a physics-rescued nest, geometry is guaranteed loaded, so re-check that
+        // the nest still physically overlooks at least ONE of the site's windows. Guards against a selection-time
+        // false positive (a phantom un-loaded building between nest and site let the ray read clear); if the nest is
+        // actually blind, we release NOW instead of after the full stall. Window-based (not the victim's transient
+        // position), so a victim momentarily behind furniture never triggers a release. Never throws.
+        private static bool PhysNestStillOverlooksSite(NewGameLocation site)
+        {
+            try
+            {
+                if (_moNestWall == null || site == null) return true;   // nothing to check -> don't release
+                int mask = SniperPhysMask();
+                // Mirror the LIVE fire gate: origin = the killer's actual firing node (the game stamps action node =
+                // _moNestWall.node) raised to eye height; aim at the victim's BODY ANCHOR at each of the site's stand
+                // nodes (stand.position + torso), NOT the window opening -- an opening can be clear while the line to a
+                // body just inside it is blocked (that mismatch was the stall/false-release risk). We keep a second
+                // origin (the wall centre) purely so a marginal node-origin ray can't false-release a good pin. Release
+                // (return false) ONLY if blind to EVERY body anchor from EVERY origin.
+                var origins = new List<Vector3>();
+                try { var nn = _moNestWall.node; if (nn != null) origins.Add(new Vector3(nn.position.x, nn.position.y + PhysEyeUp, nn.position.z)); } catch { }
+                try { origins.Add(new Vector3(_moNestWall.position.x, _moNestWall.position.y + PhysEyeUp, _moNestWall.position.z)); } catch { }
+                if (origins.Count == 0) return true;
+                // Body-anchor aim points = the stand nodes just inside the site's windows (where the victim is exposed),
+                // else a sample of the site's nodes.
+                var siteOpen = new List<Vector3>(); var siteStand = new List<NewNode>(); var siteWalls = new List<NewWall>();
+                CollectWindows(site, site, siteOpen, siteStand, siteWalls, PhysMaxSiteWindows);
+                var aims = new List<Vector3>();
+                for (int i = 0; i < siteStand.Count; i++) { var n = siteStand[i]; if (n != null) { try { aims.Add(new Vector3(n.position.x, n.position.y + PhysBodyUp, n.position.z)); } catch { } } }
+                if (aims.Count == 0)
+                { try { var ns = site.nodes; if (ns != null) { int c = ns.Count; for (int i = 0; i < c && aims.Count < PhysMaxSiteWindows; i++) { var n = ns[i]; if (n != null) aims.Add(new Vector3(n.position.x, n.position.y + PhysBodyUp, n.position.z)); } } } catch { } }
+                if (aims.Count == 0) return true;   // can't enumerate site aim points -> don't release
+                for (int o = 0; o < origins.Count; o++)
+                    for (int i = 0; i < aims.Count; i++)
+                        if (PhysLosClearBetween(origins[o], aims[i], mask)) return true;
+                return false;
+            }
+            catch { return true; }
+        }
+
+        // Killer is standing at (within ~4m of) the current pinned nest node.
+        private static bool KillerAtNest(Human killer)
+        {
+            try
+            {
+                if (killer == null || _moNestWall == null) return false;
+                NewNode nn = _moNestWall.node; NewNode kn = killer.currentNode;
+                if (nn == null || kn == null) return false;
+                return Vector3.Distance(nn.position, kn.position) <= 4f;
             }
             catch { return false; }
         }
@@ -508,11 +867,13 @@ namespace SODMotives
         {
             _moSniperKiller = killer; _moSniperVictim = victim;
             _moNestWall = null; _moNestSitePtr = System.IntPtr.Zero;
+            _moNestPhys = false; _moNestRevalidated = false;   // physics-pin flags share the nest's single-active-case lifecycle
         }
         internal static void ClearActiveMotivatedSniper()
         {
             _moSniperKiller = null; _moSniperVictim = null;
             _moNestWall = null; _moNestSitePtr = System.IntPtr.Zero;
+            _moNestPhys = false; _moNestRevalidated = false;
         }
 
         // The nest for the vantage-solver postfix to force -- ONLY for our active motivated sniper's ONE pinned local
@@ -797,6 +1158,7 @@ namespace SODMotives
                             _sniperPin[vid] = pin; _sniperPinSince[vid] = NowHours();
                             if (herdNodes != null && herdNodes.Count > 0) _sniperWander[vid] = herdNodes;   // the nodes the nest can see -- victim wanders among them
                             _moNestWall = nestWall; _moNestSitePtr = pin.Pointer;   // pre-warm the postfix cache so the killer travels to OUR verified nest
+                            _moNestPhys = _lastNestWasPhysics; _moNestRevalidated = false;   // physics-rescued pins get re-validated once the killer arrives
                             MotivesPlugin.Log.LogInfo($"[SODMotives][sniper] pinned LOCAL site {LName(pin)} (a public nest with a verified shot overlooks the victim's home/work) for {MotivesPlugin.Name(killer)} -> {MotivesPlugin.Name(victim)}; killer travels to the nest, releases to the game's default if it stalls ({SniperPinStallHours:0.#}h).");
                         }
                         else
@@ -814,16 +1176,31 @@ namespace SODMotives
                         {
                             ClearVictimSniperSiteGoal(victim, pinned);            // un-pin the victim (shot fired / resolving)
                             _sniperPin.Remove(vid); _sniperPinSince.Remove(vid); _sniperWander.Remove(vid); _sniperHerdNode.Remove(vid); _sniperWanderPick.Remove(vid);   // fired/resolved at the local site -- done
+                            _moNestPhys = false;
                         }
                         else if (NowHours() - (_sniperPinSince.TryGetValue(vid, out var since) ? since : NowHours()) >= SniperPinStallHours)
                         {
                             ClearVictimSniperSiteGoal(victim, pinned);            // un-pin so the victim resumes routine + can reach the default site
                             _sniperPin.Remove(vid); _sniperPinSince.Remove(vid); _sniperWander.Remove(vid); _sniperHerdNode.Remove(vid); _sniperWanderPick.Remove(vid);
+                            _moNestPhys = false;
                             MotivesPlugin.Log.LogInfo($"[SODMotives][sniper] local pin {LName(pinned)} stalled {SniperPinStallHours:0.#}h without a shot -> releasing to the game's default site.");
+                            SeedSniperDefault(murder, killer, victim);
+                        }
+                        else if (_moNestPhys && !_moNestRevalidated && _moNestWall != null && _moNestSitePtr == pinned.Pointer
+                                 && KillerAtNest(killer) && !PhysNestStillOverlooksSite(pinned))
+                        {
+                            // Physics pin, killer now IN POSITION, geometry loaded, yet the nest is actually blind to
+                            // the site (a selection-time streaming false positive) -> release NOW, not after the stall.
+                            _moNestRevalidated = true;
+                            ClearVictimSniperSiteGoal(victim, pinned);
+                            _sniperPin.Remove(vid); _sniperPinSince.Remove(vid); _sniperWander.Remove(vid); _sniperHerdNode.Remove(vid); _sniperWanderPick.Remove(vid);
+                            _moNestPhys = false;
+                            MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los] killer reached {LName(NestLoc(_moNestWall))} but it has NO physics line to {LName(pinned)}'s windows (streaming false positive) -> releasing to the game's default site.");
                             SeedSniperDefault(murder, killer, victim);
                         }
                         else
                         {
+                            if (_moNestPhys && !_moNestRevalidated && KillerAtNest(killer)) _moNestRevalidated = true;   // in position + still overlooks -> validated, don't re-check
                             // Keep the pin alive: re-assert the site so the game's state-4 dwell timeout can't re-target it
                             // to the global rooftop, and HERD the victim to the SPECIFIC node the nest can see (not an
                             // arbitrary spot -- that froze them away from the nest's sightline last time). Walking them into

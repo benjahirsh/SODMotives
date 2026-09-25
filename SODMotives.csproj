@@ -32,6 +32,12 @@
     <Reference Include="$(GameDir)\BepInEx\interop\*.dll" Private="false" />
   </ItemGroup>
 
+  <!-- reflect1.cs is a standalone dev-only reflection probe (its own Main, needs the MetadataLoadContext
+       package); it must not compile into the plugin assembly. -->
+  <ItemGroup>
+    <Compile Remove="reflect1.cs" />
+  </ItemGroup>
+
   <!-- Deploy the built plugin straight into the game's plugins folder -->
   <Target Name="DeployToGame" AfterTargets="Build">
     <MakeDir Directories="$(PluginsDir)" />

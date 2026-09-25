@@ -10,7 +10,64 @@ ExCop's target pool is commute/street/public (never the home); there is no give-
 raycast, not the (randomized, setup-time) solver our probe used. The mimic fix is a selection-time viability
 filter, not a site pin. Read that doc before touching the override.
 
-## ⭐⭐ CURRENT STATE (2026-09-25 latest — RESUME HERE) — BETTER NEST CALC built, awaiting playtest, on `sniper-wip` LOCAL/uncommitted
+## ⭐⭐⭐ CURRENT STATE (2026-09-26 — RESUME HERE) — PHYSICS-LOS NEST RESCUE built + committed, awaiting overnight playtest, on `sniper-wip`
+
+Two commits on `sniper-wip`:
+- **`b804917` = RESTORE POINT** — the working node-graph nest picker (local-nest pin + two-tier herd/wander at 3.5m
+  radius, reject-cover=0, F9 nest pane). This is the "best we've got" fallback; `SniperPhysicsLosNest=false`
+  reproduces it byte-for-byte.
+- **`a155c47` = PHYSICS-LOS RESCUE** (experimental, `[Troubleshooting] SniperPhysicsLosNest`, default ON).
+
+**Why:** node-graph LOS (`NodeRaycast`) is blind to a real overlook across a park / on another building side / a
+few floors up (the Laster's Management case: every node-graph candidate scored `cover=0`, so it fell to Mingo). The
+live fire gate is a `UnityEngine.Physics` ray, so when Stage 1 (node-graph) finds NO nest, **Stage 2** falls back to
+a physics raycast that mirrors the gate.
+
+**Design (all interop members reflection-probe-verified — a scratch MetadataLoadContext probe; that is why it built
+first try):**
+- Mask = the game's own **`Toolbox.sniperLOSMask`** with the `RainWindowGlass` bit stripped (single closest-hit
+  `Physics.Raycast` then passes through glass). `Vector3` operators are NOT exposed by this interop build, so all
+  vector math is component-wise (`new Vector3(...)` + `Vector3.Distance`).
+- Aims **window-opening → window-opening** (`NodeAccess.worldAccessPoint`): scores each candidate nest by how many of
+  the SITE's own windows it physically overlooks, pins the **BROADEST** overlook (Plaza-Orchid-landing-sees-many-ward-
+  windows beats single-window Lovelace). This is the semantic fix an adversarial review caught: raying to an interior
+  node would thread furniture and reject the very window it exists to find.
+- **Accessibility (user requirement):** a candidate nest must be somewhere the killer can legitimately be. Uses
+  `killer.FindSafeTeleport(loc, false, allowTrespass:false) != null` as the reliable non-trespass signal (our kidnap
+  decode established `IsPublicallyOpen` is NOT the walk-in gate), plus own/home/work fast-paths. Strangers' private
+  flats / locked businesses excluded. Per-candidate accept/reject logged.
+- **Safety:** runs ONLY when Stage 1 found nothing (working cases untouched, zero rays); bails if site geometry not
+  streamed in (`SceneLoadedAt` floor probe); one-shot arrival re-validation (fire-gate mirror: killer node → victim
+  body anchors) releases a blind pin to the game default immediately instead of after the stall; `SniperPinStallHours`
+  backstop still bounds everything. Never crashes/hangs/regresses (verified by a 4-lens adversarial pass + lead triage).
+- **Observability:** with `EnableDebugKeys` on, a NON-adopting `[phys-los][compare]` line logs what physics WOULD pick
+  on cases the node-graph already handled (e.g. Daffodil Ward), so the physics-vs-node-graph choice is visible without
+  risking a working pick.
+
+**OVERNIGHT TEST PLAN (turn EnableDebugKeys ON):**
+1. First motivated sniper case: confirm the one-time `[phys-los] layers ... sniperLOSMask=0x... RainWindowGlass=<n>
+   usedMask=0x...` line. **RainWindowGlass must be a real index (not -1)**; if -1, glass isn't its own layer and
+   physics rays read conservatively (some overlooks missed, never a false clear).
+2. **Daffodil Ward (the A/B):** it is the node-graph-WORKING case, so Stage 2 is skipped; look for the
+   `[phys-los][compare] node-graph PICK <Lovelace...> cover=X vs physics-would-pick <Plaza Orchid...> sees K
+   site-windows` line. Success = physics-would-pick sees MORE ward windows (the Plaza Orchid 5th-floor landing).
+3. **Laster's-type case** (node-graph found nothing): look for `[phys-los] ... -> PHYS-PICK <loc> sees K/N
+   site-windows` and the killer travelling there + a clean shot. `-> NONE (fall to game default)` with
+   `accessibleLocs=0`/`nestWindows=0` means the access filter or distance cap excluded the target (the per-`cand`
+   lines show why).
+4. Watch for new bounded stalls: a physics pin the killer reaches but can't fire from should log the arrival-release
+   line, not sit 8h. Confirm nothing hangs beyond `SniperPinStallHours`.
+
+**IF PHYSICS FINDS BROAD OVERLOKS RELIABLY (next step, user's plan):** flip Stage 2 to ADOPT a physics pick when its
+coverage clearly beats the node-graph pick, then **strip the herd/wander** — a broad overlook means the victim's
+NATURAL routine past a covered window exposes them (vanilla model), so herding becomes unnecessary. Tune
+`SniperMaxNestMeters` from the logged Lovelace/Plaza-Orchid distances (a cross-park overlook may exceed 55m).
+
+**IF IT MISBEHAVES:** set `[Troubleshooting] SniperPhysicsLosNest=false` (no rebuild) to fall back to `b804917`.
+
+Older state (the node-graph "better nest calc") is below, kept for context.
+
+## ⭐⭐ CURRENT STATE (2026-09-25 latest) — BETTER NEST CALC built (now the RESTORE POINT b804917), on `sniper-wip`
 Full IL2CPP decode (2 workflows) is written up in `docs/extensions/sniper-nest-decode.md`. Load that first. Key
 confirmed facts:
 - The sniper NEST is NOT a settable field: the game re-derives it every `NewAIAction.OnActivate` by calling

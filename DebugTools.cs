@@ -430,7 +430,6 @@ namespace SODMotives
         // scheduler (confirmed in-game), so the forcing is done in Patch_ExecuteNewMurder_Override's prefix via the
         // ref MO param (which IS honored) — it sets motive=ExCopSniper WITHOUT swapping the pair. Pair with
         // [Motive Mix] MotivatedSniperShare=0 so the motive override leaves it a pure vanilla ExCopSniper.
-        internal static bool ForceVanillaSniperMO = false;
 
         // F6: cycle which SPECIFIC event type the NEXT murder is forced to (finer than the old motive-type
         // cycle — Layoffs vs Promotion, Eviction vs RentArrears vs Debt are now separable). The filter is

@@ -143,27 +143,6 @@ namespace SODMotives
             BindApply("Troubleshooting", "WaitLocationStallHours", 12f,
                 "In-game hours a mod case may sit stalled in 'waitForLocation' (no seatable location — e.g. a kidnap with no valid holding den) before the watchdog CANCELS it so it can't hang the case indefinitely. A one-time IsValidLocation den probe is logged the moment it stalls.",
                 v => MurderWatchdog.WaitLocationStallHours = v);
-            BindApply("Troubleshooting", "SniperPinStallHours", 30f,
-                "ABSOLUTE backstop (in-game hours) for holding a pinned local sniper nest before giving up to the game's default site. Normally the case gives up automatically when the victim's WORK SHIFT starts and ends without a shot (tied to their real schedule); this cap only catches odd cases (e.g. a victim who never has a shift). Generous by default so a normal shift plays out first.",
-                v => MurderWatchdog.SniperPinStallHours = v);
-            BindApply("Troubleshooting", "SniperPhysicsAdopt", false,
-                "When ON, if the physics-LOS pass finds a clearly BROAD overlook (sees several of the site's windows), the killer ADOPTS it instead of the node-graph nest pick -- this is what makes the shooter actually use an elevated cross-street nest (e.g. a hotel landing overlooking a ward) rather than the game's narrower default. OFF (default) = keep the node-graph pick and only log what physics would have chosen. Turn on to test whether a physics-picked nest fires end-to-end.",
-                v => MurderWatchdog.SniperPhysicsAdopt = v);
-            BindApply("Troubleshooting", "SniperNestAllowSameBuilding", false,
-                "Allow a sniper nest in the SAME building as the victim's site (a different floor). Off (default) = a nest must be in a different building (a shot across the street), never another floor of the victim's own building. Affects both the node-graph and physics-LOS nest pickers.",
-                v => MurderWatchdog.SniperNestAllowSameBuilding = v);
-            BindApply("Troubleshooting", "SniperMinNestFloor", 1,
-                "Minimum building floor (NewNode.floor.floor; 0 = ground/street level) for a physics-LOS sniper nest -- a sniper fires from at least a first-story window or rooftop, never a street-side pavement or the ground. Candidate nest windows below this floor are rejected. (1 = first story; 0 allows ground level.) Only affects the physics-LOS rescue's self-enumerated nests.",
-                v => MurderWatchdog.SniperMinNestFloor = v);
-            BindApply("Troubleshooting", "SniperMaxNestMeters", 55f,
-                "Max distance (metres) a pinned LOCAL sniper nest may sit from its target site. The game's vantage solver over-reports and will offer the city's dominant rooftop as a 'vantage' over a site two blocks away (a nonsensical cross-city shot that never lines up). A genuine overlooking nest is across a street, so pins whose nest is farther than this are rejected and the case uses the game's default site instead. Raise it to allow longer shots, lower it to be stricter.",
-                v => MurderWatchdog.SniperMaxNestMeters = v);
-            BindApply("Troubleshooting", "SniperForceLosNest", true,
-                "Fix wrong-window sniper shots. The game's vantage solver scores windows with a random term and can send the killer to a window facing the wrong way with no real line of sight (he then sits there and never fires). With this ON, for a motivated sniper the mod re-checks candidate windows for the chosen site and forces the killer to one with a VERIFIED clear line of sight to where the victim will stand, preferring the closest (a believable across-the-street nest). Off = use the game's own window pick. Only affects motivated sniper cases; vanilla snipers are untouched.",
-                v => MurderWatchdog.SniperForceLosNest = v);
-            BindApply("Troubleshooting", "SniperPhysicsLosNest", true,
-                "Physics line-of-sight nest RESCUE (experimental). The node-graph vantage check the mod uses to pick a motivated sniper's nest only registers windows a site DIRECTLY faces; it is blind to a window that overlooks the site across a park, from a different building side, or a few floors up (so those cases fall back to the game's dominant rooftop). When the node-graph picker finds NO nest for the site, this falls back to a UnityEngine.Physics raycast (mirroring the game's live fire gate, window glass transparent) over nearby self-enumerated ACCESSIBLE windows (rooftops, public/common areas, or somewhere the killer has access -- never a stranger's private flat), and pins the one that physically overlooks the most of the site's own windows. Only runs when the node-graph picker found nothing, so cases that already work are untouched; if the site's geometry isn't loaded, the glass layer is absent, or the killer can't reach the nest, it contributes nothing and the case uses the game default. OFF = node-graph only (the previous behaviour). Only affects motivated sniper cases; vanilla snipers untouched.",
-                v => MurderWatchdog.SniperPhysicsLosNest = v);
             BindApply("Troubleshooting", "ForceVictimWorkplace", "",
                 "DEV/TEST: when non-empty, motivated cases only target a victim who WORKS at a place whose name contains this text (case-insensitive) -- e.g. set it to 'Daffodil Ward' and press F3 to force ward-employee sniper victims and reproduce the ward -> Lovelace-window shot. Empty = normal victim selection.",
                 v => DebugTools.ForceVictimWorkplace = v);
@@ -185,9 +164,6 @@ namespace SODMotives
             BindApply("Troubleshooting", "FastMurderCadence", false,
                 "TESTING: force the pause between murders to 0 so cases chain back-to-back with no gap. NOTE: this only compresses the wait BETWEEN murders — it does not speed the current murder's planning/enactment, and it does NOT force a sniper/kidnap case (those are picked by the game and can't be forced without a dev trigger). Leave false for normal play; restores the original cadence when turned off.",
                 v => DebugTools.FastMurderCadence = v);
-            BindApply("Troubleshooting", "ForceVanillaSniperMO", false,
-                "TESTING (dev): force the game's OWN next scheduled SNIPER to use the street MO (ExCopSniper), which the game rarely picks on its own, WITHOUT swapping the pair — so it stays a pure VANILLA ExCopSniper on the game's own pair, to observe. (Forced via the ExecuteNewMurder prefix's MO param; the game's debugMO field is not honored.) Needs the sandbox 'Sniper cases' type ON. Leave false for normal play.",
-                v => DebugTools.ForceVanillaSniperMO = v);
 
             // --- Debug (developer tooling) ---
             BindApply("Debug", "EnableDebugKeys", false,
@@ -588,20 +564,6 @@ namespace SODMotives
     {
         static void Prefix(MurderController __instance, ref Human newMurderer, ref Human newVictim, MurderPreset preset, ref MurderMO motive, ref NewGameLocation victimSite)
         {
-            // DEV: force the game's OWN next sniper to use ExCopSniper so we can observe a VANILLA one (the game's
-            // debugMurderPreset/debugMO fields are NOT honored by the scheduler; this ref param IS — it's how the
-            // fix-v2 MO-swap worked). We set the MO but DON'T swap the pair, so it stays a vanilla ExCopSniper on
-            // the game's own pair. Pair with MotivatedSniperShare=0 so the motive override below leaves it alone.
-            if (DebugTools.ForceVanillaSniperMO && preset != null && preset.caseType == MurderPreset.CaseType.sniper)
-            {
-                try
-                {
-                    var ex = MurderWatchdog.SniperMO(false);
-                    if (ex != null) { motive = ex; MotivesPlugin.Log.LogInfo($"[SODMotives] FORCE VANILLA ExCopSniper: MO -> {ex.name} on the game's OWN pair {MotivesPlugin.Name(newMurderer)} -> {MotivesPlugin.Name(newVictim)} (pair NOT swapped)."); }
-                }
-                catch { }
-                return;
-            }
             if (!MurderSelector.EnableOverride) return;
             // Only touch ordinary generated (proc-gen sandbox) MURDERS. Special case
             // types (kidnap, sniper) and cover-ups/story are left entirely to the game

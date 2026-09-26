@@ -77,12 +77,14 @@ namespace SODMotives
         // sites score far below the global best, so the game would never pick them on its own; a set sniperVictimSite
         // is honoured, so pinning holds. If a (solver false-positive) pin never fires, we RELEASE to the game's own
         // default after SniperPinStallHours so it can't hang.
-        internal static float SniperPinStallHours = 8f;
-        // If a pinned case is still in waitForLocation after this many in-game hours, the VICTIM never reached the
-        // pinned site (e.g. a workplace they can't enter off-shift, or a node the herd can't path into) -- the case
-        // would otherwise sit frozen until SniperPinStallHours. Release to the game default EARLY instead. Much shorter
-        // than SniperPinStallHours because a reachable site is reached in minutes; hours of waitForLocation = unreachable.
-        internal static float SniperVictimReachHours = 3f;
+        // Once the victim is AT the pinned site (their shift has started), how many in-game hours to allow for the shot
+        // before giving up and releasing to the game default. Covers a shift's worth of the victim wandering the windows;
+        // if the nest still cannot line up the kill in that time, it is a bad nest.
+        internal static float SniperPinStallHours = 4f;
+        // Max in-game hours to WAIT for an off-shift victim to first reach the pinned site (their workplace opens on
+        // their shift; the locked workplace can't be herded into, so we wait for their natural routine). Generous
+        // (covers a day) so a normal shift occurs; if they never show (days off), give up to the game default.
+        internal static float SniperVictimReachHours = 30f;
         // Minimum building floor for a self-enumerated PHYSICS nest (NewNode.floor.floor; 0 = ground/street). A sniper
         // fires from at least a first-story window / rooftop, never a street-side pavement. (NewNode.floorHeight is a
         // different field that reads 0 everywhere -- floor.floor is the real story index.) 1 = first story; 0 allows ground.
@@ -97,6 +99,8 @@ namespace SODMotives
         internal static float SniperNestSearchMeters = 110f;
         private static readonly Dictionary<int, NewGameLocation> _sniperPin = new Dictionary<int, NewGameLocation>();   // victimId -> pinned local site
         private static readonly Dictionary<int, float> _sniperPinSince = new Dictionary<int, float>();                  // victimId -> gameTime the pin was set
+        private static readonly HashSet<int> _sniperReachedSite = new HashSet<int>();                                   // victimId -> the victim has been AT the pinned site (their shift started)
+        private static readonly Dictionary<int, float> _sniperReachedAt = new Dictionary<int, float>();                 // victimId -> gameTime they first reached the site
         private static readonly HashSet<int> _sniperHerdLogged = new HashSet<int>();                                    // victims we've logged the herd for (once each)
         private static readonly Dictionary<int, List<NewNode>> _sniperWander = new Dictionary<int, List<NewNode>>();      // victimId -> the site nodes the pinned nest can see (victim wanders among them, in the sightline)
         private static readonly Dictionary<int, System.IntPtr> _sniperHerdNode = new Dictionary<int, System.IntPtr>();   // victimId -> the wander node currently herded to (to detect when to re-issue the walk goal)
@@ -182,6 +186,7 @@ namespace SODMotives
             _liveVid = -1; _liveLastLogH = -999f; _liveCount = 0;
             _sniperObserved.Clear(); _sniperLiveVid = -1; _sniperLiveLastLogH = -999f; _sniperLiveCount = 0;
             _sniperSeeded.Clear(); _sniperPin.Clear(); _sniperPinSince.Clear(); _sniperHerdLogged.Clear(); _sniperWander.Clear(); _sniperHerdNode.Clear(); _sniperWanderPick.Clear();
+            _sniperReachedSite.Clear(); _sniperReachedAt.Clear();
             _physLayersDumped = false; _rainGlassLayer = int.MinValue; _lastNestWasPhysics = false; _moNestPhys = false; _moNestRevalidated = false;
             ClearActiveMotivatedSniper();
             _ransomTried.Clear(); _killTimeReasserted.Clear();
@@ -1239,80 +1244,79 @@ namespace SODMotives
                             || murder.state == MurderController.MurderState.post
                             || murder.state == MurderController.MurderState.escaping
                             || murder.state == MurderController.MurderState.unsolved;
+
+                        // Is the victim AT the pinned site right now (on shift)? Their access-controlled workplace is
+                        // LOCKED off-shift, so the herd CANNOT drag them in -- we WAIT for their natural shift instead.
+                        bool atSite = false; try { var vl = victim.currentGameLocation; atSite = vl != null && vl.Pointer == pinned.Pointer; } catch { }
+                        if (atSite && _sniperReachedSite.Add(vid)) _sniperReachedAt[vid] = NowHours();
+                        bool reached = _sniperReachedSite.Contains(vid);
+                        float pinSince = _sniperPinSince.TryGetValue(vid, out var ps) ? ps : NowHours();
+                        // Give-up conditions (release to the game's own default site -- vanilla -- NOT a frozen pin):
+                        //  - physBlind: killer in position but the nest turns out blind (streaming false positive).
+                        //  - onSiteTooLong: the victim came to the site (shift started) but no shot within a shift's worth
+                        //    of time (SniperPinStallHours) -> the nest cannot line up the kill.
+                        //  - neverShowed: the victim never reached the site within SniperVictimReachHours (off the whole
+                        //    time / on days off) -> stop waiting.
+                        bool physBlind = _moNestPhys && !_moNestRevalidated && _moNestWall != null && _moNestSitePtr == pinned.Pointer
+                                         && KillerAtNest(killer) && !PhysNestStillOverlooksSite(pinned);
+                        bool onSiteTooLong = reached && NowHours() - (_sniperReachedAt.TryGetValue(vid, out var ra) ? ra : NowHours()) >= SniperPinStallHours;
+                        bool neverShowed = !reached && NowHours() - pinSince >= SniperVictimReachHours;
+
                         if (resolved)
                         {
                             ClearVictimSniperSiteGoal(victim, pinned);            // un-pin the victim (shot fired / resolving)
-                            _sniperPin.Remove(vid); _sniperPinSince.Remove(vid); _sniperWander.Remove(vid); _sniperHerdNode.Remove(vid); _sniperWanderPick.Remove(vid);   // fired/resolved at the local site -- done
-                            _moNestPhys = false;
-                        }
-                        else if (murder.state == MurderController.MurderState.waitForLocation
-                                 && NowHours() - (_sniperPinSince.TryGetValue(vid, out var vsince) ? vsince : NowHours()) >= SniperVictimReachHours)
-                        {
-                            // Victim never reached the pinned site (still waitForLocation after SniperVictimReachHours):
-                            // the herd can't get them there (restricted workplace off-shift / unreachable node). Don't
-                            // let them sit frozen for the full stall -- un-pin (resume routine) and use the game default.
-                            ClearVictimSniperSiteGoal(victim, pinned);
                             _sniperPin.Remove(vid); _sniperPinSince.Remove(vid); _sniperWander.Remove(vid); _sniperHerdNode.Remove(vid); _sniperWanderPick.Remove(vid);
-                            _moNestPhys = false;
-                            MotivesPlugin.Log.LogInfo($"[SODMotives][sniper] victim never reached pinned site {LName(pinned)} within {SniperVictimReachHours:0.#}h (still waitForLocation) -> releasing to the game's default site.");
-                            SeedSniperDefault(murder, killer, victim);
+                            _sniperReachedSite.Remove(vid); _sniperReachedAt.Remove(vid); _moNestPhys = false;
                         }
-                        else if (NowHours() - (_sniperPinSince.TryGetValue(vid, out var since) ? since : NowHours()) >= SniperPinStallHours)
+                        else if (physBlind || onSiteTooLong || neverShowed)
                         {
-                            ClearVictimSniperSiteGoal(victim, pinned);            // un-pin so the victim resumes routine + can reach the default site
-                            _sniperPin.Remove(vid); _sniperPinSince.Remove(vid); _sniperWander.Remove(vid); _sniperHerdNode.Remove(vid); _sniperWanderPick.Remove(vid);
-                            _moNestPhys = false;
-                            MotivesPlugin.Log.LogInfo($"[SODMotives][sniper] local pin {LName(pinned)} stalled {SniperPinStallHours:0.#}h without a shot -> releasing to the game's default site.");
-                            SeedSniperDefault(murder, killer, victim);
-                        }
-                        else if (_moNestPhys && !_moNestRevalidated && _moNestWall != null && _moNestSitePtr == pinned.Pointer
-                                 && KillerAtNest(killer) && !PhysNestStillOverlooksSite(pinned))
-                        {
-                            // Physics pin, killer now IN POSITION, geometry loaded, yet the nest is actually blind to
-                            // the site (a selection-time streaming false positive) -> release NOW, not after the stall.
                             _moNestRevalidated = true;
                             ClearVictimSniperSiteGoal(victim, pinned);
                             _sniperPin.Remove(vid); _sniperPinSince.Remove(vid); _sniperWander.Remove(vid); _sniperHerdNode.Remove(vid); _sniperWanderPick.Remove(vid);
-                            _moNestPhys = false;
-                            MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los] killer reached {LName(NestLoc(_moNestWall))} but it has NO physics line to {LName(pinned)}'s windows (streaming false positive) -> releasing to the game's default site.");
+                            _sniperReachedSite.Remove(vid); _sniperReachedAt.Remove(vid); _moNestPhys = false;
+                            string why = physBlind ? $"killer reached {LName(NestLoc(_moNestWall))} but it has NO physics line to {LName(pinned)} (streaming false positive)"
+                                       : onSiteTooLong ? $"victim was at {LName(pinned)} for {SniperPinStallHours:0.#}h without a shot (nest cannot line up the kill)"
+                                       : $"victim never reached {LName(pinned)} within {SniperVictimReachHours:0.#}h (off-shift the whole time)";
+                            MotivesPlugin.Log.LogInfo($"[SODMotives][sniper] {why} -> releasing to the game's default site.");
                             SeedSniperDefault(murder, killer, victim);
                         }
                         else
                         {
-                            if (_moNestPhys && !_moNestRevalidated && KillerAtNest(killer)) _moNestRevalidated = true;   // in position + still overlooks -> validated, don't re-check
-                            // Keep the pin alive: re-assert the site so the game's state-4 dwell timeout can't re-target it
-                            // to the global rooftop, and HERD the victim to the SPECIFIC node the nest can see (not an
-                            // arbitrary spot -- that froze them away from the nest's sightline last time). Walking them into
-                            // the window the killer is aimed at is the fix that works WITH the node-graph LOS instead of
-                            // needing a nest that sees their natural spot.
+                            if (_moNestPhys && !_moNestRevalidated && KillerAtNest(killer)) _moNestRevalidated = true;   // in position + still overlooks -> validated
+                            // Re-assert the site so the game's state-4 dwell timeout can't re-target it to the global rooftop.
                             try { var cur = murder.sniperVictimSite; if (cur == null || cur.Pointer != pinned.Pointer) murder.sniperVictimSite = pinned; } catch { }
-                            // Wander target: rotate through the nest's visible nodes (~every 3 game-min) so the victim walks
-                            // between in-sightline spots and eventually stands where the physics shot is actually clear.
-                            // Wander target (two-tier). There are usually only ~2 window nodes with LOS, so a flat
-                            // random pick just paces a straight A<->B line -- and if that line is furniture-blocked the
-                            // physics shot never clears. Instead: a COARSE ~30s bucket picks an anchor window; within it
-                            // a FINE ~10s bucket jitters among the nodes NEAR that anchor (<=7m). So the victim wanders
-                            // AROUND one window for ~30s (stepping into physics-clear spots the node-graph missed), then
-                            // switches to the other. Anchor stable within the coarse bucket so the walk actually settles.
-                            NewNode herd = null;
-                            if (_sniperWander.TryGetValue(vid, out var wl) && wl != null && wl.Count > 0)
+                            if (atSite)
                             {
-                                int coarse = (int)(NowHours() / 0.00833f);   // ~30 game-sec: which window
-                                int fine = (int)(NowHours() / 0.00417f);     // ~15 game-sec: jitter around it (a bit calmer)
-                                if (!_sniperWanderPick.TryGetValue(vid, out var pick) || pick.Key != fine || pick.Value == null)
+                                // ON SHIFT (victim at the site): HERD them to WANDER the nest's sightline so a clear physics
+                                // shot lines up. Two-tier: a COARSE ~30s bucket picks an anchor window; a FINE ~15s bucket
+                                // jitters among the nodes near it (<=3.5m), so they wander AROUND a window then switch.
+                                NewNode herd = null;
+                                if (_sniperWander.TryGetValue(vid, out var wl) && wl != null && wl.Count > 0)
                                 {
-                                    // pick a stable anchor for the coarse bucket, then a nearby node for the fine bucket
-                                    var anchor = wl[Math.Abs(coarse) % wl.Count];
-                                    var nearby = new List<NewNode>();
-                                    for (int k = 0; k < wl.Count; k++)
-                                    { try { if (wl[k] != null && Vector3.Distance(wl[k].position, anchor.position) <= 3.5f) nearby.Add(wl[k]); } catch { } }
-                                    if (nearby.Count == 0) nearby.Add(anchor);
-                                    pick = new KeyValuePair<int, NewNode>(fine, nearby[_sniperRng.Next(nearby.Count)]);
-                                    _sniperWanderPick[vid] = pick;
+                                    int coarse = (int)(NowHours() / 0.00833f);   // ~30 game-sec: which window
+                                    int fine = (int)(NowHours() / 0.00417f);     // ~15 game-sec: jitter around it
+                                    if (!_sniperWanderPick.TryGetValue(vid, out var pick) || pick.Key != fine || pick.Value == null)
+                                    {
+                                        var anchor = wl[Math.Abs(coarse) % wl.Count];
+                                        var nearby = new List<NewNode>();
+                                        for (int k = 0; k < wl.Count; k++)
+                                        { try { if (wl[k] != null && Vector3.Distance(wl[k].position, anchor.position) <= 3.5f) nearby.Add(wl[k]); } catch { } }
+                                        if (nearby.Count == 0) nearby.Add(anchor);
+                                        pick = new KeyValuePair<int, NewNode>(fine, nearby[_sniperRng.Next(nearby.Count)]);
+                                        _sniperWanderPick[vid] = pick;
+                                    }
+                                    herd = pick.Value;
                                 }
-                                herd = pick.Value;
+                                EnsureVictimSniperSiteGoal(victim, pinned, herd, murder, vid);
                             }
-                            EnsureVictimSniperSiteGoal(victim, pinned, herd, murder, vid);
+                            else if (reached)
+                            {
+                                // OFF SHIFT after having been on it: do NOT herd -- the locked workplace can't be pathed
+                                // into, and a forced goal just freezes the victim. Drop any herd goal so they resume their
+                                // routine (their next shift brings them back; the game's waitForLocation holds until then).
+                                ClearVictimSniperSiteGoal(victim, pinned);
+                            }
+                            // (never reached yet: no herd goal was ever created, so nothing to clear -- just wait.)
                         }
                     }
                     return;   // snipers defer entirely to the game; skip the kidnap-oriented interventions below

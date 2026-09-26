@@ -817,28 +817,18 @@ namespace SODMotives
             {
                 if (_moNestWall == null || site == null) return true;   // nothing to check -> don't release
                 int mask = SniperPhysMask();
-                // Mirror the LIVE fire gate: origin = the killer's actual firing node (the game stamps action node =
-                // _moNestWall.node) raised to eye height; aim at the victim's BODY ANCHOR at each of the site's stand
-                // nodes (stand.position + torso), NOT the window opening -- an opening can be clear while the line to a
-                // body just inside it is blocked (that mismatch was the stall/false-release risk). We keep a second
-                // origin (the wall centre) purely so a marginal node-origin ray can't false-release a good pin. Release
-                // (return false) ONLY if blind to EVERY body anchor from EVERY origin.
-                var origins = new List<Vector3>();
-                try { var nn = _moNestWall.node; if (nn != null) origins.Add(new Vector3(nn.position.x, nn.position.y + PhysEyeUp, nn.position.z)); } catch { }
-                try { origins.Add(new Vector3(_moNestWall.position.x, _moNestWall.position.y + PhysEyeUp, _moNestWall.position.z)); } catch { }
-                if (origins.Count == 0) return true;
-                // Body-anchor aim points = the stand nodes just inside the site's windows (where the victim is exposed),
-                // else a sample of the site's nodes.
+                // Mirror the SELECTION check EXACTLY: from the nest window wall (_moNestWall.position, == the nestOpen
+                // used at selection) to each of the SITE's window walls (openings). If ANY is clear the nest still
+                // overlooks the site -> keep it. Only release when blind to ALL (a genuine streaming false positive).
+                // (Earlier this aimed at interior stand-node body anchors, which are furniture/frame-blocked even when
+                // the window-to-window line is clear -> it false-released a GOOD landing the instant the killer arrived,
+                // pre-empting the shot. Matching the selection endpoints removes that false negative.)
+                Vector3 from; try { from = _moNestWall.position; } catch { return true; }
                 var siteOpen = new List<Vector3>(); var siteStand = new List<NewNode>(); var siteWalls = new List<NewWall>();
                 CollectWindows(site, siteOpen, siteStand, siteWalls, PhysMaxSiteWindows);
-                var aims = new List<Vector3>();
-                for (int i = 0; i < siteStand.Count; i++) { var n = siteStand[i]; if (n != null) { try { aims.Add(new Vector3(n.position.x, n.position.y + PhysBodyUp, n.position.z)); } catch { } } }
-                if (aims.Count == 0)
-                { try { var ns = site.nodes; if (ns != null) { int c = ns.Count; for (int i = 0; i < c && aims.Count < PhysMaxSiteWindows; i++) { var n = ns[i]; if (n != null) aims.Add(new Vector3(n.position.x, n.position.y + PhysBodyUp, n.position.z)); } } } catch { } }
-                if (aims.Count == 0) return true;   // can't enumerate site aim points -> don't release
-                for (int o = 0; o < origins.Count; o++)
-                    for (int i = 0; i < aims.Count; i++)
-                        if (PhysLosClearBetween(origins[o], aims[i], mask)) return true;
+                if (siteOpen.Count == 0) return true;   // can't enumerate site windows -> don't release
+                for (int i = 0; i < siteOpen.Count; i++)
+                    if (PhysLosClearBetween(from, siteOpen[i], mask)) return true;
                 return false;
             }
             catch { return true; }

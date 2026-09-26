@@ -143,12 +143,9 @@ namespace SODMotives
             BindApply("Troubleshooting", "WaitLocationStallHours", 12f,
                 "In-game hours a mod case may sit stalled in 'waitForLocation' (no seatable location — e.g. a kidnap with no valid holding den) before the watchdog CANCELS it so it can't hang the case indefinitely. A one-time IsValidLocation den probe is logged the moment it stalls.",
                 v => MurderWatchdog.WaitLocationStallHours = v);
-            BindApply("Troubleshooting", "SniperPinStallHours", 4f,
-                "Once the victim is AT the pinned local site (their shift has started), the in-game hours to allow for the shot before giving up and releasing to the game's default site. Covers a shift's worth of the victim wandering the windows; if the nest still can't line up the kill, it's a bad nest. Only affects motivated sniper cases with a pinned local nest.",
+            BindApply("Troubleshooting", "SniperPinStallHours", 30f,
+                "ABSOLUTE backstop (in-game hours) for holding a pinned local sniper nest before giving up to the game's default site. Normally the case gives up automatically when the victim's WORK SHIFT starts and ends without a shot (tied to their real schedule); this cap only catches odd cases (e.g. a victim who never has a shift). Generous by default so a normal shift plays out first.",
                 v => MurderWatchdog.SniperPinStallHours = v);
-            BindApply("Troubleshooting", "SniperVictimReachHours", 30f,
-                "Max in-game hours to WAIT for an off-shift victim to first reach the pinned site. A workplace is locked off-shift and can't be herded into, so the case waits for the victim's natural shift (the killer waits, the game holds waitForLocation until they arrive). Generous by default (covers a day) so a normal shift occurs; if the victim never shows (e.g. days off), the case gives up to the game's default site. Raise to wait even longer, lower to give up sooner.",
-                v => MurderWatchdog.SniperVictimReachHours = v);
             BindApply("Troubleshooting", "SniperPhysicsAdopt", false,
                 "When ON, if the physics-LOS pass finds a clearly BROAD overlook (sees several of the site's windows), the killer ADOPTS it instead of the node-graph nest pick -- this is what makes the shooter actually use an elevated cross-street nest (e.g. a hotel landing overlooking a ward) rather than the game's narrower default. OFF (default) = keep the node-graph pick and only log what physics would have chosen. Turn on to test whether a physics-picked nest fires end-to-end.",
                 v => MurderWatchdog.SniperPhysicsAdopt = v);

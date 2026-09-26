@@ -98,7 +98,9 @@ namespace SODMotives
         private static readonly Dictionary<int, float> _sniperPinSince = new Dictionary<int, float>();                  // victimId -> gameTime the pin was set
         private static readonly HashSet<int> _sniperReachedSite = new HashSet<int>();                                   // victimId -> the victim has been AT the pinned site (their shift started)
         private static readonly Dictionary<int, float> _sniperAwaySince = new Dictionary<int, float>();                 // victimId -> gameTime they LEFT the site after reaching it (shift ending)
+        private static readonly Dictionary<int, float> _sniperInPosSince = new Dictionary<int, float>();                // victimId -> gameTime killer+victim were BOTH first in position (to detect a nest that never lines up)
         private const float SniperShiftEndGraceHours = 1.5f;                                                            // away-from-site this long (after having reached it) = shift ended -> give up
+        private const float SniperInPositionGiveUpHours = 2f;                                                           // killer at nest + victim at site this long with no shot = the nest can't line up -> give up
         // NODE-ACCESS UNBLOCK: furniture marks a node NewNode.noAccess=true so NPCs won't path onto it. The nest-visible
         // window node is often furniture-blocked (the reported "shot won't line up until I removed the bucket"), so while
         // herding we temporarily clear noAccess on the wander nodes and RESTORE it when the pin ends. Reversible; touches
@@ -190,7 +192,7 @@ namespace SODMotives
             _liveVid = -1; _liveLastLogH = -999f; _liveCount = 0;
             _sniperObserved.Clear(); _sniperLiveVid = -1; _sniperLiveLastLogH = -999f; _sniperLiveCount = 0;
             _sniperSeeded.Clear(); _sniperPin.Clear(); _sniperPinSince.Clear(); _sniperHerdLogged.Clear(); _sniperWander.Clear(); _sniperHerdNode.Clear(); _sniperWanderPick.Clear();
-            _sniperReachedSite.Clear(); _sniperAwaySince.Clear();
+            _sniperReachedSite.Clear(); _sniperAwaySince.Clear(); _sniperInPosSince.Clear();
             try { foreach (var kv in _sniperUnblocked) { var l = kv.Value; if (l == null) continue; for (int i = 0; i < l.Count; i++) { var n = l[i]; if (n != null) try { n.noAccess = true; } catch { } } } } catch { }
             _sniperUnblocked.Clear();
             _physLayersDumped = false; _rainGlassLayer = int.MinValue; _lastNestWasPhysics = false; _moNestPhys = false; _moNestRevalidated = false;
@@ -1302,6 +1304,12 @@ namespace SODMotives
                         //  - backstop: an absolute cap for a victim who never comes to the site at all (days off).
                         bool physBlind = _moNestPhys && !_moNestRevalidated && _moNestWall != null && _moNestSitePtr == pinned.Pointer
                                          && KillerAtNest(killer) && !PhysNestStillOverlooksSite(pinned);
+                        // Both in position but no shot for a while = the nest can't line up (e.g. the victim's only clear
+                        // spot is furniture-hemmed and they stand elsewhere). Track since both were first in position.
+                        bool inPosition = atSite && KillerAtNest(killer);
+                        if (inPosition) { if (!_sniperInPosSince.ContainsKey(vid)) _sniperInPosSince[vid] = NowHours(); }
+                        else _sniperInPosSince.Remove(vid);
+                        bool inPositionTooLong = _sniperInPosSince.TryGetValue(vid, out var ipt) && NowHours() - ipt >= SniperInPositionGiveUpHours;
                         bool shiftEnded = _sniperReachedSite.Contains(vid) && !atSite
                                           && _sniperAwaySince.TryGetValue(vid, out var aw) && NowHours() - aw >= SniperShiftEndGraceHours;
                         bool backstop = NowHours() - pinSince >= SniperPinStallHours;
@@ -1311,18 +1319,19 @@ namespace SODMotives
                             ClearVictimSniperSiteGoal(victim, pinned);            // un-pin the victim (shot fired / resolving)
                             RestoreUnblockedNodes(vid);                           // restore any furniture-blocked nodes we opened
                             _sniperPin.Remove(vid); _sniperPinSince.Remove(vid); _sniperWander.Remove(vid); _sniperHerdNode.Remove(vid); _sniperWanderPick.Remove(vid);
-                            _sniperReachedSite.Remove(vid); _sniperAwaySince.Remove(vid); _moNestPhys = false;
+                            _sniperReachedSite.Remove(vid); _sniperAwaySince.Remove(vid); _sniperInPosSince.Remove(vid); _moNestPhys = false;
                         }
-                        else if (physBlind || shiftEnded || backstop)
+                        else if (physBlind || inPositionTooLong || shiftEnded || backstop)
                         {
                             _moNestRevalidated = true;
                             ClearVictimSniperSiteGoal(victim, pinned);
                             RestoreUnblockedNodes(vid);
                             _sniperPin.Remove(vid); _sniperPinSince.Remove(vid); _sniperWander.Remove(vid); _sniperHerdNode.Remove(vid); _sniperWanderPick.Remove(vid);
-                            _sniperReachedSite.Remove(vid); _sniperAwaySince.Remove(vid); _moNestPhys = false;
+                            _sniperReachedSite.Remove(vid); _sniperAwaySince.Remove(vid); _sniperInPosSince.Remove(vid); _moNestPhys = false;
                             string why = physBlind ? $"killer reached {LName(NestLoc(_moNestWall))} but it has NO physics line to {LName(pinned)} (streaming false positive)"
+                                       : inPositionTooLong ? $"killer + victim both in position at {LName(pinned)} for {SniperInPositionGiveUpHours:0.#}h without a shot (nest can't line up the kill; furniture-hemmed spot?)"
                                        : shiftEnded ? $"victim came to {LName(pinned)} and left (shift ended) without a shot"
-                                       : $"pin held {SniperPinStallHours:0.#}h (backstop cap; victim never came to the site)";
+                                       : $"pin held {SniperPinStallHours:0.#}h (backstop cap)";
                             MotivesPlugin.Log.LogInfo($"[SODMotives][sniper] {why} -> releasing to the game's default site.");
                             SeedSniperDefault(murder, killer, victim);
                         }

@@ -128,7 +128,7 @@ namespace SODMotives
         private const float PhysEyeUp = 1.4f;               // gun/eye height above a nest node (~killer.transform.position + aim)
         private const float PhysBodyUp = 1.1f;              // victim torso height above a stand node (~GetBodyAnchor)
         private const float PhysEdge = 0.35f;               // pull ray ends in from each window opening so we don't hit the opening's own frame
-        private const int   PhysMaxNestWindows = 90;        // cap on self-enumerated candidate nest windows per (failing) case
+        private const int   PhysMaxNestWindows = 120;       // cap on self-enumerated candidate nest windows per (failing) case (scanned closest-first)
         private const int   PhysMaxSiteWindows = 24;        // cap on the site windows we aim at
         private static int  _rainGlassLayer = int.MinValue; // RainWindowGlass layer index (int.MinValue = unresolved, -1 = absent)
         private static bool _physLayersDumped = false;      // one-time layer/mask diagnostic guard
@@ -672,7 +672,12 @@ namespace SODMotives
                 {
                     var cd = CityData.Instance; var dir = cd != null ? cd.gameLocationDirectory : null;
                     int lc = 0; try { lc = dir != null ? dir.Count : 0; } catch { }
-                    for (int li = 0; li < lc && nestWalls.Count < PhysMaxNestWindows; li++)
+                    // Gather near locations CLOSEST-FIRST. The directory is unordered, so iterating it raw fills the
+                    // PhysMaxNestWindows cap with whatever streets/units happen to come first and can cut off the
+                    // CLOSEST building (e.g. Plaza Orchid at 18m) before it is ever scanned. Sorting by distance means
+                    // the cap prioritises the nearest, most-believable overlooks.
+                    var nearLocs = new List<KeyValuePair<float, NewGameLocation>>();
+                    for (int li = 0; li < lc; li++)
                     {
                         NewGameLocation loc = null; try { loc = dir[li]; } catch { }
                         if (loc == null) continue;
@@ -681,20 +686,33 @@ namespace SODMotives
                         if (an == null) continue;
                         float ld; try { ld = Vector3.Distance(an.position, refPos); } catch { continue; }
                         if (ld > SniperNestSearchMeters) continue;
+                        nearLocs.Add(new KeyValuePair<float, NewGameLocation>(ld, loc));
+                    }
+                    nearLocs.Sort((x, y) => x.Key.CompareTo(y.Key));
+                    for (int li = 0; li < nearLocs.Count && nestWalls.Count < PhysMaxNestWindows; li++)
+                    {
+                        NewGameLocation loc = nearLocs[li].Value; float ld = nearLocs[li].Key;
                         // Collect this location's windows FIRST and keep only those whose nest node is in range, so the
                         // costlier access test (FindSafeTeleport) runs ONLY on locations that actually have a candidate
                         // window near the site.
                         var wOpen = new List<Vector3>(); var wStand = new List<NewNode>(); var wWall = new List<NewWall>();
                         CollectWindows(loc, loc, wOpen, wStand, wWall, 16);
-                        int windowsInRange = 0;
+                        int windowsInRange = 0, repFloor = -999;
                         for (int wi = 0; wi < wStand.Count; wi++)
-                        { var n0 = wStand[wi]; if (n0 == null) continue; float d0; try { d0 = Vector3.Distance(n0.position, refPos); } catch { continue; } if (d0 <= SniperMaxNestMeters) windowsInRange++; }
-                        if (windowsInRange == 0) continue;
+                        { var n0 = wStand[wi]; if (n0 == null) continue; float d0; try { d0 = Vector3.Distance(n0.position, refPos); } catch { continue; } if (d0 <= SniperMaxNestMeters) { windowsInRange++; if (repFloor == -999) { try { repFloor = n0.floorHeight; } catch { } } } }
+                        if (windowsInRange == 0)
+                        {
+                            // Log NEAR locations we skip for no in-range window, so it is visible WHY a building the user
+                            // expected (e.g. a hotel landing) did not become a candidate: no windows vs windows-too-far.
+                            if (diag && candLogged < 45 && ld <= SniperMaxNestMeters + 10f)
+                            { candLogged++; MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los]   skip {LName(loc)} {ld:0}m rawWindows={wWall.Count} in-range=0"); }
+                            continue;
+                        }
                         scanned++;
                         bool owned = false, reach = false, acc = false;
                         try { acc = KillerCanAccess(killer, loc, out owned, out reach); } catch { owned = false; reach = false; acc = false; }
-                        if (diag && candLogged < 30)
-                        { candLogged++; MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los]   cand {LName(loc)} {ld:0}m windows-in-range={windowsInRange} owned={owned} reach={reach} -> {(acc ? "ACCEPT" : "reject (killer cannot access without trespass)")}"); }
+                        if (diag && candLogged < 45)
+                        { candLogged++; MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los]   cand {LName(loc)} {ld:0}m windows-in-range={windowsInRange} floor={repFloor} owned={owned} reach={reach} -> {(acc ? "ACCEPT" : "reject (killer cannot access without trespass)")}"); }
                         if (!acc) continue;
                         accessible++;
                         for (int wi = 0; wi < wWall.Count && nestWalls.Count < PhysMaxNestWindows; wi++)
@@ -741,8 +759,9 @@ namespace SODMotives
                 //  requires the killer to own/work/live there OR to have a non-trespass safe spot there -- so the winning
                 //  nest's location is walk-reachable by construction. No separate winner re-check needed.)
 
+                int pickFloor = -999; try { if (bestWall != null && bestWall.node != null) pickFloor = bestWall.node.floorHeight; } catch { }
                 if (diag)
-                    MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los] {LName(targetLoc)}: siteWindows={siteOpen.Count} nearScanned={scanned} accessibleLocs={accessible} nestWindows={nestWalls.Count} rays={rays} -> {(bestWall != null ? "PHYS-PICK " + LName(NestLoc(bestWall)) + " " + bestDist.ToString("0") + "m " + (bestPublic ? "public" : "killer-home") + " sees " + bestCover + "/" + siteOpen.Count + " site-windows" : "NONE (fall to game default)")}.");
+                    MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los] {LName(targetLoc)}: siteWindows={siteOpen.Count} nearScanned={scanned} accessibleLocs={accessible} nestWindows={nestWalls.Count} rays={rays} -> {(bestWall != null ? "PHYS-PICK " + LName(NestLoc(bestWall)) + " " + bestDist.ToString("0") + "m floor=" + pickFloor + " " + (bestPublic ? "public" : "killer-home") + " sees " + bestCover + "/" + siteOpen.Count + " site-windows" : "NONE (fall to game default)")}.");
                 return bestWall != null;
             }
             catch (Exception e) { if (diag) MotivesPlugin.Log.LogWarning($"[SODMotives][phys-los] {LName(targetLoc)} FATAL: {e.Message}"); return false; }

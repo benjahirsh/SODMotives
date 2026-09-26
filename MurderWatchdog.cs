@@ -99,7 +99,9 @@ namespace SODMotives
         private static readonly Dictionary<int, float> _sniperPinSince = new Dictionary<int, float>();                  // victimId -> gameTime the pin was set
         private static readonly HashSet<int> _sniperReachedSite = new HashSet<int>();                                   // victimId -> the victim has been AT the pinned site (their shift started)
         private static readonly Dictionary<int, float> _sniperAwaySince = new Dictionary<int, float>();                 // victimId -> gameTime they LEFT the site after reaching it (shift ending)
+        private static readonly Dictionary<int, float> _sniperInPosSince = new Dictionary<int, float>();                // victimId -> gameTime they became continuously AT the site (in position); reset when they leave
         private const float SniperShiftEndGraceHours = 1.5f;                                                            // away-from-site this long (after having reached it) = the shift the killer was in position for has ended -> give up
+        private const float SniperInPositionCapHours = 8f;                                                             // continuously AT the site (in position) this long without a shot = a full shift passed in position -> give up (the herd can pin the victim at work so they never LEAVE, so shiftEnded alone can't catch it)
         private static readonly HashSet<int> _sniperHerdLogged = new HashSet<int>();                                    // victims we've logged the herd for (once each)
         private static readonly Dictionary<int, List<NewNode>> _sniperWander = new Dictionary<int, List<NewNode>>();      // victimId -> the site nodes the pinned nest can see (victim wanders among them, in the sightline)
         private static readonly Dictionary<int, System.IntPtr> _sniperHerdNode = new Dictionary<int, System.IntPtr>();   // victimId -> the wander node currently herded to (to detect when to re-issue the walk goal)
@@ -197,7 +199,7 @@ namespace SODMotives
             _liveVid = -1; _liveLastLogH = -999f; _liveCount = 0;
             _sniperObserved.Clear(); _sniperLiveVid = -1; _sniperLiveLastLogH = -999f; _sniperLiveCount = 0;
             _sniperSeeded.Clear(); _sniperPin.Clear(); _sniperPinSince.Clear(); _sniperHerdLogged.Clear(); _sniperWander.Clear(); _sniperHerdNode.Clear(); _sniperWanderPick.Clear(); _sniperHerdGoalPtr.Clear();
-            _sniperReachedSite.Clear(); _sniperAwaySince.Clear(); _sniperDefaultFails.Clear();
+            _sniperReachedSite.Clear(); _sniperAwaySince.Clear(); _sniperInPosSince.Clear(); _sniperDefaultFails.Clear();
             _physLayersDumped = false; _rainGlassLayer = int.MinValue; _lastNestWasPhysics = false; _moNestPhys = false; _moNestRevalidated = false;
             ClearActiveMotivatedSniper();
             _ransomTried.Clear(); _killTimeReasserted.Clear();
@@ -1376,8 +1378,16 @@ namespace SODMotives
                         // work). Their access-controlled workplace is locked off-shift, so we wait for their natural
                         // shift; once they have COME to work and then LEFT (shift ended) without a shot, we give up.
                         bool atSite = false; try { var vl = victim.currentGameLocation; atSite = vl != null && vl.Pointer == pinned.Pointer; } catch { }
-                        if (atSite) { _sniperReachedSite.Add(vid); _sniperAwaySince.Remove(vid); }
-                        else if (_sniperReachedSite.Contains(vid) && !_sniperAwaySince.ContainsKey(vid)) _sniperAwaySince[vid] = NowHours();
+                        if (atSite)
+                        {
+                            _sniperReachedSite.Add(vid); _sniperAwaySince.Remove(vid);
+                            if (!_sniperInPosSince.ContainsKey(vid)) _sniperInPosSince[vid] = NowHours();   // start timing continuous IN-POSITION at the site
+                        }
+                        else
+                        {
+                            _sniperInPosSince.Remove(vid);   // left the site -> the in-position clock resets
+                            if (_sniperReachedSite.Contains(vid) && !_sniperAwaySince.ContainsKey(vid)) _sniperAwaySince[vid] = NowHours();
+                        }
                         float pinSince = _sniperPinSince.TryGetValue(vid, out var ps) ? ps : NowHours();
                         // ONE give-up rule (the user's): the victim was IN POSITION at the site (their shift) and the
                         // shift then ENDED without a shot -- i.e. they came to work with the killer at the nest for the
@@ -1388,22 +1398,27 @@ namespace SODMotives
                                          && KillerAtNest(killer) && !PhysNestStillOverlooksSite(pinned);
                         bool shiftEnded = _sniperReachedSite.Contains(vid) && !atSite
                                           && _sniperAwaySince.TryGetValue(vid, out var aw) && NowHours() - aw >= SniperShiftEndGraceHours;
+                        // The victim came to the site and STAYED in position for a whole shift without a shot lining up
+                        // (the nest can't get a clear line, e.g. Live Pettersson at the Sync Clinic). Because the herd can
+                        // hold them at work so they never LEAVE, shiftEnded can't catch this -- so cap the time in position.
+                        bool inPositionTooLong = _sniperInPosSince.TryGetValue(vid, out var ip) && NowHours() - ip >= SniperInPositionCapHours;
                         bool neverShowed = !_sniperReachedSite.Contains(vid) && NowHours() - pinSince >= SniperNeverShowedCapHours;
 
                         if (resolved)
                         {
                             ClearVictimSniperSiteGoal(victim, pinned);            // un-pin the victim (shot fired / resolving)
                             _sniperPin.Remove(vid); _sniperPinSince.Remove(vid); _sniperWander.Remove(vid); _sniperHerdNode.Remove(vid); _sniperWanderPick.Remove(vid); _sniperHerdGoalPtr.Remove(vid);
-                            _sniperReachedSite.Remove(vid); _sniperAwaySince.Remove(vid); _moNestPhys = false;
+                            _sniperReachedSite.Remove(vid); _sniperAwaySince.Remove(vid); _sniperInPosSince.Remove(vid); _moNestPhys = false;
                         }
-                        else if (physBlind || shiftEnded || neverShowed)
+                        else if (physBlind || shiftEnded || inPositionTooLong || neverShowed)
                         {
                             _moNestRevalidated = true;
                             ClearVictimSniperSiteGoal(victim, pinned);
                             _sniperPin.Remove(vid); _sniperPinSince.Remove(vid); _sniperWander.Remove(vid); _sniperHerdNode.Remove(vid); _sniperWanderPick.Remove(vid); _sniperHerdGoalPtr.Remove(vid);
-                            _sniperReachedSite.Remove(vid); _sniperAwaySince.Remove(vid); _moNestPhys = false;
+                            _sniperReachedSite.Remove(vid); _sniperAwaySince.Remove(vid); _sniperInPosSince.Remove(vid); _moNestPhys = false;
                             string why = physBlind ? $"killer reached {LName(NestLoc(_moNestWall))} but it has NO physics line to {LName(pinned)} (streaming false positive)"
                                        : shiftEnded ? $"victim's whole work shift at {LName(pinned)} passed in position without a shot"
+                                       : inPositionTooLong ? $"victim held in position at {LName(pinned)} for {SniperInPositionCapHours:0.#}h with no shot lining up"
                                        : $"victim never came to {LName(pinned)} within {SniperNeverShowedCapHours:0.#}h (safety cap)";
                             MotivesPlugin.Log.LogInfo($"[SODMotives][sniper] {why} -> releasing to the game's default site.");
                             SeedSniperDefault(murder, killer, victim);

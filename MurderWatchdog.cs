@@ -79,7 +79,7 @@ namespace SODMotives
         // default after SniperPinStallHours so it can't hang.
         // ABSOLUTE backstop: max in-game hours to hold a pinned local sniper nest before giving up to the game default.
         // Normally the give-up is tied to the victim's WORK SHIFT (we release once their shift has started and ended
-        // without a shot -- see VictimOnShift); this is just a safety cap for odd schedules (e.g. a victim who never
+        // without a shot -- the victim comes to work and leaves); this is just a safety cap for a victim who never
         // has a shift). Generous so a normal shift plays out first.
         internal static float SniperPinStallHours = 30f;
         // Minimum building floor for a self-enumerated PHYSICS nest (NewNode.floor.floor; 0 = ground/street). A sniper
@@ -96,7 +96,9 @@ namespace SODMotives
         internal static float SniperNestSearchMeters = 110f;
         private static readonly Dictionary<int, NewGameLocation> _sniperPin = new Dictionary<int, NewGameLocation>();   // victimId -> pinned local site
         private static readonly Dictionary<int, float> _sniperPinSince = new Dictionary<int, float>();                  // victimId -> gameTime the pin was set
-        private static readonly HashSet<int> _sniperWasOnShift = new HashSet<int>();                                    // victimId -> the victim's work shift has been active during this pin (via Occupation.IsAtWork)
+        private static readonly HashSet<int> _sniperReachedSite = new HashSet<int>();                                   // victimId -> the victim has been AT the pinned site (their shift started)
+        private static readonly Dictionary<int, float> _sniperAwaySince = new Dictionary<int, float>();                 // victimId -> gameTime they LEFT the site after reaching it (shift ending)
+        private const float SniperShiftEndGraceHours = 1.5f;                                                            // away-from-site this long (after having reached it) = shift ended -> give up
         private static readonly HashSet<int> _sniperHerdLogged = new HashSet<int>();                                    // victims we've logged the herd for (once each)
         private static readonly Dictionary<int, List<NewNode>> _sniperWander = new Dictionary<int, List<NewNode>>();      // victimId -> the site nodes the pinned nest can see (victim wanders among them, in the sightline)
         private static readonly Dictionary<int, System.IntPtr> _sniperHerdNode = new Dictionary<int, System.IntPtr>();   // victimId -> the wander node currently herded to (to detect when to re-issue the walk goal)
@@ -182,7 +184,7 @@ namespace SODMotives
             _liveVid = -1; _liveLastLogH = -999f; _liveCount = 0;
             _sniperObserved.Clear(); _sniperLiveVid = -1; _sniperLiveLastLogH = -999f; _sniperLiveCount = 0;
             _sniperSeeded.Clear(); _sniperPin.Clear(); _sniperPinSince.Clear(); _sniperHerdLogged.Clear(); _sniperWander.Clear(); _sniperHerdNode.Clear(); _sniperWanderPick.Clear();
-            _sniperWasOnShift.Clear();
+            _sniperReachedSite.Clear(); _sniperAwaySince.Clear();
             _physLayersDumped = false; _rainGlassLayer = int.MinValue; _lastNestWasPhysics = false; _moNestPhys = false; _moNestRevalidated = false;
             ClearActiveMotivatedSniper();
             _ransomTried.Clear(); _killTimeReasserted.Clear();
@@ -849,22 +851,6 @@ namespace SODMotives
             catch { return true; }
         }
 
-        // Is the victim's WORK SHIFT active right now (schedule-based, location-independent)? Uses Occupation.IsAtWork
-        // against the current decimal-hour clock, so it flips false at the victim's shift end even while our herd is
-        // physically holding them at the workplace -- that is what lets us give up exactly when their shift ends.
-        private static bool VictimOnShift(Human victim)
-        {
-            try
-            {
-                var j = victim != null ? victim.job : null;
-                if (j == null) { try { return victim.isAtWork; } catch { return false; } }
-                float dc = -1f; try { dc = SessionData.Instance.decimalClock; } catch { }
-                if (dc >= 0f) { try { return j.IsAtWork(dc); } catch { } }
-                try { return victim.isAtWork; } catch { return false; }
-            }
-            catch { return false; }
-        }
-
         // Killer is standing at (within ~4m of) the current pinned nest node.
         private static bool KillerAtNest(Human killer)
         {
@@ -1257,39 +1243,40 @@ namespace SODMotives
                             || murder.state == MurderController.MurderState.escaping
                             || murder.state == MurderController.MurderState.unsolved;
 
-                        // WORK-SHIFT WINDOW. The victim's access-controlled workplace is LOCKED off-shift, so we can't
-                        // herd them in -- we wait for their natural shift, then give up only once their shift has ENDED
-                        // without a shot (the user's rule: the whole work window went by). VictimOnShift is schedule-based
-                        // so it flips false at shift end even while our herd holds them physically.
-                        bool onShift = VictimOnShift(victim);
-                        if (onShift) _sniperWasOnShift.Add(vid);
-                        bool wasOnShift = _sniperWasOnShift.Contains(vid);
+                        // WORK-SHIFT WINDOW, tracked by the victim's PRESENCE at the site (V_AT_SITE is reliable; the
+                        // schedule API IsAtWork proved unreliable -- it read false even with the victim demonstrably at
+                        // work). Their access-controlled workplace is locked off-shift, so we wait for their natural
+                        // shift; once they have COME to work and then LEFT (shift ended) without a shot, we give up.
                         bool atSite = false; try { var vl = victim.currentGameLocation; atSite = vl != null && vl.Pointer == pinned.Pointer; } catch { }
+                        if (atSite) { _sniperReachedSite.Add(vid); _sniperAwaySince.Remove(vid); }
+                        else if (_sniperReachedSite.Contains(vid) && !_sniperAwaySince.ContainsKey(vid)) _sniperAwaySince[vid] = NowHours();
                         float pinSince = _sniperPinSince.TryGetValue(vid, out var ps) ? ps : NowHours();
                         // Give-up (release to the game's own default site -- vanilla -- never a frozen pin):
                         //  - physBlind: killer in position but the nest turns out blind (streaming false positive).
-                        //  - shiftPassed: the victim's work shift STARTED and has now ENDED without a shot.
-                        //  - backstop: an absolute cap for odd schedules (victim who never has a shift).
+                        //  - shiftEnded: the victim CAME to the site (shift started) and has since LEFT for a grace period
+                        //    (their shift ended) without a shot -- exactly "the whole work window went by".
+                        //  - backstop: an absolute cap for a victim who never comes to the site at all (days off).
                         bool physBlind = _moNestPhys && !_moNestRevalidated && _moNestWall != null && _moNestSitePtr == pinned.Pointer
                                          && KillerAtNest(killer) && !PhysNestStillOverlooksSite(pinned);
-                        bool shiftPassed = wasOnShift && !onShift;
+                        bool shiftEnded = _sniperReachedSite.Contains(vid) && !atSite
+                                          && _sniperAwaySince.TryGetValue(vid, out var aw) && NowHours() - aw >= SniperShiftEndGraceHours;
                         bool backstop = NowHours() - pinSince >= SniperPinStallHours;
 
                         if (resolved)
                         {
                             ClearVictimSniperSiteGoal(victim, pinned);            // un-pin the victim (shot fired / resolving)
                             _sniperPin.Remove(vid); _sniperPinSince.Remove(vid); _sniperWander.Remove(vid); _sniperHerdNode.Remove(vid); _sniperWanderPick.Remove(vid);
-                            _sniperWasOnShift.Remove(vid); _moNestPhys = false;
+                            _sniperReachedSite.Remove(vid); _sniperAwaySince.Remove(vid); _moNestPhys = false;
                         }
-                        else if (physBlind || shiftPassed || backstop)
+                        else if (physBlind || shiftEnded || backstop)
                         {
                             _moNestRevalidated = true;
                             ClearVictimSniperSiteGoal(victim, pinned);
                             _sniperPin.Remove(vid); _sniperPinSince.Remove(vid); _sniperWander.Remove(vid); _sniperHerdNode.Remove(vid); _sniperWanderPick.Remove(vid);
-                            _sniperWasOnShift.Remove(vid); _moNestPhys = false;
+                            _sniperReachedSite.Remove(vid); _sniperAwaySince.Remove(vid); _moNestPhys = false;
                             string why = physBlind ? $"killer reached {LName(NestLoc(_moNestWall))} but it has NO physics line to {LName(pinned)} (streaming false positive)"
-                                       : shiftPassed ? $"victim's work shift at {LName(pinned)} started and ended without a shot"
-                                       : $"pin held {SniperPinStallHours:0.#}h (backstop cap) without a shot";
+                                       : shiftEnded ? $"victim came to {LName(pinned)} and left (shift ended) without a shot"
+                                       : $"pin held {SniperPinStallHours:0.#}h (backstop cap; victim never came to the site)";
                             MotivesPlugin.Log.LogInfo($"[SODMotives][sniper] {why} -> releasing to the game's default site.");
                             SeedSniperDefault(murder, killer, victim);
                         }
@@ -1298,9 +1285,9 @@ namespace SODMotives
                             if (_moNestPhys && !_moNestRevalidated && KillerAtNest(killer)) _moNestRevalidated = true;   // in position + still overlooks -> validated
                             // Re-assert the site so the game's state-4 dwell timeout can't re-target it to the global rooftop.
                             try { var cur = murder.sniperVictimSite; if (cur == null || cur.Pointer != pinned.Pointer) murder.sniperVictimSite = pinned; } catch { }
-                            if (onShift)
+                            if (atSite)
                             {
-                                // ON SHIFT (workplace open): HERD the victim to WANDER the nest's sightline so a clear
+                                // AT THE SITE (on shift): HERD the victim to WANDER the nest's sightline so a clear
                                 // physics shot lines up. Two-tier: a COARSE ~30s bucket picks an anchor window; a FINE
                                 // ~15s bucket jitters among the nodes near it (<=3.5m) -- wander AROUND a window then switch.
                                 NewNode herd = null;

@@ -13,7 +13,7 @@ namespace SODMotives
     // It intentionally changes NOTHING in the game yet — this is how we lock the
     // design to reality (call order, whether victim depends on murderer, and the
     // actual range/meaning of Acquaintance.like) before writing the override.
-    [BepInPlugin(Guid, "SOD Motives", "1.1.1")]
+    [BepInPlugin(Guid, "SOD Motives", "1.2.0")]
     public class MotivesPlugin : BasePlugin
     {
         public const string Guid = "com.benhirsh.sodmotives";
@@ -46,8 +46,8 @@ namespace SODMotives
             BindApply("Motive Mix", "MotivatedKidnapShare", 1f,
                 "KIDNAP analogue of MotiveCaseShare: fraction (0..1) of KIDNAP cases that get a motivated killer->victim pair (a walk-native abduction to a real holding den — the victim walks there and is restrained, leaving a real trail); the rest run vanilla. Default 1 = every kidnap is motivated; 0 = kidnaps stay vanilla. Requires the sandbox 'Kidnapping' case type ON. Sniper cases have their own slider (MotivatedSniperShare). Applies to the next kidnap.",
                 v => MurderSelector.MotivatedKidnapShare = v, R01(), Order(95));
-            BindApply("Motive Mix", "MotivatedSniperShare", 0f,
-                "SNIPER analogue of MotiveCaseShare / MotivatedKidnapShare: fraction (0..1) of SNIPER cases that get a motivated killer->victim pair; the rest run vanilla. Requires the sandbox 'Sniper cases' type ON. Mimics vanilla: the MO is chosen by a killer-home line-of-sight test (VoyeurSniper if the killer's home overlooks the victim's home/work, else the street/rooftop ExCopSniper), the watchdog seeds a shot site via the game's OWN picker, and the shot plus the game's own force-kill fallback are left to the game. DEFAULT 0 while it's being validated. Set it to 1 to TEST motivated snipers via natural sandbox cases (watch the [sniper-obs]/[sniper-live] diagnostics with [Debug] EnableDebugKeys on) instead of the F3 force key. Applies to the next sniper.",
+            BindApply("Motive Mix", "MotivatedSniperShare", 1f,
+                "SNIPER analogue of MotiveCaseShare / MotivatedKidnapShare: fraction (0..1) of SNIPER cases that get a motivated killer->victim pair; the rest run vanilla. Default 1 = every sniper case is motivated; 0 = snipers stay vanilla. Requires the sandbox 'Sniper cases' type ON. The MO is chosen by a killer-home line-of-sight test (VoyeurSniper if the killer's home overlooks the victim's home/work, shooting from the killer's own window; else the street/rooftop ExCopSniper). For ExCop the watchdog pins a believable nest that overlooks the victim's workplace when one is streamed in, otherwise it picks a shot site from the city's scored street vantages; the shot itself and a clean give-up to a vanilla site are left to the game. Applies to the next sniper.",
                 v => MurderSelector.MotivatedSniperShare = v, R01(), Order(90));
             // The five motive families — each a 0..1 weight, NORMALISED together, so any mix works (they need
             // not sum to 1). Set one to 0 to drop that motive from the blend.

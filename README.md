@@ -13,8 +13,8 @@ I'm keeping this vague on purpose so as not to spoil the experience. The rest of
 Some things to know before starting:
 
 - **Asking "Do you know this person?" now tells you more.** On top of the usual reply, an NPC will also share what they know about that person's involvement in events around town. This is your main tool for building a suspect list, and it is easy to miss, so lean on it.
-- **By default every murder and kidnapping is a motive case.** You can configure this in the overlay (`` ` `` key) to mix motive cases in with the classic vanilla ones; under Motive Mix, separate sliders set the share for murders and for kidnappings.
-- **"Procedural Murders" in the Gameplay settings must be turned ON (default)** for the mod to generate motives, with "Regular Murders" enabled for murder cases and the "Kidnapping" case type enabled for motivated kidnappings. Motives for Sniper cases are in development.
+- **By default every murder, kidnapping, and sniper case is a motive case.** You can configure this in the overlay (`` ` `` key) to mix motive cases in with the classic vanilla ones; under Motive Mix, separate sliders set the share for murders, kidnappings, and snipers.
+- **"Procedural Murders" in the Gameplay settings must be turned ON (default)** for the mod to generate motives, with "Regular Murders" enabled for murder cases, the "Kidnapping" case type enabled for motivated kidnappings, and the "Sniper cases" type enabled for motivated snipers.
 
 ## Requirements
 

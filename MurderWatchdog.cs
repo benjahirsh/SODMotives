@@ -779,7 +779,8 @@ namespace SODMotives
                 finally { _inNestScan = false; }
 
                 // 3) Score each candidate nest by how many SITE windows it physically overlooks (broadest wins).
-                int rays = 0, bestCover = 0; bool bestPrimary = false;
+                float siteY = refPos.y;
+                int rays = 0, bestCover = 0; bool bestPrimary = false; float bestDy = float.MaxValue;
                 for (int ci = 0; ci < nestWalls.Count; ci++)
                 {
                     var from = nestOpen[ci];
@@ -792,14 +793,20 @@ namespace SODMotives
                     }
                     if (cover < 1) continue;
                     float d = float.MaxValue; try { d = Vector3.Distance(nestNode[ci].position, refPos); } catch { }
+                    float dy = float.MaxValue; try { dy = Math.Abs(nestNode[ci].position.y - siteY); } catch { }
                     bool pub = nestPub[ci];
+                    // Prefer, in order: broadest overlook; public/accessible; sees the primary spot; then a LEVEL, more
+                    // DIRECTLY-facing shot (smaller height offset -- a steep downward shot from a high landing to a low
+                    // site, e.g. Plaza Orchid 10th -> Laster's floor 1, tends not to line up); then closest. The height
+                    // preference only kicks in past a tolerance so it does not thrash on near-equal nests.
                     bool better = bestWall == null
-                        || (cover != bestCover ? cover > bestCover               // BROADEST overlook first (the user's criterion)
-                            : pub != bestPublic ? pub                            // then public/accessible over killer-home
+                        || (cover != bestCover ? cover > bestCover
+                            : pub != bestPublic ? pub
                             : seesPrimary != bestPrimary ? seesPrimary
+                            : Math.Abs(dy - bestDy) > 3f ? dy < bestDy          // level shot beats a steep one
                             : d < bestDist);
                     if (better)
-                    { bestWall = nestWalls[ci]; bestDist = d; bestPublic = pub; bestCover = cover; bestPrimary = seesPrimary; seenNodes = thisSeen; }
+                    { bestWall = nestWalls[ci]; bestDist = d; bestPublic = pub; bestCover = cover; bestPrimary = seesPrimary; bestDy = dy; seenNodes = thisSeen; }
                 }
 
                 // (Accessibility is already guaranteed: every accepted candidate location passed KillerCanAccess -- a

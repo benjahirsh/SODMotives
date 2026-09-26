@@ -83,6 +83,10 @@ namespace SODMotives
         // would otherwise sit frozen until SniperPinStallHours. Release to the game default EARLY instead. Much shorter
         // than SniperPinStallHours because a reachable site is reached in minutes; hours of waitForLocation = unreachable.
         internal static float SniperVictimReachHours = 3f;
+        // Minimum floor (NewNode.floorHeight; 0 = ground/street level) for a self-enumerated PHYSICS nest. A sniper
+        // should fire from at least a first-story window or a first-story rooftop, never a street-side pavement / the
+        // ground, so ground-level (floor 0) candidate windows are rejected. Tune if floorHeight indexing differs.
+        internal static int SniperMinNestFloor = 1;
         // Max distance (metres) a pinned local nest may be from its site. The vantage solver over-reports: it will
         // return the city's dominant rooftop as a "vantage" over a site two blocks away (a nonsensical cross-city
         // shot that never lines up). A real overlooking nest is across a street, so we reject nests farther than this.
@@ -697,17 +701,27 @@ namespace SODMotives
                         // window near the site.
                         var wOpen = new List<Vector3>(); var wStand = new List<NewNode>(); var wWall = new List<NewWall>();
                         CollectWindows(loc, loc, wOpen, wStand, wWall, 16);
-                        int windowsInRange = 0, repFloor = -999;
+                        // A USABLE nest window is in range AND at least first-story (floorHeight >= SniperMinNestFloor):
+                        // snipers do not fire from ground level / a street-side pavement.
+                        int windowsUsable = 0, repFloor = -999, groundSkipped = 0;
                         for (int wi = 0; wi < wStand.Count; wi++)
-                        { var n0 = wStand[wi]; if (n0 == null) continue; float d0; try { d0 = Vector3.Distance(n0.position, refPos); } catch { continue; } if (d0 <= SniperMaxNestMeters) { windowsInRange++; if (repFloor == -999) { try { repFloor = n0.floorHeight; } catch { } } } }
-                        if (windowsInRange == 0)
                         {
-                            // Log NEAR locations we skip for no in-range window, so it is visible WHY a building the user
-                            // expected (e.g. a hotel landing) did not become a candidate: no windows vs windows-too-far.
+                            var n0 = wStand[wi]; if (n0 == null) continue;
+                            float d0; try { d0 = Vector3.Distance(n0.position, refPos); } catch { continue; }
+                            if (d0 > SniperMaxNestMeters) continue;
+                            int fh0 = 0; try { fh0 = n0.floorHeight; } catch { }
+                            if (fh0 < SniperMinNestFloor) { groundSkipped++; continue; }   // ground-level -> not a nest
+                            windowsUsable++; if (repFloor == -999) repFloor = fh0;
+                        }
+                        if (windowsUsable == 0)
+                        {
+                            // Log NEAR locations we skip, so it is visible WHY a building the user expected (e.g. a hotel
+                            // landing) did not become a candidate: no windows / too far / only ground-level windows.
                             if (diag && candLogged < 45 && ld <= SniperMaxNestMeters + 10f)
-                            { candLogged++; MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los]   skip {LName(loc)} {ld:0}m rawWindows={wWall.Count} in-range=0"); }
+                            { candLogged++; MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los]   skip {LName(loc)} {ld:0}m rawWindows={wWall.Count} in-range-elevated=0 (groundLevelSkipped={groundSkipped})"); }
                             continue;
                         }
+                        int windowsInRange = windowsUsable;
                         scanned++;
                         bool owned = false, reach = false, acc = false;
                         try { acc = KillerCanAccess(killer, loc, out owned, out reach); } catch { owned = false; reach = false; acc = false; }
@@ -721,6 +735,8 @@ namespace SODMotives
                             System.IntPtr np; try { np = nn.Pointer; } catch { continue; }
                             float nd; try { nd = Vector3.Distance(nn.position, refPos); } catch { continue; }
                             if (nd > SniperMaxNestMeters) continue;
+                            int fh = 0; try { fh = nn.floorHeight; } catch { }
+                            if (fh < SniperMinNestFloor) continue;   // no ground-level nests
                             if (!nestSeen.Add(np)) continue;
                             nestWalls.Add(ww); nestOpen.Add(wOpen[wi]); nestNode.Add(nn);
                             bool pub = true; try { pub = kh == null || loc.Pointer != kh.Pointer; } catch { }

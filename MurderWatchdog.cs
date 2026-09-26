@@ -106,7 +106,8 @@ namespace SODMotives
         // herding we temporarily clear noAccess on the wander nodes and RESTORE it when the pin ends. Reversible; touches
         // the nav flag only (not physical colliders), so the victim can walk to the window (the furniture mesh stays).
         internal static bool SniperUnblockWindowNodes = true;   // [Troubleshooting] toggle
-        private static readonly Dictionary<int, List<NewNode>> _sniperUnblocked = new Dictionary<int, List<NewNode>>(); // victimId -> nodes we set noAccess=false on (to restore)
+        private sealed class NodeBlock { public NewNode node; public bool na; public bool ob; }   // saved original block flags to restore
+        private static readonly Dictionary<int, List<NodeBlock>> _sniperUnblocked = new Dictionary<int, List<NodeBlock>>(); // victimId -> nodes we opened (to restore)
         private static readonly HashSet<int> _sniperHerdLogged = new HashSet<int>();                                    // victims we've logged the herd for (once each)
         private static readonly Dictionary<int, List<NewNode>> _sniperWander = new Dictionary<int, List<NewNode>>();      // victimId -> the site nodes the pinned nest can see (victim wanders among them, in the sightline)
         private static readonly Dictionary<int, System.IntPtr> _sniperHerdNode = new Dictionary<int, System.IntPtr>();   // victimId -> the wander node currently herded to (to detect when to re-issue the walk goal)
@@ -193,7 +194,7 @@ namespace SODMotives
             _sniperObserved.Clear(); _sniperLiveVid = -1; _sniperLiveLastLogH = -999f; _sniperLiveCount = 0;
             _sniperSeeded.Clear(); _sniperPin.Clear(); _sniperPinSince.Clear(); _sniperHerdLogged.Clear(); _sniperWander.Clear(); _sniperHerdNode.Clear(); _sniperWanderPick.Clear();
             _sniperReachedSite.Clear(); _sniperAwaySince.Clear(); _sniperInPosSince.Clear();
-            try { foreach (var kv in _sniperUnblocked) { var l = kv.Value; if (l == null) continue; for (int i = 0; i < l.Count; i++) { var n = l[i]; if (n != null) try { n.noAccess = true; } catch { } } } } catch { }
+            try { foreach (var kv in _sniperUnblocked) { var l = kv.Value; if (l == null) continue; for (int i = 0; i < l.Count; i++) { var b = l[i]; if (b == null || b.node == null) continue; if (b.na) try { b.node.noAccess = true; } catch { } if (b.ob) try { b.node.SetAsObstacle(true); } catch { } } } } catch { }
             _sniperUnblocked.Clear();
             _physLayersDumped = false; _rainGlassLayer = int.MinValue; _lastNestWasPhysics = false; _moNestPhys = false; _moNestRevalidated = false;
             ClearActiveMotivatedSniper();
@@ -883,28 +884,37 @@ namespace SODMotives
             {
                 if (!SniperUnblockWindowNodes) return;
                 if (!_sniperWander.TryGetValue(vid, out var wl) || wl == null) return;
-                if (!_sniperUnblocked.TryGetValue(vid, out var done)) { done = new List<NewNode>(); _sniperUnblocked[vid] = done; }
+                if (!_sniperUnblocked.TryGetValue(vid, out var done)) { done = new List<NodeBlock>(); _sniperUnblocked[vid] = done; }
                 int added = 0;
                 for (int i = 0; i < wl.Count; i++)
                 {
                     var n = wl[i]; if (n == null) continue;
-                    bool blocked = false; try { blocked = n.noAccess; } catch { }
-                    if (!blocked) continue;
-                    if (done.Contains(n)) continue;
-                    try { n.noAccess = false; done.Add(n); added++; } catch { }
+                    bool na = false, ob = false; try { na = n.noAccess; } catch { } try { ob = n.isObstacle; } catch { }
+                    if (!na && !ob) continue;                                          // already reachable
+                    bool alreadyDone = false; for (int k = 0; k < done.Count; k++) if (done[k].node == n) { alreadyDone = true; break; }
+                    if (alreadyDone) continue;
+                    done.Add(new NodeBlock { node = n, na = na, ob = ob });            // remember originals
+                    if (na) try { n.noAccess = false; } catch { }
+                    if (ob) try { n.SetAsObstacle(false); } catch { }                  // furniture marks the node an obstacle -> clear so the victim can wander onto it
+                    added++;
                 }
-                if (added > 0) { bool diag = false; try { diag = DebugTools.EnableDebugKeys; } catch { } if (diag) MotivesPlugin.Log.LogInfo($"[SODMotives][sniper] opened {added} furniture-blocked wander node(s) so the victim can reach the nest's window (of {wl.Count} wander nodes; {done.Count} total open)."); }
+                if (added > 0) { bool diag = false; try { diag = DebugTools.EnableDebugKeys; } catch { } if (diag) MotivesPlugin.Log.LogInfo($"[SODMotives][sniper] opened {added} furniture-blocked wander node(s) (noAccess/obstacle) so the victim can reach the nest's window (of {wl.Count} wander nodes; {done.Count} total open)."); }
             }
             catch { }
         }
 
-        // Restore noAccess on any nodes we unblocked for this victim (pin ended / resolved / new game).
+        // Restore the block flags on any nodes we opened for this victim (pin ended / resolved / new game).
         private static void RestoreUnblockedNodes(int vid)
         {
             try
             {
                 if (!_sniperUnblocked.TryGetValue(vid, out var done) || done == null) { _sniperUnblocked.Remove(vid); return; }
-                for (int i = 0; i < done.Count; i++) { var n = done[i]; if (n == null) continue; try { n.noAccess = true; } catch { } }
+                for (int i = 0; i < done.Count; i++)
+                {
+                    var b = done[i]; if (b == null || b.node == null) continue;
+                    if (b.na) try { b.node.noAccess = true; } catch { }
+                    if (b.ob) try { b.node.SetAsObstacle(true); } catch { }
+                }
                 _sniperUnblocked.Remove(vid);
             }
             catch { _sniperUnblocked.Remove(vid); }

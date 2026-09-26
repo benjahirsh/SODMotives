@@ -149,9 +149,12 @@ namespace SODMotives
             BindApply("Troubleshooting", "SniperVictimReachHours", 3f,
                 "In-game hours a pinned motivated-sniper case may sit in waitForLocation (the victim walking to the pinned site) before, if the victim STILL has not arrived, releasing to the game's default site. Guards against a victim who cannot reach the pinned site (a workplace they can't enter off-shift, or a spot the herd can't path into) sitting frozen until SniperPinStallHours. A reachable site is reached in minutes, so this is short; raise it if victims legitimately need longer to walk to work.",
                 v => MurderWatchdog.SniperVictimReachHours = v);
-            BindApply("Troubleshooting", "SniperMinNestFloor", 1,
-                "Minimum building floor (0 = ground/street level) for a physics-LOS sniper nest. A sniper should fire from at least a first-story window or rooftop, never a street-side pavement or the ground, so candidate nest windows below this floor are rejected. Only affects the physics-LOS rescue's self-enumerated nests; the game's own vantage picks are unaffected.",
-                v => MurderWatchdog.SniperMinNestFloor = v);
+            BindApply("Troubleshooting", "SniperPhysicsAdopt", false,
+                "When ON, if the physics-LOS pass finds a clearly BROAD overlook (sees several of the site's windows), the killer ADOPTS it instead of the node-graph nest pick -- this is what makes the shooter actually use an elevated cross-street nest (e.g. a hotel landing overlooking a ward) rather than the game's narrower default. OFF (default) = keep the node-graph pick and only log what physics would have chosen. Turn on to test whether a physics-picked nest fires end-to-end.",
+                v => MurderWatchdog.SniperPhysicsAdopt = v);
+            BindApply("Troubleshooting", "SniperMinNestElevation", 2.5f,
+                "Minimum elevation (metres) a physics-LOS sniper nest must sit ABOVE the ground/street level of its area -- a sniper fires from at least a first-story window or rooftop, never a street-side pavement or the ground. Candidate nest windows below this height are rejected. (~2.5m ~= one storey; 0 allows ground level.) Only affects the physics-LOS rescue's self-enumerated nests.",
+                v => MurderWatchdog.SniperMinNestElevation = v);
             BindApply("Troubleshooting", "SniperMaxNestMeters", 55f,
                 "Max distance (metres) a pinned LOCAL sniper nest may sit from its target site. The game's vantage solver over-reports and will offer the city's dominant rooftop as a 'vantage' over a site two blocks away (a nonsensical cross-city shot that never lines up). A genuine overlooking nest is across a street, so pins whose nest is farther than this are rejected and the case uses the game's default site instead. Raise it to allow longer shots, lower it to be stricter.",
                 v => MurderWatchdog.SniperMaxNestMeters = v);

@@ -83,10 +83,11 @@ namespace SODMotives
         // would otherwise sit frozen until SniperPinStallHours. Release to the game default EARLY instead. Much shorter
         // than SniperPinStallHours because a reachable site is reached in minutes; hours of waitForLocation = unreachable.
         internal static float SniperVictimReachHours = 3f;
-        // Minimum floor (NewNode.floorHeight; 0 = ground/street level) for a self-enumerated PHYSICS nest. A sniper
-        // should fire from at least a first-story window or a first-story rooftop, never a street-side pavement / the
-        // ground, so ground-level (floor 0) candidate windows are rejected. Tune if floorHeight indexing differs.
-        internal static int SniperMinNestFloor = 1;
+        // Minimum elevation (metres) a self-enumerated PHYSICS nest node must sit ABOVE the ground/street level of the
+        // nest area (the lowest candidate node) -- a sniper fires from at least a first-story window / rooftop, never a
+        // street-side pavement. floorHeight is unreliable (0 for every node in-game), so we gate on world-Y elevation.
+        // ~2.5m ~= one storey. Raise to require higher perches, lower toward 0 to allow ground-level.
+        internal static float SniperMinNestElevation = 2.5f;
         // Max distance (metres) a pinned local nest may be from its site. The vantage solver over-reports: it will
         // return the city's dominant rooftop as a "vantage" over a site two blocks away (a nonsensical cross-city
         // shot that never lines up). A real overlooking nest is across a street, so we reject nests farther than this.
@@ -129,6 +130,12 @@ namespace SODMotives
         // and cast zero rays. Behind a toggle so it can be A/B'd or shipped off. All interop members are probe-verified
         // against BepInEx/interop (scratch reflection probe), and every call is try/catch'd.
         internal static bool SniperPhysicsLosNest = true;   // [Troubleshooting] toggle
+        // When ON, a BROAD physics overlook (>= PhysAdoptMinWindows of the site's windows) is ADOPTED over the
+        // node-graph nest pick, so the killer actually uses it (e.g. a Plaza Orchid landing seeing 9/11 ward windows
+        // instead of the node-graph's narrow 2-node Lovelace pick). Opt-in (default off) because a physics-picked nest
+        // is not yet proven to fire end-to-end; off = keep the node-graph pick (log-only comparison).
+        internal static bool SniperPhysicsAdopt = false;    // [Troubleshooting] toggle
+        private const int PhysAdoptMinWindows = 4;          // adopt only a genuinely broad overlook (>= this many site windows)
         private const float PhysEyeUp = 1.4f;               // gun/eye height above a nest node (~killer.transform.position + aim)
         private const float PhysBodyUp = 1.1f;              // victim torso height above a stand node (~GetBodyAnchor)
         private const float PhysEdge = 0.35f;               // pull ray ends in from each window opening so we don't hit the opening's own frame
@@ -430,15 +437,26 @@ namespace SODMotives
                         bestCover = pSeen != null ? pSeen.Count : 1; seenNodes = pSeen; _lastNestWasPhysics = true;
                     }
                 }
-                else if (physicsOn && bestWall != null && haveRef && diag)
+                else if (physicsOn && bestWall != null && haveRef)
                 {
-                    // LOG-ONLY A/B (debug only): the node-graph pass already found a nest (e.g. the working Daffodil Ward
-                    // case), so we do NOT run the rescue for real -- adopting a physics pick over a firing node-graph pick
-                    // could regress it. But we run it here purely to LOG what physics WOULD choose, so the tester can see
-                    // whether physics finds a broader overlook (Plaza Orchid vs Lovelace) on the very cases that don't
-                    // reach the rescue. No behavioural effect -- the node-graph pick stands.
-                    if (PhysicsRescueNest(killer, targetLoc, refPos, kh, out var cWall, out var cDist, out var cPub, out var cSeen) && cWall != null)
-                        MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los][compare] node-graph PICK {LName(NestLoc(bestWall))} cover={bestCover}/{targets.Count} (kept) vs physics-would-pick {LName(NestLoc(cWall))} {cDist:0}m sees {(cSeen != null ? cSeen.Count : 0)} site-windows -- NOT adopted (node-graph pick already works).");
+                    // The node-graph pass already found a nest (e.g. the working Daffodil Ward -> Lovelace 2nd landing).
+                    // Run the physics rescue too and compare. By default this is LOG-ONLY (we keep the firing node-graph
+                    // pick). But if [Troubleshooting] SniperPhysicsAdopt is on AND physics finds a clearly BROAD overlook
+                    // (>= PhysAdoptMinWindows of the site's windows), ADOPT it -- that is how the killer uses a Plaza
+                    // Orchid-style 9/11 nest instead of a narrow node-graph 2-node pick. Opt-in because a physics nest is
+                    // not yet proven to fire end-to-end; off = the previous (safe) behaviour.
+                    bool adopt = false; try { adopt = SniperPhysicsAdopt; } catch { }
+                    if ((adopt || diag) && PhysicsRescueNest(killer, targetLoc, refPos, kh, out var cWall, out var cDist, out var cPub, out var cSeen) && cWall != null)
+                    {
+                        int cwin = cSeen != null ? cSeen.Count : 0;
+                        if (adopt && cwin >= PhysAdoptMinWindows)
+                        {
+                            MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los][adopt] replacing node-graph {LName(NestLoc(bestWall))} (cover={bestCover}/{targets.Count}) with physics {LName(NestLoc(cWall))} {cDist:0}m sees {cwin} site-windows.");
+                            bestWall = cWall; bestDist = cDist; bestPublic = cPub; bestCover = cwin; seenNodes = cSeen; _lastNestWasPhysics = true;
+                        }
+                        else if (diag)
+                            MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los][compare] node-graph PICK {LName(NestLoc(bestWall))} cover={bestCover}/{targets.Count} (kept) vs physics-would-pick {LName(NestLoc(cWall))} {cDist:0}m sees {cwin} site-windows -- {(adopt ? "below adopt threshold (" + PhysAdoptMinWindows + ")" : "adopt off")}.");
+                    }
                 }
                 // Expand the wander set: with only the ~2 strictly-visible nodes the victim just paces a straight line
                 // between them, and if that line is furniture-blocked the shot never clears. Add the ward nodes NEAR the
@@ -701,32 +719,30 @@ namespace SODMotives
                         // window near the site.
                         var wOpen = new List<Vector3>(); var wStand = new List<NewNode>(); var wWall = new List<NewWall>();
                         CollectWindows(loc, loc, wOpen, wStand, wWall, 16);
-                        // A USABLE nest window is in range AND at least first-story (floorHeight >= SniperMinNestFloor):
-                        // snipers do not fire from ground level / a street-side pavement.
-                        int windowsUsable = 0, repFloor = -999, groundSkipped = 0;
+                        int windowsInRange = 0; float repY = 0f; int repCoordY = -999, repFloor = -999;
                         for (int wi = 0; wi < wStand.Count; wi++)
                         {
                             var n0 = wStand[wi]; if (n0 == null) continue;
                             float d0; try { d0 = Vector3.Distance(n0.position, refPos); } catch { continue; }
                             if (d0 > SniperMaxNestMeters) continue;
-                            int fh0 = 0; try { fh0 = n0.floorHeight; } catch { }
-                            if (fh0 < SniperMinNestFloor) { groundSkipped++; continue; }   // ground-level -> not a nest
-                            windowsUsable++; if (repFloor == -999) repFloor = fh0;
+                            windowsInRange++;
+                            if (repCoordY == -999) { try { repY = n0.position.y; } catch { } try { repCoordY = n0.nodeCoord.y; } catch { } try { repFloor = n0.floorHeight; } catch { } }
                         }
-                        if (windowsUsable == 0)
+                        if (windowsInRange == 0)
                         {
                             // Log NEAR locations we skip, so it is visible WHY a building the user expected (e.g. a hotel
-                            // landing) did not become a candidate: no windows / too far / only ground-level windows.
+                            // landing) did not become a candidate: no windows vs windows-too-far.
                             if (diag && candLogged < 45 && ld <= SniperMaxNestMeters + 10f)
-                            { candLogged++; MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los]   skip {LName(loc)} {ld:0}m rawWindows={wWall.Count} in-range-elevated=0 (groundLevelSkipped={groundSkipped})"); }
+                            { candLogged++; MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los]   skip {LName(loc)} {ld:0}m rawWindows={wWall.Count} in-range=0"); }
                             continue;
                         }
-                        int windowsInRange = windowsUsable;
                         scanned++;
                         bool owned = false, reach = false, acc = false;
                         try { acc = KillerCanAccess(killer, loc, out owned, out reach); } catch { owned = false; reach = false; acc = false; }
+                        // floorHeight reads 0 for every node in-game (not the story index), so we log worldY + nodeCoord.y
+                        // to find the real elevation signal; the ground-level filter itself is world-Y based (below).
                         if (diag && candLogged < 45)
-                        { candLogged++; MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los]   cand {LName(loc)} {ld:0}m windows-in-range={windowsInRange} floor={repFloor} owned={owned} reach={reach} -> {(acc ? "ACCEPT" : "reject (killer cannot access without trespass)")}"); }
+                        { candLogged++; MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los]   cand {LName(loc)} {ld:0}m windows-in-range={windowsInRange} y={repY:0.0} coordY={repCoordY} floor={repFloor} owned={owned} reach={reach} -> {(acc ? "ACCEPT" : "reject (killer cannot access without trespass)")}"); }
                         if (!acc) continue;
                         accessible++;
                         for (int wi = 0; wi < wWall.Count && nestWalls.Count < PhysMaxNestWindows; wi++)
@@ -735,8 +751,6 @@ namespace SODMotives
                             System.IntPtr np; try { np = nn.Pointer; } catch { continue; }
                             float nd; try { nd = Vector3.Distance(nn.position, refPos); } catch { continue; }
                             if (nd > SniperMaxNestMeters) continue;
-                            int fh = 0; try { fh = nn.floorHeight; } catch { }
-                            if (fh < SniperMinNestFloor) continue;   // no ground-level nests
                             if (!nestSeen.Add(np)) continue;
                             nestWalls.Add(ww); nestOpen.Add(wOpen[wi]); nestNode.Add(nn);
                             bool pub = true; try { pub = kh == null || loc.Pointer != kh.Pointer; } catch { }
@@ -747,10 +761,20 @@ namespace SODMotives
                 catch (Exception ee) { if (diag) MotivesPlugin.Log.LogWarning($"[SODMotives][phys-los] enumerate err: {ee.Message}"); }
                 finally { _inNestScan = false; }
 
+                // GROUND-LEVEL FILTER (world-Y). A sniper fires from at least a first-story window / rooftop, never a
+                // street-side pavement. floorHeight is unreliable (0 everywhere), so use elevation above the LOWEST
+                // candidate node (~the street/ground level of the nest area): reject any candidate whose node is less
+                // than SniperMinNestElevation metres above it. Self-calibrating (no dependence on the site's own floor).
+                float groundY = float.MaxValue;
+                for (int ci = 0; ci < nestNode.Count; ci++) { try { float y = nestNode[ci].position.y; if (y < groundY) groundY = y; } catch { } }
+                float elevCut = groundY + SniperMinNestElevation;
+
                 // 3) Score each candidate nest by how many SITE windows it physically overlooks (broadest wins).
-                int rays = 0, bestCover = 0; bool bestPrimary = false;
+                int rays = 0, bestCover = 0, lowRej = 0; bool bestPrimary = false;
                 for (int ci = 0; ci < nestWalls.Count; ci++)
                 {
+                    float ny; try { ny = nestNode[ci].position.y; } catch { ny = groundY; }
+                    if (ny < elevCut) { lowRej++; continue; }             // ground-level -> not a sniper nest
                     var from = nestOpen[ci];
                     int cover = 0; bool seesPrimary = false; var thisSeen = new List<NewNode>();
                     for (int si = 0; si < siteOpen.Count; si++)
@@ -775,9 +799,9 @@ namespace SODMotives
                 //  requires the killer to own/work/live there OR to have a non-trespass safe spot there -- so the winning
                 //  nest's location is walk-reachable by construction. No separate winner re-check needed.)
 
-                int pickFloor = -999; try { if (bestWall != null && bestWall.node != null) pickFloor = bestWall.node.floorHeight; } catch { }
+                float pickY = 0f; try { if (bestWall != null && bestWall.node != null) pickY = bestWall.node.position.y; } catch { }
                 if (diag)
-                    MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los] {LName(targetLoc)}: siteWindows={siteOpen.Count} nearScanned={scanned} accessibleLocs={accessible} nestWindows={nestWalls.Count} rays={rays} -> {(bestWall != null ? "PHYS-PICK " + LName(NestLoc(bestWall)) + " " + bestDist.ToString("0") + "m floor=" + pickFloor + " " + (bestPublic ? "public" : "killer-home") + " sees " + bestCover + "/" + siteOpen.Count + " site-windows" : "NONE (fall to game default)")}.");
+                    MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los] {LName(targetLoc)}: siteWindows={siteOpen.Count} nearScanned={scanned} accessibleLocs={accessible} nestWindows={nestWalls.Count} groundRej={lowRej} rays={rays} groundY={groundY:0.0} elevCut={elevCut:0.0} -> {(bestWall != null ? "PHYS-PICK " + LName(NestLoc(bestWall)) + " " + bestDist.ToString("0") + "m y=" + pickY.ToString("0.0") + " " + (bestPublic ? "public" : "killer-home") + " sees " + bestCover + "/" + siteOpen.Count + " site-windows" : "NONE (fall to game default)")}.");
                 return bestWall != null;
             }
             catch (Exception e) { if (diag) MotivesPlugin.Log.LogWarning($"[SODMotives][phys-los] {LName(targetLoc)} FATAL: {e.Message}"); return false; }

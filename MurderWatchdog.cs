@@ -135,6 +135,9 @@ namespace SODMotives
         // is not yet proven to fire end-to-end; off = keep the node-graph pick (log-only comparison).
         internal static bool SniperPhysicsAdopt = false;    // [Troubleshooting] toggle
         private const int PhysAdoptMinWindows = 4;          // adopt only a genuinely broad overlook (>= this many site windows)
+        // A sniper nest must be in a DIFFERENT building from the victim's site (a shot across the street), not another
+        // floor of the SAME building. Off by default = exclude same-building nests.
+        internal static bool SniperNestAllowSameBuilding = false;   // [Troubleshooting] toggle
         private const float PhysEyeUp = 1.4f;               // gun/eye height above a nest node (~killer.transform.position + aim)
         private const float PhysBodyUp = 1.1f;              // victim torso height above a stand node (~GetBodyAnchor)
         private const float PhysEdge = 0.35f;               // pull ray ends in from each window opening so we don't hit the opening's own frame
@@ -297,6 +300,7 @@ namespace SODMotives
                 var tb = Toolbox.Instance; var drc = DataRaycastController.Instance;
                 if (tb == null || drc == null) return false;
                 NewGameLocation kh = null; try { kh = killer.home; } catch { }
+                NewBuilding siteBuilding = null; try { siteBuilding = targetLoc.building; } catch { }   // exclude same-building nests
 
                 // Target set = the site's nodes (where the victim may stand). targets[0] is the PRIMARY node we most want
                 // covered (the victim's actual node when known, else the anchor). Sample MANY of the site's nodes so a
@@ -344,6 +348,7 @@ namespace SODMotives
                             NewBuilding b = null; try { b = loc.building; } catch { }
                             if (b == null) continue;
                             System.IntPtr bp; try { bp = b.Pointer; } catch { continue; }
+                            if (!SniperNestAllowSameBuilding && siteBuilding != null && bp == siteBuilding.Pointer) continue;   // no same-building nest
                             if (!nearB.TryGetValue(bp, out var ex) || ld < ex.Key) nearB[bp] = new KeyValuePair<float, NewBuilding>(ld, b);
                         }
                         var near = new List<KeyValuePair<float, NewBuilding>>(nearB.Values);
@@ -707,12 +712,14 @@ namespace SODMotives
                     // PhysMaxNestWindows cap with whatever streets/units happen to come first and can cut off the
                     // CLOSEST building (e.g. Plaza Orchid at 18m) before it is ever scanned. Sorting by distance means
                     // the cap prioritises the nearest, most-believable overlooks.
+                    NewBuilding siteBuilding = null; try { siteBuilding = targetLoc.building; } catch { }   // exclude same-building nests
                     var nearLocs = new List<KeyValuePair<float, NewGameLocation>>();
                     for (int li = 0; li < lc; li++)
                     {
                         NewGameLocation loc = null; try { loc = dir[li]; } catch { }
                         if (loc == null) continue;
                         try { if (loc.Pointer == targetLoc.Pointer) continue; } catch { }        // can't nest in the target itself
+                        if (!SniperNestAllowSameBuilding && siteBuilding != null) { try { var lb = loc.building; if (lb != null && lb.Pointer == siteBuilding.Pointer) continue; } catch { } }   // no same-building nest (a sniper shoots across the street, not from another floor)
                         NewNode an = null; try { an = loc.anchorNode; } catch { }
                         if (an == null) continue;
                         float ld; try { ld = Vector3.Distance(an.position, refPos); } catch { continue; }

@@ -152,6 +152,9 @@ namespace SODMotives
             BindApply("Troubleshooting", "SniperPhysicsAdopt", false,
                 "When ON, if the physics-LOS pass finds a clearly BROAD overlook (sees several of the site's windows), the killer ADOPTS it instead of the node-graph nest pick -- this is what makes the shooter actually use an elevated cross-street nest (e.g. a hotel landing overlooking a ward) rather than the game's narrower default. OFF (default) = keep the node-graph pick and only log what physics would have chosen. Turn on to test whether a physics-picked nest fires end-to-end.",
                 v => MurderWatchdog.SniperPhysicsAdopt = v);
+            BindApply("Troubleshooting", "SniperNestAllowSameBuilding", false,
+                "Allow a sniper nest in the SAME building as the victim's site (a different floor). Off (default) = a nest must be in a different building (a shot across the street), never another floor of the victim's own building. Affects both the node-graph and physics-LOS nest pickers.",
+                v => MurderWatchdog.SniperNestAllowSameBuilding = v);
             BindApply("Troubleshooting", "SniperMinNestFloor", 1,
                 "Minimum building floor (NewNode.floor.floor; 0 = ground/street level) for a physics-LOS sniper nest -- a sniper fires from at least a first-story window or rooftop, never a street-side pavement or the ground. Candidate nest windows below this floor are rejected. (1 = first story; 0 allows ground level.) Only affects the physics-LOS rescue's self-enumerated nests.",
                 v => MurderWatchdog.SniperMinNestFloor = v);

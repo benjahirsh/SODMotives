@@ -146,6 +146,9 @@ namespace SODMotives
             BindApply("Troubleshooting", "SniperPinStallHours", 8f,
                 "In-game hours a motivated ExCop sniper may hold a pinned LOCAL nest (the victim's home/work, for a believable 'Daffodil Ward'-style site) before, if it has not fired, RELEASING to the game's own default site (its best-vantage rooftop). Guards against a solver false-positive pinning a site that never lines up. Only affects sniper cases where a local vantage was found; others use the game's default from the start.",
                 v => MurderWatchdog.SniperPinStallHours = v);
+            BindApply("Troubleshooting", "SniperVictimReachHours", 3f,
+                "In-game hours a pinned motivated-sniper case may sit in waitForLocation (the victim walking to the pinned site) before, if the victim STILL has not arrived, releasing to the game's default site. Guards against a victim who cannot reach the pinned site (a workplace they can't enter off-shift, or a spot the herd can't path into) sitting frozen until SniperPinStallHours. A reachable site is reached in minutes, so this is short; raise it if victims legitimately need longer to walk to work.",
+                v => MurderWatchdog.SniperVictimReachHours = v);
             BindApply("Troubleshooting", "SniperMaxNestMeters", 55f,
                 "Max distance (metres) a pinned LOCAL sniper nest may sit from its target site. The game's vantage solver over-reports and will offer the city's dominant rooftop as a 'vantage' over a site two blocks away (a nonsensical cross-city shot that never lines up). A genuine overlooking nest is across a street, so pins whose nest is farther than this are rejected and the case uses the game's default site instead. Raise it to allow longer shots, lower it to be stricter.",
                 v => MurderWatchdog.SniperMaxNestMeters = v);

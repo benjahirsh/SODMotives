@@ -78,6 +78,11 @@ namespace SODMotives
         // is honoured, so pinning holds. If a (solver false-positive) pin never fires, we RELEASE to the game's own
         // default after SniperPinStallHours so it can't hang.
         internal static float SniperPinStallHours = 8f;
+        // If a pinned case is still in waitForLocation after this many in-game hours, the VICTIM never reached the
+        // pinned site (e.g. a workplace they can't enter off-shift, or a node the herd can't path into) -- the case
+        // would otherwise sit frozen until SniperPinStallHours. Release to the game default EARLY instead. Much shorter
+        // than SniperPinStallHours because a reachable site is reached in minutes; hours of waitForLocation = unreachable.
+        internal static float SniperVictimReachHours = 3f;
         // Max distance (metres) a pinned local nest may be from its site. The vantage solver over-reports: it will
         // return the city's dominant rooftop as a "vantage" over a site two blocks away (a nonsensical cross-city
         // shot that never lines up). A real overlooking nest is across a street, so we reject nests farther than this.
@@ -1177,6 +1182,18 @@ namespace SODMotives
                             ClearVictimSniperSiteGoal(victim, pinned);            // un-pin the victim (shot fired / resolving)
                             _sniperPin.Remove(vid); _sniperPinSince.Remove(vid); _sniperWander.Remove(vid); _sniperHerdNode.Remove(vid); _sniperWanderPick.Remove(vid);   // fired/resolved at the local site -- done
                             _moNestPhys = false;
+                        }
+                        else if (murder.state == MurderController.MurderState.waitForLocation
+                                 && NowHours() - (_sniperPinSince.TryGetValue(vid, out var vsince) ? vsince : NowHours()) >= SniperVictimReachHours)
+                        {
+                            // Victim never reached the pinned site (still waitForLocation after SniperVictimReachHours):
+                            // the herd can't get them there (restricted workplace off-shift / unreachable node). Don't
+                            // let them sit frozen for the full stall -- un-pin (resume routine) and use the game default.
+                            ClearVictimSniperSiteGoal(victim, pinned);
+                            _sniperPin.Remove(vid); _sniperPinSince.Remove(vid); _sniperWander.Remove(vid); _sniperHerdNode.Remove(vid); _sniperWanderPick.Remove(vid);
+                            _moNestPhys = false;
+                            MotivesPlugin.Log.LogInfo($"[SODMotives][sniper] victim never reached pinned site {LName(pinned)} within {SniperVictimReachHours:0.#}h (still waitForLocation) -> releasing to the game's default site.");
+                            SeedSniperDefault(murder, killer, victim);
                         }
                         else if (NowHours() - (_sniperPinSince.TryGetValue(vid, out var since) ? since : NowHours()) >= SniperPinStallHours)
                         {

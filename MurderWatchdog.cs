@@ -103,8 +103,20 @@ namespace SODMotives
         private static readonly HashSet<int> _sniperHerdLogged = new HashSet<int>();                                    // victims we've logged the herd for (once each)
         private static readonly Dictionary<int, List<NewNode>> _sniperWander = new Dictionary<int, List<NewNode>>();      // victimId -> the site nodes the pinned nest can see (victim wanders among them, in the sightline)
         private static readonly Dictionary<int, System.IntPtr> _sniperHerdNode = new Dictionary<int, System.IntPtr>();   // victimId -> the wander node currently herded to (to detect when to re-issue the walk goal)
+        private static readonly Dictionary<int, System.IntPtr> _sniperHerdGoalPtr = new Dictionary<int, System.IntPtr>();   // victimId -> the EXACT herd goal we created (removed by pointer on cleanup, so a goal whose node-location != the site can't survive and wedge the victim)
         private static readonly Dictionary<int, KeyValuePair<int, NewNode>> _sniperWanderPick = new Dictionary<int, KeyValuePair<int, NewNode>>();   // victimId -> (time bucket, randomly-chosen wander node for that bucket)
         private static readonly System.Random _sniperRng = new System.Random();
+        // Herd wander cadence (game-hours per bucket). COARSE bucket picks which window to hover; FINE bucket jitters
+        // among the nodes near it. (Original timing -- the cadence was fine; the victim just needs to WALK not run.)
+        private const float SniperWanderCoarseHours = 0.00833f;   // ~30 game-sec: which window to hover
+        private const float SniperWanderFineHours   = 0.00417f;   // ~15 game-sec: jitter around it
+        // Default-site (vanilla fallback) rooftop variety. We enumerate the game's OWN ranked sites best-first and pick
+        // one at RANDOM among the top few instead of always the single best (which is city-universally Mingo/Arquette).
+        // Each time we re-seed a default for the same victim (a failed snipe), we climb one rank toward the best so a
+        // stubborn case still converges on the guaranteed rooftop.
+        private static readonly Dictionary<int, int> _sniperDefaultFails = new Dictionary<int, int>();   // victimId -> times we've seeded a default (0 = first)
+        private const int SniperDefaultMaxRanked = 16;           // enumerate the game's ranking this deep -> the full pool we randomise across (wide variety, not just the top few)
+        private const float SniperDefaultMinScoreFrac = 0.2f;    // drop a scored street below this fraction of the top street's score (a near-zero-coverage sliver the victim never crosses stalls the case)
 
         // FORCE-LOS-NEST (window fix). Decoded from IL2CPP (docs/extensions/sniper-nest-decode.md): the killer's nest
         // is NOT a settable field — it is re-derived every time his sniper AI action activates by calling
@@ -145,6 +157,7 @@ namespace SODMotives
         private const float PhysEdge = 0.35f;               // pull ray ends in from each window opening so we don't hit the opening's own frame
         private const int   PhysMaxNestWindows = 120;       // cap on self-enumerated candidate nest windows per (failing) case (scanned closest-first)
         private const int   PhysMaxSiteWindows = 24;        // cap on the site windows we aim at
+        private const float PhysWindowMaxRise = 2.6f;        // skip a window whose opening sits more than this above its interior floor node -- a multi-story-atrium/void window (glass above a lobby's doors) that no one can stand at, so a nest that "sees" it can't actually shoot a victim there
         private static int  _rainGlassLayer = int.MinValue; // RainWindowGlass layer index (int.MinValue = unresolved, -1 = absent)
         private static bool _physLayersDumped = false;      // one-time layer/mask diagnostic guard
         private static bool _lastNestWasPhysics = false;    // FindBestPublicNest: did the LAST pick come from the physics rescue?
@@ -183,8 +196,8 @@ namespace SODMotives
             _observed.Clear();
             _liveVid = -1; _liveLastLogH = -999f; _liveCount = 0;
             _sniperObserved.Clear(); _sniperLiveVid = -1; _sniperLiveLastLogH = -999f; _sniperLiveCount = 0;
-            _sniperSeeded.Clear(); _sniperPin.Clear(); _sniperPinSince.Clear(); _sniperHerdLogged.Clear(); _sniperWander.Clear(); _sniperHerdNode.Clear(); _sniperWanderPick.Clear();
-            _sniperReachedSite.Clear(); _sniperAwaySince.Clear();
+            _sniperSeeded.Clear(); _sniperPin.Clear(); _sniperPinSince.Clear(); _sniperHerdLogged.Clear(); _sniperWander.Clear(); _sniperHerdNode.Clear(); _sniperWanderPick.Clear(); _sniperHerdGoalPtr.Clear();
+            _sniperReachedSite.Clear(); _sniperAwaySince.Clear(); _sniperDefaultFails.Clear();
             _physLayersDumped = false; _rainGlassLayer = int.MinValue; _lastNestWasPhysics = false; _moNestPhys = false; _moNestRevalidated = false;
             ClearActiveMotivatedSniper();
             _ransomTried.Clear(); _killTimeReasserted.Clear();
@@ -667,6 +680,10 @@ namespace SODMotives
                         if (node == null) continue;
                         try { if (!seen.Add(node.Pointer)) continue; } catch { }
                         Vector3 op; try { op = ww.position; } catch { continue; }
+                        // Skip a multi-story atrium/void window: its opening is far above the interior floor node, so no
+                        // one can stand at it -- counting it inflates a nest's coverage with windows it can never actually
+                        // shoot a victim through, and herding to its node sends the victim into the void.
+                        try { if (op.y - node.position.y > PhysWindowMaxRise) continue; } catch { }
                         openings.Add(op); stands.Add(node); walls.Add(ww);
                     }
                 }
@@ -873,10 +890,79 @@ namespace SODMotives
         // (pinned) one, i.e. the global best, so calling this off the pin lands on the default.
         private static void SeedSniperDefault(MurderController.Murder murder, Human killer, Human victim)
         {
-            NewGameLocation seed = null;
-            for (int attempt = 0; attempt < 4 && seed == null; attempt++)
+            int vid = -1; try { vid = victim.humanID; } catch { }
+            int fail = 0; if (vid >= 0) { _sniperDefaultFails.TryGetValue(vid, out fail); _sniperDefaultFails[vid] = fail + 1; }
+
+            // VoyeurSniper (requiresSniperVantageAtHome) shoots the victim at their OWN home/work from the killer's
+            // window -- its site MUST be the victim's home/work, NEVER a street (a street site makes the voyeur fire gate
+            // never engage -> endless waitForLocation/travellingTo loop). So the street scorer is ExCop-ONLY; Voyeur
+            // falls straight through to the game's own picker below, whose voyeur path returns the correct home/work site.
+            bool voyeur = false; try { var mo0 = murder.mo; voyeur = mo0 != null && mo0.requiresSniperVantageAtHome; } catch { }
+
+            // ExCop: build the ranked pool by SCORING every city STREET for THIS killer with the game's own vantage solver
+            // (Toolbox.TryGetSniperVantagePoint -> out vantageScore, e.g. Mingo ~225, most others sub-100). StreetController
+            // is-a NewGameLocation, so CityData.streetDirectory yields valid ExCop street sites (never a residence). We keep
+            // only streets scoring >= a fraction of the best (a near-zero sliver the victim never crosses stalls the case),
+            // rank best-first, randomise for variety, and climb toward the top per re-seed. Never null the field.
+            var ranked = new List<NewGameLocation>();
+            if (!voyeur)
             {
-                try { if (murder.TryPickNewVictimSite(out var picked) && picked != null) seed = picked; } catch { }
+                _inNestScan = true;   // our vantage-postfix is a no-op for non-pinned sites, but guard against any re-entry
+                try
+                {
+                    var tb = Toolbox.Instance;
+                    var cd = CityData.Instance;
+                    var streets = cd != null ? cd.streetDirectory : null;
+                    int scnt = 0; try { scnt = streets != null ? streets.Count : 0; } catch { }
+                    var scoredPairs = new List<KeyValuePair<float, NewGameLocation>>();
+                    for (int i = 0; i < scnt && tb != null; i++)
+                    {
+                        NewGameLocation s = null; try { s = streets[i]; } catch { }   // StreetController is-a NewGameLocation
+                        if (s == null) continue;
+                        NewWall w = null; float sc = 0f; bool ok = false;
+                        try { ok = tb.TryGetSniperVantagePoint(killer, s, out w, out sc); } catch { ok = false; }
+                        if (ok && w != null && sc > 0f) scoredPairs.Add(new KeyValuePair<float, NewGameLocation>(sc, s));
+                    }
+                    scoredPairs.Sort((x, y) => y.Key.CompareTo(x.Key));   // highest score first
+                    float topScore = scoredPairs.Count > 0 ? scoredPairs[0].Key : 0f;
+                    float floor = topScore * SniperDefaultMinScoreFrac;
+                    for (int i = 0; i < scoredPairs.Count && ranked.Count < SniperDefaultMaxRanked; i++)
+                        if (scoredPairs[i].Key >= floor) ranked.Add(scoredPairs[i].Value);   // drop marginal slivers (e.g. score 9 vs top 225)
+                    if (scoredPairs.Count > 0)
+                    {
+                        var sb = new System.Text.StringBuilder();
+                        for (int i = 0; i < scoredPairs.Count && i < 14; i++) { if (i > 0) sb.Append(", "); sb.Append(LName(scoredPairs[i].Value)).Append('=').Append(scoredPairs[i].Key.ToString("0")); }
+                        try { MotivesPlugin.Log.LogInfo($"[SODMotives][sniper] scored street vantages for {MotivesPlugin.Name(killer)} ({scoredPairs.Count} viable of {scnt}, keeping {ranked.Count} >= {floor:0}): {sb}"); } catch { }
+                    }
+                }
+                catch { }
+                finally { _inNestScan = false; }
+            }
+            if (ranked.Count == 0)   // Voyeur (needs home/work), or ExCop with no viable street -> the game's own MO-aware picker
+            {
+                try
+                {
+                    for (int i = 0; i < SniperDefaultMaxRanked; i++)
+                    {
+                        if (!murder.TryPickNewVictimSite(out var picked) || picked == null) break;
+                        bool dup = false; for (int k = 0; k < ranked.Count; k++) { try { if (ranked[k].Pointer == picked.Pointer) { dup = true; break; } } catch { } }
+                        if (dup) break;
+                        ranked.Add(picked);
+                        try { murder.sniperVictimSite = picked; } catch { break; }   // advance the "!= current" guard (a real, valid, MO-appropriate site, never null)
+                    }
+                }
+                catch { }
+            }
+
+            NewGameLocation seed = null;
+            if (ranked.Count > 0)
+            {
+                // Randomise across the valid pool for variety, then climb one rank toward the best (index 0) per failed
+                // snipe for this victim so a stubborn case still converges on the reliable rooftop.
+                int ceiling = Math.Max(0, (ranked.Count - 1) - fail);
+                int idx = _sniperRng.Next(ceiling + 1);                 // random in [0, ceiling]
+                seed = ranked[idx];
+                try { MotivesPlugin.Log.LogInfo($"[SODMotives][sniper] default pool ({ranked.Count} ranked street sites); fail#{fail} -> picked rank {idx} = {LName(seed)}."); } catch { }
             }
             bool viable = seed != null;
             if (seed == null)
@@ -1005,6 +1091,7 @@ namespace SODMotives
                     catch (Exception ce) { MotivesPlugin.Log.LogWarning($"[SODMotives][sniper] CreateNewGoal(GoTo site) threw: {ce.Message}"); return; }
                     if (siteGoal == null) return;
                     try { _sniperHerdNode[vid] = goNode.Pointer; } catch { }
+                    try { _sniperHerdGoalPtr[vid] = siteGoal.Pointer; } catch { }   // remember the exact goal so cleanup can kill it by pointer
                     if (DebugTools.EnableDebugKeys && _sniperHerdLogged.Add(vid))
                         MotivesPlugin.Log.LogInfo($"[SODMotives][sniper] herding victim {MotivesPlugin.Name(victim)} to wander the nest's sightline at {LName(site)} (walk goal, so a clear physics shot happens even if the exact node is furniture-blocked).");
                 }
@@ -1024,10 +1111,40 @@ namespace SODMotives
         {
             try
             {
-                if (victim == null || site == null) return;
+                if (victim == null) return;
                 NewAIController ai = null; try { ai = victim.ai; } catch { }
                 if (ai == null) return;
-                RemoveAllSiteGoals(ai, site);
+                if (site != null) RemoveAllSiteGoals(ai, site);
+                // ALSO remove the exact goal we tracked, by pointer -- a herd node whose gameLocation differs from the
+                // pinned site (e.g. an atrium/void node) makes RemoveAllSiteGoals' location match miss it, leaving a
+                // priority-100000 goal that wedges the victim OUTSIDE the site for days after the case fell back.
+                int vid = -1; try { vid = victim.humanID; } catch { }
+                if (vid >= 0 && _sniperHerdGoalPtr.TryGetValue(vid, out var gp) && gp != System.IntPtr.Zero)
+                {
+                    RemoveGoalByPtr(ai, gp);
+                    _sniperHerdGoalPtr.Remove(vid);
+                }
+            }
+            catch { }
+        }
+
+        // Remove one goal by its pointer (location-independent). Zeroes priority + isActive then Remove(). Never throws.
+        private static void RemoveGoalByPtr(NewAIController ai, System.IntPtr ptr)
+        {
+            try
+            {
+                var goals = ai != null ? ai.goals : null;
+                if (goals == null) return;
+                int gc = 0; try { gc = goals.Count; } catch { }
+                for (int i = 0; i < gc; i++)
+                {
+                    var g = goals[i]; if (g == null) continue;
+                    System.IntPtr p; try { p = g.Pointer; } catch { continue; }
+                    if (p != ptr) continue;
+                    try { g.basePriority = 0f; g.priority = 0f; g.isActive = false; } catch { }
+                    try { g.Remove(); } catch { }
+                    return;
+                }
             }
             catch { }
         }
@@ -1227,7 +1344,17 @@ namespace SODMotives
                         {
                             try { murder.sniperVictimSite = pin; } catch (Exception se) { MotivesPlugin.Log.LogWarning($"[SODMotives][sniper] pin write err: {se.Message}"); }
                             _sniperPin[vid] = pin; _sniperPinSince[vid] = NowHours();
-                            if (herdNodes != null && herdNodes.Count > 0) _sniperWander[vid] = herdNodes;   // the nodes the nest can see -- victim wanders among them
+                            // Keep only wander nodes that are ON the pinned site (their gameLocation == the site). A node
+                            // physically near a window but belonging to another location (e.g. a multi-story atrium/void)
+                            // must never become a herd target -- herding there wedges the victim off-site and the goal
+                            // survives cleanup. On-site nodes keep the herd local and removable.
+                            if (herdNodes != null && herdNodes.Count > 0)
+                            {
+                                var onSite = new List<NewNode>();
+                                for (int hi = 0; hi < herdNodes.Count; hi++)
+                                { var hn = herdNodes[hi]; if (hn == null) continue; try { var gl = hn.gameLocation; if (gl != null && gl.Pointer == pin.Pointer) onSite.Add(hn); } catch { } }
+                                if (onSite.Count > 0) _sniperWander[vid] = onSite;   // the on-site nodes the nest can see -- victim wanders among them
+                            }
                             _moNestWall = nestWall; _moNestSitePtr = pin.Pointer;   // pre-warm the postfix cache so the killer travels to OUR verified nest
                             _moNestPhys = _lastNestWasPhysics; _moNestRevalidated = false;   // physics-rescued pins get re-validated once the killer arrives
                             MotivesPlugin.Log.LogInfo($"[SODMotives][sniper] pinned LOCAL site {LName(pin)} (a public nest with a verified shot overlooks the victim's home/work) for {MotivesPlugin.Name(killer)} -> {MotivesPlugin.Name(victim)}; killer travels to the nest, releases to the game's default if the victim's whole work shift passes without a shot.");
@@ -1266,14 +1393,14 @@ namespace SODMotives
                         if (resolved)
                         {
                             ClearVictimSniperSiteGoal(victim, pinned);            // un-pin the victim (shot fired / resolving)
-                            _sniperPin.Remove(vid); _sniperPinSince.Remove(vid); _sniperWander.Remove(vid); _sniperHerdNode.Remove(vid); _sniperWanderPick.Remove(vid);
+                            _sniperPin.Remove(vid); _sniperPinSince.Remove(vid); _sniperWander.Remove(vid); _sniperHerdNode.Remove(vid); _sniperWanderPick.Remove(vid); _sniperHerdGoalPtr.Remove(vid);
                             _sniperReachedSite.Remove(vid); _sniperAwaySince.Remove(vid); _moNestPhys = false;
                         }
                         else if (physBlind || shiftEnded || neverShowed)
                         {
                             _moNestRevalidated = true;
                             ClearVictimSniperSiteGoal(victim, pinned);
-                            _sniperPin.Remove(vid); _sniperPinSince.Remove(vid); _sniperWander.Remove(vid); _sniperHerdNode.Remove(vid); _sniperWanderPick.Remove(vid);
+                            _sniperPin.Remove(vid); _sniperPinSince.Remove(vid); _sniperWander.Remove(vid); _sniperHerdNode.Remove(vid); _sniperWanderPick.Remove(vid); _sniperHerdGoalPtr.Remove(vid);
                             _sniperReachedSite.Remove(vid); _sniperAwaySince.Remove(vid); _moNestPhys = false;
                             string why = physBlind ? $"killer reached {LName(NestLoc(_moNestWall))} but it has NO physics line to {LName(pinned)} (streaming false positive)"
                                        : shiftEnded ? $"victim's whole work shift at {LName(pinned)} passed in position without a shot"
@@ -1294,8 +1421,8 @@ namespace SODMotives
                                 NewNode herd = null;
                                 if (_sniperWander.TryGetValue(vid, out var wl) && wl != null && wl.Count > 0)
                                 {
-                                    int coarse = (int)(NowHours() / 0.00833f);   // ~30 game-sec: which window
-                                    int fine = (int)(NowHours() / 0.00417f);     // ~15 game-sec: jitter around it
+                                    int coarse = (int)(NowHours() / SniperWanderCoarseHours);   // which window to hover
+                                    int fine = (int)(NowHours() / SniperWanderFineHours);       // jitter around it
                                     if (!_sniperWanderPick.TryGetValue(vid, out var pick) || pick.Key != fine || pick.Value == null)
                                     {
                                         var anchor = wl[Math.Abs(coarse) % wl.Count];
@@ -1309,6 +1436,10 @@ namespace SODMotives
                                     herd = pick.Value;
                                 }
                                 EnsureVictimSniperSiteGoal(victim, pinned, herd, murder, vid);
+                                // WALK, don't run: the short hop to each rotated wander node otherwise reads as a
+                                // frantic jog. Tick runs every frame, so re-asserting the desired speed here holds it
+                                // to a walk for the whole hop (only while herding -- normal routine is untouched).
+                                try { victim.SetDesiredSpeed(Human.MovementSpeed.walking); } catch { }
                             }
                             // OFF SHIFT (workplace locked): do NOT herd -- just wait for their shift; their natural routine
                             // brings them to work, the game holds waitForLocation until then, and the killer travels on arrival.

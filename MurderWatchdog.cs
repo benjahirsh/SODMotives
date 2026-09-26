@@ -101,13 +101,6 @@ namespace SODMotives
         private static readonly Dictionary<int, float> _sniperInPosSince = new Dictionary<int, float>();                // victimId -> gameTime killer+victim were BOTH first in position (to detect a nest that never lines up)
         private const float SniperShiftEndGraceHours = 1.5f;                                                            // away-from-site this long (after having reached it) = shift ended -> give up
         private const float SniperInPositionGiveUpHours = 2f;                                                           // killer at nest + victim at site this long with no shot = the nest can't line up -> give up
-        // NODE-ACCESS UNBLOCK: furniture marks a node NewNode.noAccess=true so NPCs won't path onto it. The nest-visible
-        // window node is often furniture-blocked (the reported "shot won't line up until I removed the bucket"), so while
-        // herding we temporarily clear noAccess on the wander nodes and RESTORE it when the pin ends. Reversible; touches
-        // the nav flag only (not physical colliders), so the victim can walk to the window (the furniture mesh stays).
-        internal static bool SniperUnblockWindowNodes = true;   // [Troubleshooting] toggle
-        private sealed class NodeBlock { public NewNode node; public bool na; public bool ob; }   // saved original block flags to restore
-        private static readonly Dictionary<int, List<NodeBlock>> _sniperUnblocked = new Dictionary<int, List<NodeBlock>>(); // victimId -> nodes we opened (to restore)
         private static readonly HashSet<int> _sniperHerdLogged = new HashSet<int>();                                    // victims we've logged the herd for (once each)
         private static readonly Dictionary<int, List<NewNode>> _sniperWander = new Dictionary<int, List<NewNode>>();      // victimId -> the site nodes the pinned nest can see (victim wanders among them, in the sightline)
         private static readonly Dictionary<int, System.IntPtr> _sniperHerdNode = new Dictionary<int, System.IntPtr>();   // victimId -> the wander node currently herded to (to detect when to re-issue the walk goal)
@@ -194,8 +187,6 @@ namespace SODMotives
             _sniperObserved.Clear(); _sniperLiveVid = -1; _sniperLiveLastLogH = -999f; _sniperLiveCount = 0;
             _sniperSeeded.Clear(); _sniperPin.Clear(); _sniperPinSince.Clear(); _sniperHerdLogged.Clear(); _sniperWander.Clear(); _sniperHerdNode.Clear(); _sniperWanderPick.Clear();
             _sniperReachedSite.Clear(); _sniperAwaySince.Clear(); _sniperInPosSince.Clear();
-            try { foreach (var kv in _sniperUnblocked) { var l = kv.Value; if (l == null) continue; for (int i = 0; i < l.Count; i++) { var b = l[i]; if (b == null || b.node == null) continue; if (b.na) try { b.node.noAccess = true; } catch { } if (b.ob) try { b.node.SetAsObstacle(true); } catch { } } } } catch { }
-            _sniperUnblocked.Clear();
             _physLayersDumped = false; _rainGlassLayer = int.MinValue; _lastNestWasPhysics = false; _moNestPhys = false; _moNestRevalidated = false;
             ClearActiveMotivatedSniper();
             _ransomTried.Clear(); _killTimeReasserted.Clear();
@@ -875,50 +866,6 @@ namespace SODMotives
             catch { return false; }
         }
 
-        // Temporarily clear NewNode.noAccess on the victim's wander nodes so they can path onto a furniture-blocked
-        // window spot (the nest's sightline). Idempotent: only records+clears nodes that were actually blocked, so we
-        // can restore exactly. The furniture mesh is untouched (nav flag only), so no fall-through-floor risk.
-        private static void UnblockWanderNodes(int vid)
-        {
-            try
-            {
-                if (!SniperUnblockWindowNodes) return;
-                if (!_sniperWander.TryGetValue(vid, out var wl) || wl == null) return;
-                if (!_sniperUnblocked.TryGetValue(vid, out var done)) { done = new List<NodeBlock>(); _sniperUnblocked[vid] = done; }
-                int added = 0;
-                for (int i = 0; i < wl.Count; i++)
-                {
-                    var n = wl[i]; if (n == null) continue;
-                    bool na = false, ob = false; try { na = n.noAccess; } catch { } try { ob = n.isObstacle; } catch { }
-                    if (!na && !ob) continue;                                          // already reachable
-                    bool alreadyDone = false; for (int k = 0; k < done.Count; k++) if (done[k].node == n) { alreadyDone = true; break; }
-                    if (alreadyDone) continue;
-                    done.Add(new NodeBlock { node = n, na = na, ob = ob });            // remember originals
-                    if (na) try { n.noAccess = false; } catch { }
-                    if (ob) try { n.SetAsObstacle(false); } catch { }                  // furniture marks the node an obstacle -> clear so the victim can wander onto it
-                    added++;
-                }
-                if (added > 0) { bool diag = false; try { diag = DebugTools.EnableDebugKeys; } catch { } if (diag) MotivesPlugin.Log.LogInfo($"[SODMotives][sniper] opened {added} furniture-blocked wander node(s) (noAccess/obstacle) so the victim can reach the nest's window (of {wl.Count} wander nodes; {done.Count} total open)."); }
-            }
-            catch { }
-        }
-
-        // Restore the block flags on any nodes we opened for this victim (pin ended / resolved / new game).
-        private static void RestoreUnblockedNodes(int vid)
-        {
-            try
-            {
-                if (!_sniperUnblocked.TryGetValue(vid, out var done) || done == null) { _sniperUnblocked.Remove(vid); return; }
-                for (int i = 0; i < done.Count; i++)
-                {
-                    var b = done[i]; if (b == null || b.node == null) continue;
-                    if (b.na) try { b.node.noAccess = true; } catch { }
-                    if (b.ob) try { b.node.SetAsObstacle(true); } catch { }
-                }
-                _sniperUnblocked.Remove(vid);
-            }
-            catch { _sniperUnblocked.Remove(vid); }
-        }
 
         // The game's OWN default sniper site (its best-vantage rooftop, e.g. the city's dominant street) via
         // Murder.TryPickNewVictimSite. When that returns nothing, anchor to a NON-HOME location the victim is usually
@@ -1327,7 +1274,6 @@ namespace SODMotives
                         if (resolved)
                         {
                             ClearVictimSniperSiteGoal(victim, pinned);            // un-pin the victim (shot fired / resolving)
-                            RestoreUnblockedNodes(vid);                           // restore any furniture-blocked nodes we opened
                             _sniperPin.Remove(vid); _sniperPinSince.Remove(vid); _sniperWander.Remove(vid); _sniperHerdNode.Remove(vid); _sniperWanderPick.Remove(vid);
                             _sniperReachedSite.Remove(vid); _sniperAwaySince.Remove(vid); _sniperInPosSince.Remove(vid); _moNestPhys = false;
                         }
@@ -1335,7 +1281,6 @@ namespace SODMotives
                         {
                             _moNestRevalidated = true;
                             ClearVictimSniperSiteGoal(victim, pinned);
-                            RestoreUnblockedNodes(vid);
                             _sniperPin.Remove(vid); _sniperPinSince.Remove(vid); _sniperWander.Remove(vid); _sniperHerdNode.Remove(vid); _sniperWanderPick.Remove(vid);
                             _sniperReachedSite.Remove(vid); _sniperAwaySince.Remove(vid); _sniperInPosSince.Remove(vid); _moNestPhys = false;
                             string why = physBlind ? $"killer reached {LName(NestLoc(_moNestWall))} but it has NO physics line to {LName(pinned)} (streaming false positive)"
@@ -1352,11 +1297,9 @@ namespace SODMotives
                             try { var cur = murder.sniperVictimSite; if (cur == null || cur.Pointer != pinned.Pointer) murder.sniperVictimSite = pinned; } catch { }
                             if (atSite)
                             {
-                                // AT THE SITE (on shift): open any furniture-blocked wander nodes so the victim can reach
-                                // the window spot the nest sees, then HERD them to WANDER the sightline so a clear physics
+                                // AT THE SITE (on shift): HERD the victim to WANDER the nest's sightline so a clear physics
                                 // shot lines up. Two-tier: a COARSE ~30s bucket picks an anchor window; a FINE ~15s bucket
                                 // jitters among the nodes near it (<=3.5m) -- wander AROUND a window then switch.
-                                UnblockWanderNodes(vid);
                                 NewNode herd = null;
                                 if (_sniperWander.TryGetValue(vid, out var wl) && wl != null && wl.Count > 0)
                                 {

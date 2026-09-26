@@ -152,9 +152,9 @@ namespace SODMotives
             BindApply("Troubleshooting", "SniperPhysicsAdopt", false,
                 "When ON, if the physics-LOS pass finds a clearly BROAD overlook (sees several of the site's windows), the killer ADOPTS it instead of the node-graph nest pick -- this is what makes the shooter actually use an elevated cross-street nest (e.g. a hotel landing overlooking a ward) rather than the game's narrower default. OFF (default) = keep the node-graph pick and only log what physics would have chosen. Turn on to test whether a physics-picked nest fires end-to-end.",
                 v => MurderWatchdog.SniperPhysicsAdopt = v);
-            BindApply("Troubleshooting", "SniperMinNestElevation", 2.5f,
-                "Minimum elevation (metres) a physics-LOS sniper nest must sit ABOVE the ground/street level of its area -- a sniper fires from at least a first-story window or rooftop, never a street-side pavement or the ground. Candidate nest windows below this height are rejected. (~2.5m ~= one storey; 0 allows ground level.) Only affects the physics-LOS rescue's self-enumerated nests.",
-                v => MurderWatchdog.SniperMinNestElevation = v);
+            BindApply("Troubleshooting", "SniperMinNestFloor", 1,
+                "Minimum building floor (NewNode.floor.floor; 0 = ground/street level) for a physics-LOS sniper nest -- a sniper fires from at least a first-story window or rooftop, never a street-side pavement or the ground. Candidate nest windows below this floor are rejected. (1 = first story; 0 allows ground level.) Only affects the physics-LOS rescue's self-enumerated nests.",
+                v => MurderWatchdog.SniperMinNestFloor = v);
             BindApply("Troubleshooting", "SniperMaxNestMeters", 55f,
                 "Max distance (metres) a pinned LOCAL sniper nest may sit from its target site. The game's vantage solver over-reports and will offer the city's dominant rooftop as a 'vantage' over a site two blocks away (a nonsensical cross-city shot that never lines up). A genuine overlooking nest is across a street, so pins whose nest is farther than this are rejected and the case uses the game's default site instead. Raise it to allow longer shots, lower it to be stricter.",
                 v => MurderWatchdog.SniperMaxNestMeters = v);

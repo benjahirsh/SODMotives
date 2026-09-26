@@ -83,11 +83,10 @@ namespace SODMotives
         // would otherwise sit frozen until SniperPinStallHours. Release to the game default EARLY instead. Much shorter
         // than SniperPinStallHours because a reachable site is reached in minutes; hours of waitForLocation = unreachable.
         internal static float SniperVictimReachHours = 3f;
-        // Minimum elevation (metres) a self-enumerated PHYSICS nest node must sit ABOVE the ground/street level of the
-        // nest area (the lowest candidate node) -- a sniper fires from at least a first-story window / rooftop, never a
-        // street-side pavement. floorHeight is unreliable (0 for every node in-game), so we gate on world-Y elevation.
-        // ~2.5m ~= one storey. Raise to require higher perches, lower toward 0 to allow ground-level.
-        internal static float SniperMinNestElevation = 2.5f;
+        // Minimum building floor for a self-enumerated PHYSICS nest (NewNode.floor.floor; 0 = ground/street). A sniper
+        // fires from at least a first-story window / rooftop, never a street-side pavement. (NewNode.floorHeight is a
+        // different field that reads 0 everywhere -- floor.floor is the real story index.) 1 = first story; 0 allows ground.
+        internal static int SniperMinNestFloor = 1;
         // Max distance (metres) a pinned local nest may be from its site. The vantage solver over-reports: it will
         // return the city's dominant rooftop as a "vantage" over a site two blocks away (a nonsensical cross-city
         // shot that never lines up). A real overlooking nest is across a street, so we reject nests farther than this.
@@ -595,22 +594,29 @@ namespace SODMotives
             catch { return false; }
         }
 
-        // The user's accessibility rule: a nest must be somewhere the KILLER can legitimately be -- a rooftop / public
-        // or common area (lobby, hallway, stairwell landing), OR an address the suspect has access to (their own home,
-        // their workplace, or a place they own). NOT a stranger's private flat or a locked business.
-        // The RELIABLE access signal is a NON-TRESPASS safe spot: killer.FindSafeTeleport(nl, false, allowTrespass:false)
-        // returns a node only where the killer can stand WITHOUT trespassing (public/common/owned) -- our own kidnap
-        // decode (docs/extensions/kidnap-abduction-handover.md) established that IsPublicallyOpen is NOT the walk-in
-        // signal (a walk-in-able unit read NPC_OPEN=false; access is gated by trespass). So we lead with the
-        // FindSafeTeleport test; home/owns/works are kept as definite-yes fast-paths. Out-params expose the reasons for
-        // diagnostics. All members probe-confirmed. FindSafeTeleport is the costlier call, so callers gate it behind the
-        // window/distance filters (only locations with an in-range window are ever tested).
-        private static bool KillerCanAccess(Human killer, NewGameLocation nl, out bool owned, out bool reach)
+        // The story index of a nest node (NewNode.floor.floor; 0 = ground/street). -999 if unavailable.
+        // (NewNode.floorHeight is a DIFFERENT field that reads 0 for every node in-game; floor.floor is the real one.)
+        private static int NestFloor(NewNode n)
         {
-            owned = false; reach = false;
+            try { var f = n != null ? n.floor : null; if (f != null) return f.floor; } catch { }
+            return -999;
+        }
+
+        // The user's accessibility rule: a nest must be somewhere the KILLER can legitimately be -- a rooftop / public
+        // or building-common area (lobby, hallway, stairwell landing), OR a place the suspect belongs (their home, a
+        // place they own, or their workplace). NOT a stranger's private flat / hotel room. The reliable signal is the
+        // location's own access class NewGameLocation.access (AddressPreset.AccessType: allPublic=0, residents=1,
+        // buildingInhabitants=2, employees=3, none=4). We accept allPublic + buildingInhabitants (common areas a sniper
+        // can walk into) and, for residents/employees, only when the killer belongs there. (IsPublicallyOpen and
+        // FindSafeTeleport(allowTrespass:false) were both tried and are NOT reliable here -- the latter accepted the
+        // private room 301.) accessVal is exposed for diagnostics.
+        private static bool KillerCanAccess(Human killer, NewGameLocation nl, out int accessVal, out bool owned)
+        {
+            accessVal = -1; owned = false;
             try
             {
                 if (nl == null) return false;
+                try { accessVal = (int)nl.access; } catch { accessVal = -1; }
                 NewAddress addr = null; try { addr = nl.thisAsAddress; } catch { }
                 if (addr != null)
                 {
@@ -618,40 +624,43 @@ namespace SODMotives
                     if (!owned) try { var own = addr.owners; if (own != null) { int c = own.Count; for (int i = 0; i < c; i++) { var o = own[i]; if (o != null && killer != null && o.Pointer == killer.Pointer) { owned = true; break; } } } } catch { }
                 }
                 if (!owned) try { var j = killer != null ? killer.job : null; var e = j != null ? j.employer : null; var pob = e != null ? e.placeOfBusiness : null; if (pob != null && pob.Pointer == nl.Pointer) owned = true; } catch { }
-                if (owned) { reach = true; return true; }
-                try { reach = killer != null && killer.FindSafeTeleport(nl, false, false) != null; } catch { reach = false; }
-                return reach;
+                if (owned) return true;                                       // killer belongs here (home / owns / works)
+                bool common = false;
+                try { common = nl.access == AddressPreset.AccessType.allPublic || nl.access == AddressPreset.AccessType.buildingInhabitants; } catch { common = false; }
+                return common;                                               // public lobby / hallway / stairwell landing / rooftop
             }
             catch { return false; }
         }
 
-        // Collect a location's WINDOW entrances (NodeAccess.accessType == window). openings = the world opening point
-        // (the aim/fire point); stands = the node on the 'inside' side (where the victim is exposed / the killer
-        // stands); walls = the window wall (what the killer travels to). Probe-confirmed NodeAccess members.
-        private static void CollectWindows(NewGameLocation loc, NewGameLocation inside, List<Vector3> openings, List<NewNode> stands, List<NewWall> walls, int cap)
+        // Collect a location's exterior WINDOW WALLS via its rooms (NewRoom.windows = List<NewWall>). This is how the
+        // game models view windows -- including a common landing's window, which is NOT a NodeAccess entrance (that is
+        // why the entrance-based enumeration missed it). openings = the window wall's world position (aim/fire point);
+        // stands = the wall's interior node (where the victim is exposed / the killer stands); walls = the window wall.
+        private static void CollectWindows(NewGameLocation loc, List<Vector3> openings, List<NewNode> stands, List<NewWall> walls, int cap)
         {
             try
             {
-                var ents = loc != null ? loc.entrances : null;
-                if (ents == null) return;
-                int c = 0; try { c = ents.Count; } catch { }
-                for (int i = 0; i < c && openings.Count < cap; i++)
+                var rooms = loc != null ? loc.rooms : null;
+                if (rooms == null) return;
+                int rc = 0; try { rc = rooms.Count; } catch { }
+                var seen = new HashSet<System.IntPtr>();
+                for (int ri = 0; ri < rc && openings.Count < cap; ri++)
                 {
-                    NewNode.NodeAccess e = null; try { e = ents[i]; } catch { }
-                    if (e == null) continue;
-                    bool isWin = false; try { isWin = e.accessType == NewNode.NodeAccess.AccessType.window; } catch { }
-                    if (!isWin) continue;
-                    NewWall ww = null; try { ww = e.wall; } catch { }
-                    NewNode fn = null, tn = null; try { fn = e.fromNode; } catch { } try { tn = e.toNode; } catch { }
-                    NewNode stand = null;
-                    try { if (fn != null && inside != null && fn.gameLocation != null && fn.gameLocation.Pointer == inside.Pointer) stand = fn; } catch { }
-                    try { if (stand == null && tn != null && inside != null && tn.gameLocation != null && tn.gameLocation.Pointer == inside.Pointer) stand = tn; } catch { }
-                    if (stand == null) stand = fn != null ? fn : tn;
-                    Vector3 op = default; bool haveOp = false;
-                    try { op = e.worldAccessPoint; haveOp = true; } catch { }
-                    if (!haveOp && stand != null) { try { op = new Vector3(stand.position.x, stand.position.y + PhysBodyUp, stand.position.z); haveOp = true; } catch { } }
-                    if (!haveOp) continue;
-                    openings.Add(op); stands.Add(stand); walls.Add(ww);
+                    NewRoom room = null; try { room = rooms[ri]; } catch { }
+                    if (room == null) continue;
+                    Il2CppSystem.Collections.Generic.List<NewWall> wins = null; try { wins = room.windows; } catch { }
+                    if (wins == null) continue;
+                    int wc = 0; try { wc = wins.Count; } catch { }
+                    for (int wi = 0; wi < wc && openings.Count < cap; wi++)
+                    {
+                        NewWall ww = null; try { ww = wins[wi]; } catch { }
+                        if (ww == null) continue;
+                        NewNode node = null; try { node = ww.node; } catch { }
+                        if (node == null) continue;
+                        try { if (!seen.Add(node.Pointer)) continue; } catch { }
+                        Vector3 op; try { op = ww.position; } catch { continue; }
+                        openings.Add(op); stands.Add(node); walls.Add(ww);
+                    }
                 }
             }
             catch { }
@@ -677,7 +686,7 @@ namespace SODMotives
 
                 // 1) The SITE's own windows = the aim points (where the victim is exposed, and where we herd them).
                 var siteOpen = new List<Vector3>(); var siteStand = new List<NewNode>(); var siteWalls = new List<NewWall>();
-                CollectWindows(targetLoc, targetLoc, siteOpen, siteStand, siteWalls, PhysMaxSiteWindows);
+                CollectWindows(targetLoc, siteOpen, siteStand, siteWalls, PhysMaxSiteWindows);
                 if (siteOpen.Count == 0)
                 {
                     // No enumerable windows (e.g. an open site): fall back to the site's nodes as aim points.
@@ -714,35 +723,35 @@ namespace SODMotives
                     for (int li = 0; li < nearLocs.Count && nestWalls.Count < PhysMaxNestWindows; li++)
                     {
                         NewGameLocation loc = nearLocs[li].Value; float ld = nearLocs[li].Key;
-                        // Collect this location's windows FIRST and keep only those whose nest node is in range, so the
-                        // costlier access test (FindSafeTeleport) runs ONLY on locations that actually have a candidate
-                        // window near the site.
+                        // Collect this location's window walls FIRST and keep only those in range AND at least first-story
+                        // (floor.floor >= SniperMinNestFloor), so the access test runs only on locations that actually
+                        // have a usable elevated nest window near the site.
                         var wOpen = new List<Vector3>(); var wStand = new List<NewNode>(); var wWall = new List<NewWall>();
-                        CollectWindows(loc, loc, wOpen, wStand, wWall, 16);
-                        int windowsInRange = 0; float repY = 0f; int repCoordY = -999, repFloor = -999;
+                        CollectWindows(loc, wOpen, wStand, wWall, 16);
+                        int windowsUsable = 0, groundSkipped = 0; float repY = 0f; int repFloor = -999;
                         for (int wi = 0; wi < wStand.Count; wi++)
                         {
                             var n0 = wStand[wi]; if (n0 == null) continue;
                             float d0; try { d0 = Vector3.Distance(n0.position, refPos); } catch { continue; }
                             if (d0 > SniperMaxNestMeters) continue;
-                            windowsInRange++;
-                            if (repCoordY == -999) { try { repY = n0.position.y; } catch { } try { repCoordY = n0.nodeCoord.y; } catch { } try { repFloor = n0.floorHeight; } catch { } }
+                            int fl = NestFloor(n0);
+                            if (fl != -999 && fl < SniperMinNestFloor) { groundSkipped++; continue; }   // ground-level -> not a nest
+                            windowsUsable++;
+                            if (repFloor == -999) { repFloor = fl; try { repY = n0.position.y; } catch { } }
                         }
-                        if (windowsInRange == 0)
+                        if (windowsUsable == 0)
                         {
-                            // Log NEAR locations we skip, so it is visible WHY a building the user expected (e.g. a hotel
-                            // landing) did not become a candidate: no windows vs windows-too-far.
+                            // Log NEAR locations we skip, so it is visible WHY an expected building did not become a
+                            // candidate: no window walls / too far / only ground-level windows.
                             if (diag && candLogged < 45 && ld <= SniperMaxNestMeters + 10f)
-                            { candLogged++; MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los]   skip {LName(loc)} {ld:0}m rawWindows={wWall.Count} in-range=0"); }
+                            { candLogged++; MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los]   skip {LName(loc)} {ld:0}m rawWindows={wWall.Count} usable=0 (groundLevelSkipped={groundSkipped})"); }
                             continue;
                         }
                         scanned++;
-                        bool owned = false, reach = false, acc = false;
-                        try { acc = KillerCanAccess(killer, loc, out owned, out reach); } catch { owned = false; reach = false; acc = false; }
-                        // floorHeight reads 0 for every node in-game (not the story index), so we log worldY + nodeCoord.y
-                        // to find the real elevation signal; the ground-level filter itself is world-Y based (below).
+                        int accessVal = -1; bool owned = false, acc = false;
+                        try { acc = KillerCanAccess(killer, loc, out accessVal, out owned); } catch { accessVal = -1; owned = false; acc = false; }
                         if (diag && candLogged < 45)
-                        { candLogged++; MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los]   cand {LName(loc)} {ld:0}m windows-in-range={windowsInRange} y={repY:0.0} coordY={repCoordY} floor={repFloor} owned={owned} reach={reach} -> {(acc ? "ACCEPT" : "reject (killer cannot access without trespass)")}"); }
+                        { candLogged++; MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los]   cand {LName(loc)} {ld:0}m usable={windowsUsable} floor={repFloor} y={repY:0.0} access={accessVal} owned={owned} -> {(acc ? "ACCEPT" : "reject (private -- killer has no access)")}"); }
                         if (!acc) continue;
                         accessible++;
                         for (int wi = 0; wi < wWall.Count && nestWalls.Count < PhysMaxNestWindows; wi++)
@@ -751,6 +760,7 @@ namespace SODMotives
                             System.IntPtr np; try { np = nn.Pointer; } catch { continue; }
                             float nd; try { nd = Vector3.Distance(nn.position, refPos); } catch { continue; }
                             if (nd > SniperMaxNestMeters) continue;
+                            int fl = NestFloor(nn); if (fl != -999 && fl < SniperMinNestFloor) continue;   // no ground-level nests
                             if (!nestSeen.Add(np)) continue;
                             nestWalls.Add(ww); nestOpen.Add(wOpen[wi]); nestNode.Add(nn);
                             bool pub = true; try { pub = kh == null || loc.Pointer != kh.Pointer; } catch { }
@@ -761,20 +771,10 @@ namespace SODMotives
                 catch (Exception ee) { if (diag) MotivesPlugin.Log.LogWarning($"[SODMotives][phys-los] enumerate err: {ee.Message}"); }
                 finally { _inNestScan = false; }
 
-                // GROUND-LEVEL FILTER (world-Y). A sniper fires from at least a first-story window / rooftop, never a
-                // street-side pavement. floorHeight is unreliable (0 everywhere), so use elevation above the LOWEST
-                // candidate node (~the street/ground level of the nest area): reject any candidate whose node is less
-                // than SniperMinNestElevation metres above it. Self-calibrating (no dependence on the site's own floor).
-                float groundY = float.MaxValue;
-                for (int ci = 0; ci < nestNode.Count; ci++) { try { float y = nestNode[ci].position.y; if (y < groundY) groundY = y; } catch { } }
-                float elevCut = groundY + SniperMinNestElevation;
-
                 // 3) Score each candidate nest by how many SITE windows it physically overlooks (broadest wins).
-                int rays = 0, bestCover = 0, lowRej = 0; bool bestPrimary = false;
+                int rays = 0, bestCover = 0; bool bestPrimary = false;
                 for (int ci = 0; ci < nestWalls.Count; ci++)
                 {
-                    float ny; try { ny = nestNode[ci].position.y; } catch { ny = groundY; }
-                    if (ny < elevCut) { lowRej++; continue; }             // ground-level -> not a sniper nest
                     var from = nestOpen[ci];
                     int cover = 0; bool seesPrimary = false; var thisSeen = new List<NewNode>();
                     for (int si = 0; si < siteOpen.Count; si++)
@@ -795,13 +795,12 @@ namespace SODMotives
                     { bestWall = nestWalls[ci]; bestDist = d; bestPublic = pub; bestCover = cover; bestPrimary = seesPrimary; seenNodes = thisSeen; }
                 }
 
-                // (Reachability is already guaranteed: every accepted candidate location passed KillerCanAccess, which
-                //  requires the killer to own/work/live there OR to have a non-trespass safe spot there -- so the winning
-                //  nest's location is walk-reachable by construction. No separate winner re-check needed.)
+                // (Accessibility is already guaranteed: every accepted candidate location passed KillerCanAccess -- a
+                //  public/building-common area or a place the killer belongs -- so the winning nest is reachable.)
 
-                float pickY = 0f; try { if (bestWall != null && bestWall.node != null) pickY = bestWall.node.position.y; } catch { }
+                int pickFloor = -999; try { if (bestWall != null) pickFloor = NestFloor(bestWall.node); } catch { }
                 if (diag)
-                    MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los] {LName(targetLoc)}: siteWindows={siteOpen.Count} nearScanned={scanned} accessibleLocs={accessible} nestWindows={nestWalls.Count} groundRej={lowRej} rays={rays} groundY={groundY:0.0} elevCut={elevCut:0.0} -> {(bestWall != null ? "PHYS-PICK " + LName(NestLoc(bestWall)) + " " + bestDist.ToString("0") + "m y=" + pickY.ToString("0.0") + " " + (bestPublic ? "public" : "killer-home") + " sees " + bestCover + "/" + siteOpen.Count + " site-windows" : "NONE (fall to game default)")}.");
+                    MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los] {LName(targetLoc)}: siteWindows={siteOpen.Count} nearScanned={scanned} accessibleLocs={accessible} nestWindows={nestWalls.Count} rays={rays} -> {(bestWall != null ? "PHYS-PICK " + LName(NestLoc(bestWall)) + " " + bestDist.ToString("0") + "m floor=" + pickFloor + " " + (bestPublic ? "public" : "killer-home") + " sees " + bestCover + "/" + siteOpen.Count + " site-windows" : "NONE (fall to game default)")}.");
                 return bestWall != null;
             }
             catch (Exception e) { if (diag) MotivesPlugin.Log.LogWarning($"[SODMotives][phys-los] {LName(targetLoc)} FATAL: {e.Message}"); return false; }
@@ -831,7 +830,7 @@ namespace SODMotives
                 // Body-anchor aim points = the stand nodes just inside the site's windows (where the victim is exposed),
                 // else a sample of the site's nodes.
                 var siteOpen = new List<Vector3>(); var siteStand = new List<NewNode>(); var siteWalls = new List<NewWall>();
-                CollectWindows(site, site, siteOpen, siteStand, siteWalls, PhysMaxSiteWindows);
+                CollectWindows(site, siteOpen, siteStand, siteWalls, PhysMaxSiteWindows);
                 var aims = new List<Vector3>();
                 for (int i = 0; i < siteStand.Count; i++) { var n = siteStand[i]; if (n != null) { try { aims.Add(new Vector3(n.position.x, n.position.y + PhysBodyUp, n.position.z)); } catch { } } }
                 if (aims.Count == 0)

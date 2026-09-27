@@ -119,6 +119,15 @@ namespace SODMotives
         private static readonly Dictionary<int, int> _sniperDefaultFails = new Dictionary<int, int>();   // victimId -> times we've seeded a default (0 = first)
         private const int SniperDefaultMaxRanked = 16;           // enumerate the game's ranking this deep -> the full pool we randomise across (wide variety, not just the top few)
         private const float SniperDefaultMinScoreFrac = 0.2f;    // drop a scored street below this fraction of the top street's score (a near-zero-coverage sliver the victim never crosses stalls the case)
+        // DEFAULT-SITE BACKSTOP. Once we release to (or start on) the game's default site and hand the shot to the game,
+        // the pin give-up no longer supervises the case (there is no pin). That is fine when the default fires, but an
+        // injected street site can leave the game unable to build a firing node for THIS killer (killShotNode stays
+        // zero): the case then loops acquireEquipment->research->waitForLocation->travellingTo forever, the killer never
+        // reaching a nest, and NOTHING ends it (nobody is "in position" and the victim does show, so no earlier cap can
+        // fire). This is the absolute wall-clock backstop: default seeded this long ago without the case resolving =
+        // definitively hung -> cancel to vanilla (the game rolls a fresh, coherent case) so it can never soft-lock.
+        private static readonly Dictionary<int, float> _sniperDefaultSince = new Dictionary<int, float>();   // victimId -> gameTime we first seeded the game's default site (no pin)
+        private const float SniperDefaultCapHours = 24f;         // default site unresolved this long (a full day-night of the victim's routine) = hung -> cancel to vanilla
 
         // FORCE-LOS-NEST (window fix). Decoded from IL2CPP (docs/extensions/sniper-nest-decode.md): the killer's nest
         // is NOT a settable field — it is re-derived every time his sniper AI action activates by calling
@@ -199,7 +208,7 @@ namespace SODMotives
             _liveVid = -1; _liveLastLogH = -999f; _liveCount = 0;
             _sniperObserved.Clear(); _sniperLiveVid = -1; _sniperLiveLastLogH = -999f; _sniperLiveCount = 0;
             _sniperSeeded.Clear(); _sniperPin.Clear(); _sniperPinSince.Clear(); _sniperHerdLogged.Clear(); _sniperWander.Clear(); _sniperHerdNode.Clear(); _sniperWanderPick.Clear(); _sniperHerdGoalPtr.Clear();
-            _sniperReachedSite.Clear(); _sniperAwaySince.Clear(); _sniperInPosSince.Clear(); _sniperDefaultFails.Clear();
+            _sniperReachedSite.Clear(); _sniperAwaySince.Clear(); _sniperInPosSince.Clear(); _sniperDefaultFails.Clear(); _sniperDefaultSince.Clear();
             _physLayersDumped = false; _rainGlassLayer = int.MinValue; _lastNestWasPhysics = false; _moNestPhys = false; _moNestRevalidated = false;
             ClearActiveMotivatedSniper();
             _ransomTried.Clear(); _killTimeReasserted.Clear();
@@ -982,6 +991,7 @@ namespace SODMotives
             if (seed != null)
             {
                 try { murder.sniperVictimSite = seed; } catch (Exception se) { MotivesPlugin.Log.LogWarning($"[SODMotives][sniper] seed write err: {se.Message}"); }
+                if (vid >= 0 && !_sniperDefaultSince.ContainsKey(vid)) _sniperDefaultSince[vid] = NowHours();   // start the absolute backstop clock the first time we enter the default (no-pin) state
                 MotivesPlugin.Log.LogInfo($"[SODMotives][sniper] seeded sniperVictimSite = {LName(seed)} ({(viable ? "game default (best rooftop)" : "no viable vantage -> non-home anchor; game force-kills")}) for {MotivesPlugin.Name(killer)} -> {MotivesPlugin.Name(victim)}; deferring shot + force-kill to the game.");
             }
             else
@@ -1459,6 +1469,32 @@ namespace SODMotives
                             // OFF SHIFT (workplace locked): do NOT herd -- just wait for their shift; their natural routine
                             // brings them to work, the game holds waitForLocation until then, and the killer travels on arrival.
                             // (No herd goal is created off-shift, so there is nothing to clear.)
+                        }
+                    }
+                    else if (_sniperDefaultSince.TryGetValue(vid, out var defSince))
+                    {
+                        // DEFAULT-SITE BACKSTOP (no pin). We released to (or started on) the game's default site and
+                        // handed the shot to the game. That normally resolves, but if the injected site yields no firing
+                        // node for this killer the case loops travellingTo forever and the pin give-up above cannot catch
+                        // it (there is no pin, nobody is in position, the victim does show). This is the absolute
+                        // wall-clock backstop: if the default hasn't produced a shot within SniperDefaultCapHours, cancel
+                        // to vanilla so the game rolls a fresh, coherent case rather than soft-locking.
+                        bool resolved = murder.state == MurderController.MurderState.executing
+                            || murder.state == MurderController.MurderState.post
+                            || murder.state == MurderController.MurderState.escaping
+                            || murder.state == MurderController.MurderState.unsolved;
+                        if (resolved)
+                        {
+                            _sniperDefaultSince.Remove(vid); _sniperDefaultFails.Remove(vid);
+                            _sniperReachedSite.Remove(vid); _sniperAwaySince.Remove(vid); _sniperInPosSince.Remove(vid);
+                        }
+                        else if (NowHours() - defSince >= SniperDefaultCapHours)
+                        {
+                            _sniperDefaultSince.Remove(vid); _sniperDefaultFails.Remove(vid);
+                            _sniperReachedSite.Remove(vid); _sniperAwaySince.Remove(vid); _sniperInPosSince.Remove(vid);
+                            _sniperSeeded.Remove(vid);   // cancel spares the victim; if re-targeted later, let the case re-seed cleanly
+                            MotivesPlugin.Log.LogWarning($"[SODMotives][sniper] {MotivesPlugin.Name(killer)} -> {MotivesPlugin.Name(victim)} never fired from the game's default site within {SniperDefaultCapHours:0.#}h (the injected site yields no firing node -> the case loops travellingTo forever); cancelling to vanilla so it can't hang.");
+                            try { murder.CancelCurrentMurder(); } catch (Exception ce) { MotivesPlugin.Log.LogWarning($"[SODMotives][sniper] default-backstop cancel error: {ce.Message}"); }
                         }
                     }
                     return;   // snipers defer entirely to the game; skip the kidnap-oriented interventions below

@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.2.2
+Fix: closed a rare remaining case where a motivated sniper could still stall. After a sniper gave up its planned nest and fell back to a normal firing site, that fallback site could itself never line up a clear shot, leaving the killer repositioning indefinitely with the case unresolved. A motivated sniper that produces no shot at its fallback site now reverts to an ordinary case after a day, so a sniper can never hang the game.
+
 ## 1.2.1
 Fix: a motivated sniper case could hang if the victim's workplace was chosen as the shot site but the sniper's nest could never line up a clear shot. The killer and victim would then stand in position indefinitely, with no shot and no resolution. The case now gives up after a full shift in that standoff and hands off to a vanilla firing site, so it stays solvable and cannot stall.
 

@@ -127,7 +127,7 @@ namespace SODMotives
                 go.hideFlags = HideFlags.HideAndDontSave;
                 go.AddComponent<DebugHotkey>();
                 if (EnableDebugKeys)
-                    MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys ON (defaults; rebindable in the config menu -> SOD Motives / Debug Keys): F3=FORCE a motivated SNIPER case now, F4=trigger next murder NOW, F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=TEST ACCESS (ghost + always-answer together), F8=teleport to nearest KILLER-knower, F9=case solution overlay, F10=teleport to scene, F11=to kidnap MEETING location, F12=to VICTIM's home, Home=teleport to City Hall, End=toggle fast-forward (simulation speed). (F1 reserved by the game; F2 + F5 unbound.)");
+                    MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys ON (defaults; rebindable in the config menu -> SOD Motives / Debug Keys): F3=FORCE a motivated SNIPER case now, F4=trigger the next case now (vanilla's natural type: usually a murder), F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=TEST ACCESS (ghost + always-answer together), F8=teleport to nearest KILLER-knower, F9=case solution overlay, F10=teleport to scene, F11=to kidnap MEETING location, F12=to VICTIM's home, Home=teleport to City Hall, End=toggle fast-forward (simulation speed). (F1 reserved by the game; F2 + F5 unbound.)");
                 else
                     MotivesPlugin.Log.LogInfo($"[SODMotives] Debug tooling OFF. {KeyCaseSolution} = case-solution overlay is always available (set it to None in [Debug Keys] to disable); enable [Debug] EnableDebugKeys in the config overlay for the full test loop (force event, teleports, ghost, etc.).");
             }
@@ -210,9 +210,17 @@ namespace SODMotives
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] ghost: echelon access {(on ? "grant" : "revoke")} error: {e.Message}"); }
         }
 
-        // F4: force the game to run its next murder NOW (testing) — combine with F6=<type> to get that
-        // case fast instead of waiting for / re-rolling sandboxes. Our override still gates on proc-gen +
-        // caseType==murder, so a triggered kidnap/sniper is left to vanilla.
+        // F4: create the next case NOW (fast test loop), letting VANILLA choose the case type — unlike F3,
+        // which forces a sniper. We run the scheduler's own pick (PickNewMurderer -> PickNewVictim, which set
+        // currentMurderer/murderPreset/chosenMO/currentVictim/currentVictimSite) and then create exactly what it
+        // chose via ExecuteNewMurder. So the type is whatever vanilla would roll next (overwhelmingly a regular
+        // murder; occasionally a kidnap/sniper), and our ExecuteNewMurder override then applies motivation per
+        // the mixer sliders, exactly like a naturally-scheduled case.
+        // WHY NOT the game's own trigger: MurderController.TriggerNextMurder() is a dev inspector [Button] that
+        // only zeroes a scheduler timer and Completes an objective — it never calls ExecuteNewMurder, so it never
+        // actually produced a case (decoded in docs/extensions/sniper-recon.md). The scheduler otherwise runs
+        // this same pick on its own game-days-out timing, which a key press can't shortcut. If the pick comes
+        // back incomplete (e.g. no eligible pair yet), fall back to forcing an ordinary murder so F4 still fires.
         internal static void TriggerMurder()
         {
             var log = MotivesPlugin.Log;
@@ -220,8 +228,25 @@ namespace SODMotives
             {
                 var mc = MurderController.Instance;
                 if (mc == null) { log.LogInfo("[SODMotives][F4] no MurderController."); return; }
-                log.LogInfo($"[SODMotives][F4] triggering next murder (Force={ForceLabel()})...");
-                mc.TriggerNextMurder();
+                // Run vanilla's own next-case pick, in the scheduler's order (murderer first, then victim).
+                try { mc.PickNewMurderer(); } catch (Exception e) { log.LogWarning($"[SODMotives][F4] PickNewMurderer: {e.Message}"); }
+                try { mc.PickNewVictim(); } catch (Exception e) { log.LogWarning($"[SODMotives][F4] PickNewVictim: {e.Message}"); }
+                Human killer = null, victim = null; MurderPreset preset = null; MurderMO mo = null; NewGameLocation site = null;
+                try { killer = mc.currentMurderer; } catch { }
+                try { victim = mc.currentVictim; } catch { }
+                try { preset = mc.murderPreset; } catch { }
+                try { mo = mc.chosenMO; } catch { }
+                try { site = mc.currentVictimSite; } catch { }
+                if (killer != null && victim != null && preset != null && mo != null)
+                {
+                    log.LogInfo($"[SODMotives][F4] vanilla picked {preset.caseType} '{preset.name}' (mo={mo.name}): {MotivesPlugin.Name(killer)} -> {MotivesPlugin.Name(victim)}; creating it now. Our override then motivates it per the mixer sliders.");
+                    mc.ExecuteNewMurder(killer, victim, preset, mo, site);
+                }
+                else
+                {
+                    log.LogWarning($"[SODMotives][F4] vanilla pick incomplete (killer={(killer != null)}, victim={(victim != null)}, preset={(preset != null)}, mo={(mo != null)}) — falling back to forcing an ordinary murder.");
+                    ForceCase(MurderPreset.CaseType.murder, "F4");
+                }
             }
             catch (Exception e) { log.LogWarning($"[SODMotives][F4] trigger error: {e.Message}"); }
         }

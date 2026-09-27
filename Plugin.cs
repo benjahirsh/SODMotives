@@ -13,7 +13,7 @@ namespace SODMotives
     // It intentionally changes NOTHING in the game yet — this is how we lock the
     // design to reality (call order, whether victim depends on murderer, and the
     // actual range/meaning of Acquaintance.like) before writing the override.
-    [BepInPlugin(Guid, "SOD Motives", "1.2.1")]
+    [BepInPlugin(Guid, "SOD Motives", "1.2.2")]
     public class MotivesPlugin : BasePlugin
     {
         public const string Guid = "com.benhirsh.sodmotives";
@@ -175,7 +175,7 @@ namespace SODMotives
 
             // --- Debug Keys (rebindable hotkeys; KeyCode renders as a key-binder in the overlay) ---
             BindApply("Debug Keys", "TriggerMurder", UnityEngine.KeyCode.F4,
-                "Force the game's next murder to run NOW (fast test loop). Combine with the forced event type to get a specific case quickly. Set to None to disable.",
+                "TESTING: create the next case NOW (fast test loop), letting the game choose the case type naturally (usually a murder, occasionally a kidnap/sniper), created directly rather than waiting for the vanilla scheduler (whose own TriggerNextMurder button never actually spawns a case). Unlike ForceSniperCase (F3) it does not force a special case type. Set to None to disable.",
                 v => DebugTools.KeyTriggerMurder = v);
             BindApply("Debug Keys", "TeleportToKiller", UnityEngine.KeyCode.F8,
                 "Teleport to the KILLER's CURRENT position (where they are right now) so you can tail them during a case.",

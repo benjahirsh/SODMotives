@@ -129,11 +129,8 @@ namespace SODMotives
 
             // --- Talk to Partner ---
             BindApply("Talk to Partner", "Enable", true,
-                "Adds a 'Can I talk to your partner?' option when you speak to someone AT THEIR HOME. Choosing it sends the person you were talking to away and their partner comes to answer the door, so you can question them too (if they live alone or their partner is out, they say so). Purely additive: it needs none of the DialogAdditions mod's dependencies.",
+                "Adds a 'Can I talk to your partner?' option when you speak to someone AT THEIR HOME. Choosing it sends the person you were talking to away and their partner comes to answer the door, so you can question them too (if they live alone or their partner is out, they say so; a sleeping partner is woken). Purely additive: it needs none of the DialogAdditions mod's dependencies.",
                 v => TalkToPartner.Enable = v);
-            BindApply("Talk to Partner", "SwitchCooldownSeconds", 8f,
-                "After you ask someone to fetch their partner, how many seconds before you can ask again in that same household. A short delay stops rapid back-and-forth switching, which can otherwise make the two partners cross paths, start talking to each other, and stop answering the door. 0 disables the delay.",
-                v => TalkToPartner.SwitchCooldownSeconds = v, new AcceptableValueRange<float>(0f, 60f));
 
             // --- Troubleshooting: you shouldn't normally need these — fixes, test aids, and inverted toggles. ---
             BindApply("Troubleshooting", "UnstickStalledMurders", true,

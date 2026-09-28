@@ -42,69 +42,187 @@ namespace SODMotives
         // close the talk UI safely (closing synchronously inside the click handler risks re-entrancy).
         internal static bool PendingClose;
 
-        // Anti-cycle: after a summon, block re-summoning in the same household for this many (real) seconds,
-        // so the two partners don't overlap in transit, cross paths, and get stuck talking to each other.
-        internal static float SwitchCooldownSeconds = 8f;
-        private static readonly System.Collections.Generic.Dictionary<int, float> _cooldownUntil
-            = new System.Collections.Generic.Dictionary<int, float>();
-        // The AIGoalPreset name AnswerDoor assigns; used to confirm a summon actually took (asleep/busy
-        // partners no-op it and keep their own goal, e.g. Awaken/Mourn).
-        private const string AnswerDoorGoal = "AnswerDoor";
+        private const string AnswerDoorGoal = "AnswerDoor";   // goal AnswerDoor assigns; confirms a summon took
+        private const float HandoffMaxWaitSeconds = 10f;      // phase 1: summon anyway if the door never reports closed
+        private const float AnsweredTimeoutSeconds = 20f;     // phase 2: close+lock if the player never engages
 
-        private static bool OnCooldown(int humanID)
+        // A partner-handoff in progress, tracked PER HOUSEHOLD (a list, not one global slot) so running between
+        // flats and spamming the option never cross-blocks. Two phases:
+        //   phase 1 (summoned=false): the original NPC was freed; we wait for them to clear/close the door, then
+        //                             summon the partner -- so the two never cross at the doorway.
+        //   phase 2 (summoned=true):  the partner is at the door. If the player never talks to them we time out
+        //                             and close+lock, mirroring vanilla's unanswered-door behaviour.
+        private sealed class Handoff
         {
-            try { return _cooldownUntil.TryGetValue(humanID, out var until) && UnityEngine.Time.unscaledTime < until; }
-            catch { return false; }
+            public Citizen summoner, partner;
+            public NewDoor door;
+            public NewGameLocation where;
+            public float start;
+            public bool summoned;
+            public float summonedAt;
         }
-        private static void StartCooldown(int a, int b)
+        private static readonly System.Collections.Generic.List<Handoff> _handoffs = new System.Collections.Generic.List<Handoff>();
+
+        // Who the player is currently talking to (from InteractionController.SetDialog), so a summoned partner
+        // being actively talked to isn't timed out or released underneath them.
+        private static Citizen _talkingTo;
+
+        internal static bool AnyHandoffs => _handoffs.Count > 0;
+
+        private static int Hid(Human h) { try { return h != null ? h.humanID : -99; } catch { return -99; } }
+
+        // True if a summon is IN FLIGHT (phase 1) for this person's household -- block starting another there.
+        // (A phase-2 handoff does NOT block: talking to the arrived partner and asking again is a valid switch.)
+        private static bool HouseholdSummoning(Citizen a)
         {
-            if (SwitchCooldownSeconds <= 0f) return;
-            try { float until = UnityEngine.Time.unscaledTime + SwitchCooldownSeconds; _cooldownUntil[a] = until; _cooldownUntil[b] = until; }
+            try
+            {
+                Citizen b = null; try { b = a != null ? a.partner : null; } catch { }
+                int ia = Hid(a), ib = b != null ? Hid(b) : -98;
+                for (int i = 0; i < _handoffs.Count; i++)
+                {
+                    var h = _handoffs[i]; if (h == null || h.summoned) continue;
+                    int hs = Hid(h.summoner), hp = Hid(h.partner);
+                    if (hs == ia || hs == ib || hp == ia || hp == ib) return true;
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        private static void RemoveHandoffsInvolving(Citizen c)
+        {
+            try
+            {
+                int id = Hid(c);
+                for (int i = _handoffs.Count - 1; i >= 0; i--)
+                {
+                    var h = _handoffs[i];
+                    if (h == null || Hid(h.summoner) == id || Hid(h.partner) == id) _handoffs.RemoveAt(i);
+                }
+            }
             catch { }
         }
 
-        // Pending staggered handoff: after the player asks, we free the current NPC and wait for them to close
-        // the door, THEN summon the partner (so the two never cross at the doorway). Consumed in TickHandoff,
-        // driven by the InteractionController.Update postfix.
-        private static Citizen _pendSummoner, _pendPartner;
-        private static NewDoor _pendDoor;
-        private static NewGameLocation _pendWhere;
-        private static float _pendStart;
-        private const float HandoffMaxWaitSeconds = 10f;   // fallback: summon anyway if the door never reports closed
-        internal static bool HasPending => _pendPartner != null;
-
-        // Called every frame while a handoff is pending. Summons the partner once the original NPC has closed
-        // the door (door.isClosed) or a short fallback timeout elapses.
-        internal static void TickHandoff()
+        private static void AddHandoff(Citizen summoner, Citizen partner, NewDoor door, NewGameLocation where)
         {
-            NewDoor door = _pendDoor;
-            Citizen partner = _pendPartner, summoner = _pendSummoner;
-            NewGameLocation where = _pendWhere;
+            try { _handoffs.Add(new Handoff { summoner = summoner, partner = partner, door = door, where = where, start = UnityEngine.Time.unscaledTime, summoned = false }); }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][partner] AddHandoff failed: {e.Message}"); }
+        }
+
+        // Driven each frame by the InteractionController.Update postfix. Advances every handoff independently.
+        internal static void Tick()
+        {
+            if (_handoffs.Count == 0) return;
+            float now = UnityEngine.Time.unscaledTime;
+            for (int i = _handoffs.Count - 1; i >= 0; i--)
+            {
+                Handoff h = _handoffs[i];
+                if (h == null) { _handoffs.RemoveAt(i); continue; }
+                try
+                {
+                    if (!h.summoned)
+                    {
+                        // Phase 1: wait for the original to clear/close the door, then summon the partner.
+                        bool doorClosed = false; try { doorClosed = h.door != null && h.door.isClosed; } catch { }
+                        bool timeout = now - h.start >= HandoffMaxWaitSeconds;
+                        if (!doorClosed && !timeout) continue;
+
+                        bool partnerHome = false; try { partnerHome = h.partner != null && h.partner.isHome; } catch { }
+                        if (h.partner == null || h.door == null || !partnerHome)
+                        {
+                            MotivesPlugin.Log.LogInfo($"[SODMotives][partner] handoff dropped: {Name(h.partner)} unavailable before summon.");
+                            _handoffs.RemoveAt(i); continue;
+                        }
+                        // Wake the partner if asleep so AnswerDoor takes (it no-ops on a sleeper); a knock wakes
+                        // sleepers in vanilla too. forceImmediate = up right away and able to answer.
+                        bool wasAsleep = false;
+                        try { wasAsleep = h.partner.isAsleep; if (wasAsleep) h.partner.WakeUp(true); } catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][partner] WakeUp failed: {e.Message}"); }
+
+                        h.partner.ai.AnswerDoor(h.door, h.where, Player.Instance);
+                        string pg = GoalName(h.partner);
+                        bool took = string.Equals(pg, AnswerDoorGoal, StringComparison.OrdinalIgnoreCase);
+                        MotivesPlugin.Log.LogInfo($"[SODMotives][partner] handoff: {Name(h.summoner)} cleared the door (doorClosed={doorClosed} timeout={timeout}); woke={wasAsleep}; summoned {Name(h.partner)}; goal={pg} took={took}.");
+                        if (!took) { _handoffs.RemoveAt(i); continue; }   // couldn't summon (busy) -> drop; player can re-knock
+                        h.summoned = true; h.summonedAt = now;
+                    }
+                    else
+                    {
+                        // Phase 2: partner is at the door. If the player isn't talking to THEM and enough time
+                        // passes with no engagement, close+lock (like vanilla's unanswered-door timeout).
+                        bool talkingToThem = _talkingTo != null && h.partner != null && Hid(_talkingTo) == Hid(h.partner);
+                        if (!talkingToThem && now - h.summonedAt >= AnsweredTimeoutSeconds)
+                        {
+                            MotivesPlugin.Log.LogInfo($"[SODMotives][partner] {Name(h.partner)} went unanswered -> closing up (timeout).");
+                            ReleaseHandoff(h, true);
+                            _handoffs.RemoveAt(i);
+                        }
+                    }
+                }
+                catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][partner] tick failed: {e.Message}"); _handoffs.RemoveAt(i); }
+            }
+        }
+
+        // Complete the summoned partner's answer-door goal (back to routine); if closeDoor, close + lock it so
+        // the home is secured again (completing the goal doesn't run the NPC's own close-the-door step).
+        private static void ReleaseHandoff(Handoff h, bool closeDoor)
+        {
+            if (h == null) return;
+            Citizen p = h.partner;
             try
             {
-                float now = UnityEngine.Time.unscaledTime;
-                bool timeout = now - _pendStart >= HandoffMaxWaitSeconds;
-                bool doorClosed = false;
-                try { doorClosed = door != null && door.isClosed; } catch { }
-                if (!doorClosed && !timeout) return;   // keep waiting for the original to close the door
-
-                // One-shot: clear the pending state before acting.
-                _pendSummoner = null; _pendPartner = null; _pendDoor = null; _pendWhere = null;
-
-                if (partner == null || door == null) return;
-                bool partnerHome = false; try { partnerHome = partner.isHome; } catch { }
-                if (!partnerHome) { MotivesPlugin.Log.LogInfo($"[SODMotives][partner] handoff aborted: {Name(partner)} left before the door closed."); return; }
-
-                partner.ai.AnswerDoor(door, where, Player.Instance);
-                string pg = GoalName(partner);
-                bool took = string.Equals(pg, AnswerDoorGoal, StringComparison.OrdinalIgnoreCase);
-                MotivesPlugin.Log.LogInfo($"[SODMotives][partner] handoff: {Name(summoner)} closed the door (doorClosed={doorClosed} timeout={timeout}); summoned {Name(partner)}; goal={pg} took={took}.");
+                if (p != null && p.ai != null)
+                {
+                    var g = p.ai.currentGoal;
+                    if (g != null && g.preset != null && string.Equals(g.preset.name, AnswerDoorGoal, StringComparison.OrdinalIgnoreCase))
+                    {
+                        g.Complete();
+                        MotivesPlugin.Log.LogInfo($"[SODMotives][partner] released {Name(p)} from door duty -> back to routine.");
+                    }
+                }
             }
-            catch (Exception e)
+            catch { }
+            if (!closeDoor) return;
+            try
             {
-                _pendSummoner = null; _pendPartner = null; _pendDoor = null; _pendWhere = null;
-                MotivesPlugin.Log.LogWarning($"[SODMotives][partner] handoff tick failed: {e.Message}");
+                var d = h.door;
+                Actor actor = p != null ? (Actor)p : null;
+                if (d != null && actor != null)
+                {
+                    bool wasClosed = false; try { wasClosed = d.isClosed; } catch { }
+                    if (!wasClosed) { try { d.SetOpen(0f, actor, false, 1f); } catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][partner] close door failed: {e.Message}"); } }
+                    try { d.SetLocked(d.GetDefaultLockState(), actor, false); } catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][partner] lock door failed: {e.Message}"); }
+                    MotivesPlugin.Log.LogInfo($"[SODMotives][partner] closed + locked the door (wasClosed={wasClosed}).");
+                }
             }
+            catch { }
+        }
+
+        // InteractionController.SetDialog(true, who): remember who we're talking to.
+        internal static void OnDialogOpened(Interactable newTalkingTo) { try { _talkingTo = ResolveCitizen(newTalkingTo); } catch { _talkingTo = null; } }
+
+        // InteractionController.SetDialog(false): the conversation closed. Release the summoned partner we were
+        // talking to (close+lock). Switching is handled separately (the old handoff is removed when that partner
+        // becomes the new summoner), so this only fires on a genuine end -- not mid-switch.
+        internal static void OnDialogClosed()
+        {
+            Citizen who = _talkingTo;
+            _talkingTo = null;
+            if (who == null) return;
+            try
+            {
+                int id = Hid(who);
+                for (int i = _handoffs.Count - 1; i >= 0; i--)
+                {
+                    var h = _handoffs[i];
+                    if (h != null && h.summoned && Hid(h.partner) == id)
+                    {
+                        ReleaseHandoff(h, true);
+                        _handoffs.RemoveAt(i);
+                    }
+                }
+            }
+            catch { }
         }
 
         // Built once and reused. A plain (specialCase == none) preset with NO responses: ExecuteDialog
@@ -215,38 +333,36 @@ namespace SODMotives
                     return;
                 }
 
-                // Guard: a handoff is already in progress in some household, or this one is on cooldown. Don't
-                // start another (rapid switching is what makes the two cross paths). Keep the conversation open.
-                if (HasPending || OnCooldown(cit.humanID))
+                // Guard: only block if a summon is already IN FLIGHT for THIS household (phase 1). Talking to an
+                // arrived partner and asking again is a valid switch, and other homes are never cross-blocked.
+                if (HouseholdSummoning(cit))
                 {
                     SpeakLine(cit, Pick(seed, "Give them a moment...", "Hang on, one at a time...", "Give it a second..."), false);
-                    MotivesPlugin.Log.LogInfo($"[SODMotives][partner] {Name(cit)} blocked (pending={HasPending} cooldown={OnCooldown(cit.humanID)}); not re-summoning.");
+                    MotivesPlugin.Log.LogInfo($"[SODMotives][partner] {Name(cit)} blocked: a summon is already in flight for this home.");
                     return;
                 }
 
-                // Don't try to fetch someone who is asleep (AnswerDoor no-ops for them). Best-effort, by goal.
-                string pgoal = GoalName(partner);
-                if (!string.IsNullOrEmpty(pgoal) && pgoal.IndexOf("sleep", StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    SpeakLine(cit, Pick(seed, "They're asleep right now.", "They're in bed, I'm afraid.", "They're sleeping, sorry."), false);
-                    MotivesPlugin.Log.LogInfo($"[SODMotives][partner] {Name(cit)}'s partner {Name(partner)} is asleep (goal={pgoal}); not summoning.");
-                    return;
-                }
+                // If the partner is asleep, that's fine: we wake them during the handoff (a knock can wake a
+                // sleeper in vanilla too). Just vary the acknowledgement line. Uses Actor.isAsleep directly.
+                bool partnerAsleep = false; try { partnerAsleep = partner.isAsleep; } catch { }
 
-                // STAGGERED HANDOFF (the fix for the two getting stuck at the doorway): say the acknowledgement
-                // (flagged endsDialog so the conversation closes when the line finishes), free {cit} so they
-                // step back inside and CLOSE the door, and record a pending summon. We do NOT call the partner
-                // yet -- the InteractionController.Update tick waits until {cit} has actually closed the door,
-                // THEN summons the partner to come open it, so the two never meet at the doorway.
-                bool spoke = SpeakLine(cit, Pick(seed, "Sure, wait a second...", "Sure, one moment...", "Of course, hold on..."), true);
+                // STAGGERED HANDOFF: say the acknowledgement (endsDialog closes the convo when the line ends),
+                // free {cit} so they step back inside and CLOSE the door, and record a per-household handoff. We
+                // do NOT summon the partner yet -- Tick() waits until the door closes, then wakes (if needed) and
+                // summons them to come open it, so the two never meet at the doorway.
+                string ack = partnerAsleep
+                    ? Pick(seed, "Sure, I'll go wake them...", "Hold on, I'll get them up...", "One moment, I'll wake them...")
+                    : Pick(seed, "Sure, wait a second...", "Sure, one moment...", "Of course, hold on...");
+                bool spoke = SpeakLine(cit, ack, true);
                 if (!spoke) PendingClose = true;
+
+                // {cit} is now the summoner: drop any handoff where they were the answerer (so the pending close
+                // for that role doesn't fire), then free them to step inside and close the door.
+                RemoveHandoffsInvolving(cit);
                 try { if (cit.ai != null && cit.ai.currentGoal != null) cit.ai.currentGoal.Complete(); } catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][partner] currentGoal.Complete failed: {e.Message}"); }
 
-                _pendSummoner = cit; _pendPartner = partner; _pendDoor = door;
-                _pendWhere = cit.currentGameLocation; _pendStart = UnityEngine.Time.unscaledTime;
-                try { StartCooldown(cit.humanID, partner.humanID); } catch { }
-
-                MotivesPlugin.Log.LogInfo($"[SODMotives][partner] {Name(cit)} stepping aside; will summon {Name(partner)} once the door closes (spoke={spoke}).");
+                AddHandoff(cit, partner, door, cit.currentGameLocation);
+                MotivesPlugin.Log.LogInfo($"[SODMotives][partner] {Name(cit)} stepping aside; will summon {Name(partner)} once the door closes (asleep={partnerAsleep}, spoke={spoke}).");
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][partner] execute failed: {e.Message}"); }
         }
@@ -331,16 +447,42 @@ namespace SODMotives
             catch { }
         }
 
+        // Make sure we have a valid (dictionary, entry) seed to clone, even before any bubble has rendered this
+        // session (the first NPC talked to right after loading). We grab any real pair from Strings.stringTable
+        // (Speak resolves it via Strings.Get, and we overwrite the text anyway, so which entry it is doesn't
+        // matter -- it just has to be a pair Strings.Get accepts).
+        private static void EnsureSeed()
+        {
+            if (!string.IsNullOrEmpty(_seedDict) && !string.IsNullOrEmpty(_seedEntry)) return;
+            try
+            {
+                var table = Strings.stringTable;
+                if (table == null || table.Count == 0) return;
+                foreach (var dictName in table.Keys)
+                {
+                    if (string.IsNullOrEmpty(dictName)) continue;
+                    var inner = table[dictName];
+                    if (inner == null || inner.Count == 0) continue;
+                    foreach (var key in inner.Keys)
+                    {
+                        if (!string.IsNullOrEmpty(key)) { _seedDict = dictName; _seedEntry = key; return; }
+                    }
+                }
+            }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][partner] EnsureSeed failed: {e.Message}"); }
+        }
+
         // Speak `text` as a bubble from `who`. If endsConversation, the queued line ends the dialog when it
         // finishes. Returns false if we had no valid seed pair yet (so the caller can fall back).
         private static bool SpeakLine(Citizen who, string text, bool endsConversation)
         {
             try
             {
+                EnsureSeed();
                 var sc = who != null ? who.speechController : null;
                 if (sc == null || string.IsNullOrEmpty(_seedDict) || string.IsNullOrEmpty(_seedEntry))
                 {
-                    MotivesPlugin.Log.LogWarning("[SODMotives][partner] no speech seed cached yet; could not speak a bubble.");
+                    MotivesPlugin.Log.LogWarning("[SODMotives][partner] no speech seed available; could not speak a bubble.");
                     return false;
                 }
                 var q = sc.speechQueue;
@@ -445,8 +587,8 @@ namespace SODMotives
                 catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][partner] deferred SetDialog(false) failed: {e.Message}"); }
             }
 
-            // Staggered handoff: summon the partner once the original has closed the door.
-            if (TalkToPartner.HasPending) TalkToPartner.TickHandoff();
+            // Staggered handoffs (per household): summon partners once doors close; time out unanswered ones.
+            if (TalkToPartner.AnyHandoffs) TalkToPartner.Tick();
         }
     }
 
@@ -455,5 +597,18 @@ namespace SODMotives
     internal static class Patch_TalkToPartner_Bubble
     {
         static void Postfix(SpeechBubbleController __instance) => TalkToPartner.OnBubbleSetup(__instance);
+    }
+
+    // Track who the player is talking to, and on a genuine conversation end release the summoned partner they
+    // were talking to (complete their answer-door goal -> back to routine, and close + lock the door).
+    [HarmonyPatch(typeof(InteractionController), nameof(InteractionController.SetDialog))]
+    internal static class Patch_TalkToPartner_DialogState
+    {
+        static void Postfix(bool val, Interactable newTalkingTo)
+        {
+            if (!TalkToPartner.Enable) return;
+            if (val) TalkToPartner.OnDialogOpened(newTalkingTo);
+            else TalkToPartner.OnDialogClosed();
+        }
     }
 }

@@ -13,7 +13,7 @@ namespace SODMotives
     // It intentionally changes NOTHING in the game yet — this is how we lock the
     // design to reality (call order, whether victim depends on murderer, and the
     // actual range/meaning of Acquaintance.like) before writing the override.
-    [BepInPlugin(Guid, "SOD Motives", "1.2.3")]
+    [BepInPlugin(Guid, "SOD Motives", "1.3.0")]
     public class MotivesPlugin : BasePlugin
     {
         public const string Guid = "com.benhirsh.sodmotives";
@@ -126,6 +126,14 @@ namespace SODMotives
             BindApply("Clues", "EmailClueShare", 0.5f,
                 "Chance (0..1) an eligible clue (affair love-letter, redundancy list, redevelopment plan) arrives as an EMAIL in an NPC's inbox instead of a physical note — never both. Promotion is exempt (always BOTH channels). RentArrears/Feud/Debt are always physical (handwriting + fingerprint, which email can't carry).",
                 v => ClueInjector.EmailClueShare = v, R01());
+
+            // --- Talk to Partner ---
+            BindApply("Talk to Partner", "Enable", true,
+                "Adds a 'Can I talk to your partner?' option when you speak to someone AT THEIR HOME. Choosing it sends the person you were talking to away and their partner comes to answer the door, so you can question them too (if they live alone or their partner is out, they say so). Purely additive: it needs none of the DialogAdditions mod's dependencies.",
+                v => TalkToPartner.Enable = v);
+            BindApply("Talk to Partner", "SwitchCooldownSeconds", 8f,
+                "After you ask someone to fetch their partner, how many seconds before you can ask again in that same household. A short delay stops rapid back-and-forth switching, which can otherwise make the two partners cross paths, start talking to each other, and stop answering the door. 0 disables the delay.",
+                v => TalkToPartner.SwitchCooldownSeconds = v, new AcceptableValueRange<float>(0f, 60f));
 
             // --- Troubleshooting: you shouldn't normally need these — fixes, test aids, and inverted toggles. ---
             BindApply("Troubleshooting", "UnstickStalledMurders", true,

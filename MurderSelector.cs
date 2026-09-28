@@ -316,14 +316,82 @@ namespace SODMotives
             return true;
         }
 
-        // Pick a victim rich in real, event-backed enemies, then a random killer from that pool.
-        // Returns the full ranked suspect pool (strongest first) via `pool` for clue injection.
-        // killerFilter (optional): when set (SNIPER cases), the chosen killer MUST satisfy it — a
-        // (candidateKiller, victim) -> bool test, used to require a real sniper vantage. If none of the
-        // victim's top suspects pass, the method fails (returns false) so the caller leaves the case vanilla.
-        internal static bool TryPickVictimCentric(out Human murderer, out Human victim, out List<SuspectEdge> pool, System.Func<Human, Human, bool> preferKiller = null)
+        // ---- STRUCTURAL-NPC victim bias (bosses + landlords) ----
+        // Bosses and landlords are structurally load-bearing citizens: a company depends on its director,
+        // a building on its landlord. Killing/kidnapping them too often thins the city's structure.
+        // StructuralVictimWeight down-weights them as VICTIMS at selection: 1 = as likely as anyone;
+        // 0.5 = half as likely (the ship default); 0 = only when unavoidable. ONE knob covers both stated
+        // goals, because down-weighting the boss in a workplace case shifts the victim toward the PROMOTEE,
+        // and down-weighting the landlord in a property case shifts it toward the TENANT. Read live; every
+        // case type (murder/kidnap/sniper) funnels through TryPickVictimCentric, so this biases the whole
+        // mix at once. (Future: could also down-weight structural SUSPECTS/killers; victims only for now.)
+        internal static float StructuralVictimWeight = 0.5f;
+
+        // humanIDs that are SOME resident's landlord (Human.GetLandlord). Rebuilt once per selection (and
+        // once per sampler run) in BuildCandidateGraph; boss-ness is O(1) via Company.director so it needs
+        // no cache. Null until first built.
+        private static HashSet<int> _landlordIds;
+
+        private static HashSet<int> BuildLandlordSet()
         {
-            murderer = null; victim = null; pool = null;
+            var set = new HashSet<int>();
+            try
+            {
+                var cd = CityData.Instance;
+                var dir = cd != null ? cd.citizenDirectory : null;
+                if (dir != null)
+                    for (int i = 0; i < dir.Count; i++)
+                    {
+                        var h = dir[i]; if (h == null) continue;
+                        Human ll = null; try { ll = h.GetLandlord(); } catch { }
+                        if (ll != null) { try { set.Add(ll.humanID); } catch { } }
+                    }
+            }
+            catch { }
+            return set;
+        }
+
+        // h leads their own company (is its director) -> a "boss" in the same sense WorkplaceSim uses
+        // (Company.director is the promotion decider and the layoffs victim). Never throws.
+        internal static bool IsBossHuman(Human h)
+        {
+            try
+            {
+                var job = h != null ? h.job : null;
+                var emp = job != null ? job.employer : null;
+                var dir = emp != null ? emp.director : null;
+                return dir != null && h != null && dir.Pointer == h.Pointer;
+            }
+            catch { return false; }
+        }
+
+        // A structurally load-bearing victim: a company director (boss) or a landlord. Uses the cached
+        // landlord set (built in BuildCandidateGraph); safe with a null cache (boss-only then).
+        internal static bool IsStructuralVictim(Human h)
+        {
+            if (h == null) return false;
+            if (IsBossHuman(h)) return true;
+            var set = _landlordIds;
+            if (set != null) { try { return set.Contains(h.humanID); } catch { } }
+            return false;
+        }
+
+        // The read-only candidate graph derived from the current city: every (suspect -> victim) motive
+        // edge, indexed by victim, plus the richest suspect count. Built ONCE per real selection, and
+        // once per sampler run so hundreds of dry picks can be measured without rescanning the city.
+        internal sealed class CandidateGraph
+        {
+            public Dictionary<int, Dictionary<int, SuspectEdge>> byVictim;
+            public Dictionary<int, Human> victimRef;
+            public int bestCount;
+        }
+
+        // Steps 1-2: gather events (stored + live workplace/property) and build the per-victim edge map;
+        // also (re)build the landlord cache used by the structural-victim bias. Returns null when the city
+        // offers no motivated victims. SIDE-EFFECT-FREE, so it is safe to call for dry-run sampling.
+        internal static CandidateGraph BuildCandidateGraph()
+        {
+            _landlordIds = BuildLandlordSet();
 
             // Combine STORED events (affairs, + already-materialized workplace cases) with LIVE
             // workplace candidates built on-demand from company rosters (not yet in the store).
@@ -342,7 +410,7 @@ namespace SODMotives
                 var pcands = PropertySim.CandidateEvents();
                 if (pcands != null) { events.AddRange(pcands); liveProperty = pcands.Count; }
             }
-            if (events.Count == 0) return false;
+            if (events.Count == 0) return null;
             MotivesPlugin.Log.LogInfo($"[SODMotives] pool sources: {(stored != null ? stored.Count : 0)} stored + {liveWorkplace} live workplace + {liveProperty} live property candidate event(s); Force={DebugTools.ForceLabel()}.");
 
             // 1) Gather every real (suspect -> victim) edge from all events.
@@ -371,21 +439,71 @@ namespace SODMotives
                         byVictim[vid] = perSuspect;
                         victimRef[vid] = ed.victim;
                     }
-                    // Keep the strongest edge per (suspect,victim) — a suspect may have several motives.
+                    // Keep the strongest edge per (suspect,victim): a suspect may have several motives.
                     if (!perSuspect.TryGetValue(sid, out var existing) || ed.score > existing.score)
                         perSuspect[sid] = ed;
                 }
             }
-            if (byVictim.Count == 0) return false;
+            if (byVictim.Count == 0) return null;
+
+            int bestCount = 0;
+            foreach (var kv in byVictim) if (kv.Value.Count > bestCount) bestCount = kv.Value.Count;
+            if (bestCount == 0) return null;
+
+            return new CandidateGraph { byVictim = byVictim, victimRef = victimRef, bestCount = bestCount };
+        }
+
+        // Uniform when StructuralVictimWeight is 1 (ship default -> byte-for-byte the old behavior); else a
+        // weighted draw giving boss/landlord victims weight StructuralVictimWeight and everyone else 1. If
+        // every candidate is structural and the weight is 0, falls back to uniform so a case is never
+        // stranded (the bias is a preference, not a hard ban).
+        private static int PickVictimWeighted(List<int> bucket, Dictionary<int, Human> victimRef)
+        {
+            float w = StructuralVictimWeight;
+            if (w >= 0.999f || bucket.Count <= 1) return bucket[_rng.Next(bucket.Count)];
+            double sum = 0.0; var wts = new double[bucket.Count];
+            for (int i = 0; i < bucket.Count; i++)
+            {
+                Human h = victimRef.TryGetValue(bucket[i], out var hh) ? hh : null;
+                bool structural = h != null && IsStructuralVictim(h);
+                double ww = structural ? Math.Max(0f, w) : 1.0;
+                wts[i] = ww; sum += ww;
+            }
+            if (sum <= 0.0) return bucket[_rng.Next(bucket.Count)];
+            double r = _rng.NextDouble() * sum, acc = 0.0;
+            for (int i = 0; i < bucket.Count; i++) { acc += wts[i]; if (r < acc) return bucket[i]; }
+            return bucket[bucket.Count - 1];
+        }
+
+        // Pick a victim rich in real, event-backed enemies, then a random killer from that pool.
+        // Returns the full ranked suspect pool (strongest first) via `pool` for clue injection.
+        // preferKiller (optional): when set (SNIPER cases), the chosen killer MUST satisfy it, a
+        // (candidateKiller, victim) -> bool test used to require a real sniper vantage. If none of the
+        // victim's top suspects pass, the method fails (returns false) so the caller leaves the case vanilla.
+        internal static bool TryPickVictimCentric(out Human murderer, out Human victim, out List<SuspectEdge> pool, System.Func<Human, Human, bool> preferKiller = null)
+        {
+            murderer = null; victim = null; pool = null;
+            var g = BuildCandidateGraph();
+            if (g == null) return false;
+            if (!ChooseFromGraph(g, preferKiller, out murderer, out victim, out pool, out var killerEdge, out int chosenVid))
+                return false;
+            CommitSelection(chosenVid, murderer, victim, pool, killerEdge);
+            return true;
+        }
+
+        // Steps 3-5: from a prebuilt graph, choose a family-balanced, structural-bias-weighted victim and a
+        // killer from that victim's top pool. SIDE-EFFECT-FREE: records nothing, materializes nothing (the
+        // dry-run sampler calls this in a loop). Returns false only if the graph yields no usable bucket.
+        private static bool ChooseFromGraph(CandidateGraph g, System.Func<Human, Human, bool> preferKiller,
+            out Human murderer, out Human victim, out List<SuspectEdge> pool, out SuspectEdge killerEdge, out int chosenVid)
+        {
+            murderer = null; victim = null; pool = null; killerEdge = default; chosenVid = 0;
+            var byVictim = g.byVictim; var victimRef = g.victimRef;
 
             // 2) Prefer victims with >= MinSuspects; else DEGRADE to the richest available tier
             //    (never fall back to vanilla for the floor — the static graph would then always
             //    be vanilla). floor = min(MinSuspects, richest) so we always have candidates.
-            int bestCount = 0;
-            foreach (var kv in byVictim) if (kv.Value.Count > bestCount) bestCount = kv.Value.Count;
-            if (bestCount == 0) return false;
-            int floor = Math.Min(MinSuspects, bestCount);
-
+            int floor = Math.Min(MinSuspects, g.bestCount);
             var candVictims = new List<int>();
             foreach (var kv in byVictim) if (kv.Value.Count >= floor) candVictims.Add(kv.Key);
             if (candVictims.Count == 0) return false;
@@ -466,11 +584,11 @@ namespace SODMotives
                            : candVictims;
             }
 
-            // 4) Uniform-random victim within the chosen bucket.
-            int chosenVid = bucket[_rng.Next(bucket.Count)];
+            // 4) Victim within the chosen bucket, structural-bias weighted (uniform at the default weight).
+            chosenVid = PickVictimWeighted(bucket, victimRef);
             victim = victimRef[chosenVid];
 
-            // 4) That victim's suspects, strongest first, capped at KillerPoolSize.
+            // 4b) That victim's suspects, strongest first, capped at KillerPoolSize.
             var suspects = new List<SuspectEdge>(byVictim[chosenVid].Values);
             suspects.Sort((x, y) => y.score.CompareTo(x.score));
             int poolN = Math.Min(Math.Max(1, KillerPoolSize), suspects.Count);
@@ -481,7 +599,6 @@ namespace SODMotives
             //    best sniper street) restricts the pick to pool members that pass it, but falls back to the full
             //    uniform-random pick when NONE pass (still a real motivated killer, just an ExCop sniper). No motive
             //    is lost either way: the whole pool is event-backed suspects. Bookkeeping uses the chosen killerEdge.
-            SuspectEdge killerEdge;
             int preferViable = 0;
             if (preferKiller != null)
             {
@@ -500,10 +617,17 @@ namespace SODMotives
             }
             LastPreferViableCount = preferViable; LastPoolScanned = poolN;
             murderer = killerEdge.suspect;
-
-            // 6) Record for clue injection / diagnostics.
             pool = suspects;
-            PoolByVictim[chosenVid] = suspects;
+            return true;
+        }
+
+        // Steps 6-7 (LIVE ONLY): record the pick for clue injection / diagnostics and materialize any
+        // on-demand (live workplace / property) events behind the chosen pool. Never called during dry-run
+        // sampling, so the sampler leaves no trace in the world.
+        private static void CommitSelection(int chosenVid, Human murderer, Human victim, List<SuspectEdge> pool, SuspectEdge killerEdge)
+        {
+            // 6) Record for clue injection / diagnostics.
+            PoolByVictim[chosenVid] = pool;
             OverriddenVictimIds.Add(chosenVid);
             MotiveByVictim[chosenVid] = new MotiveResult
             {
@@ -513,13 +637,12 @@ namespace SODMotives
                 detail = killerEdge.detail,
             };
 
-            // 7) Materialize any ON-DEMAND (live workplace) events behind this victim's pool. This
-            //    populates knownBy now; the affair-only clue/interrogation readers get wired onto
-            //    these in W3/W4. Stored events already have id != 0. Record the company so we don't
-            //    build a duplicate workplace case for it later.
-            for (int i = 0; i < suspects.Count; i++)
+            // 7) Materialize any ON-DEMAND (live workplace/property) events behind this victim's pool. This
+            //    populates knownBy now. Stored events already have id != 0. Record the company/building so we
+            //    don't build a duplicate case for it later.
+            for (int i = 0; i < pool.Count; i++)
             {
-                var ev = suspects[i].evt;
+                var ev = pool[i].evt;
                 if (ev != null && ev.id == 0)   // a fresh on-demand candidate not yet in the store
                 {
                     Gossip.Distribute(ev);      // fill knownBy (audience + partners) before indexing
@@ -531,7 +654,7 @@ namespace SODMotives
                 }
             }
 
-            // Back-compat: keep the affair-only downstream paths working until W3–W5 migrate them.
+            // Back-compat: keep the affair-only downstream paths working.
             if (killerEdge.evt != null && killerEdge.evt.type == SocialEventType.Affair)
                 AffairByVictim[chosenVid] = killerEdge.evt;
             if (killerEdge.evt != null)
@@ -539,8 +662,56 @@ namespace SODMotives
                 EventByVictim[chosenVid] = killerEdge.evt;               // any-type motive event (F9/F12 knower aids)
                 EventStore.MarkKnown(killerEdge.evt, murderer.humanID);  // the killer knows their own motive event
             }
+        }
 
-            return true;
+        // DRY-RUN SAMPLER (testability): run the victim pick many times against the CURRENT city with NO
+        // side effects (no case created, no world state touched), tallying how often the chosen victim is a
+        // boss / landlord / other. Lets you measure the StructuralVictimWeight bias before/after instantly:
+        // sample, change the slider, sample again. Builds the candidate graph once, then dry-picks N times.
+        internal static string SampleVictimCategories(int n)
+        {
+            if (n < 1) n = 1;
+            var g = BuildCandidateGraph();
+            if (g == null) return "SAMPLER: no motivated victims available in this city right now.";
+
+            // City-wide structural totals (independent of the pool): confirms the detection is actually
+            // finding landlords/bosses at all. cityLand == 0 => GetLandlord returned null for everyone
+            // (detection problem / no rented housing); cityLand > 0 but poolLand == 0 => landlords exist
+            // but none is a candidate victim (no eviction/rent-arrears edge survived); poolLand > 0 but a
+            // 0% sample => they exist in the graph but the MinSuspects floor / family weighting drops them.
+            int cityBoss = 0, cityLand = _landlordIds != null ? _landlordIds.Count : 0;
+            try
+            {
+                var dir = CityData.Instance != null ? CityData.Instance.citizenDirectory : null;
+                if (dir != null) for (int i = 0; i < dir.Count; i++) { var h = dir[i]; if (h != null && IsBossHuman(h)) cityBoss++; }
+            }
+            catch { }
+
+            int poolBoss = 0, poolLand = 0, poolOther = 0;
+            foreach (var kv in g.victimRef)
+            {
+                if (IsBossHuman(kv.Value)) poolBoss++;
+                else if (_landlordIds != null && _landlordIds.Contains(kv.Key)) poolLand++;
+                else poolOther++;
+            }
+
+            int boss = 0, land = 0, other = 0, fails = 0;
+            for (int i = 0; i < n; i++)
+            {
+                if (ChooseFromGraph(g, null, out _, out var v, out _, out _, out _) && v != null)
+                {
+                    if (IsBossHuman(v)) boss++;
+                    else if (_landlordIds != null && _landlordIds.Contains(v.humanID)) land++;
+                    else other++;
+                }
+                else fails++;
+            }
+            int ok = boss + land + other; if (ok == 0) ok = 1;
+            int poolTotal = poolBoss + poolLand + poolOther;
+            return $"SAMPLER n={n} (StructuralVictimWeight={StructuralVictimWeight:0.00}): VICTIM = boss {(100f * boss / ok):0.0}% | landlord {(100f * land / ok):0.0}% | other {(100f * other / ok):0.0}%"
+                 + (fails > 0 ? $"  ({fails} empty picks)" : "")
+                 + $"\ncandidate victims in pool: {poolTotal}  ({poolBoss} boss, {poolLand} landlord, {poolOther} other)"
+                 + $"\ncity totals (detection check): {cityBoss} bosses, {cityLand} landlords";
         }
     }
 }

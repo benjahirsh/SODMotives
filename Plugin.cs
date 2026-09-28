@@ -13,7 +13,7 @@ namespace SODMotives
     // It intentionally changes NOTHING in the game yet — this is how we lock the
     // design to reality (call order, whether victim depends on murderer, and the
     // actual range/meaning of Acquaintance.like) before writing the override.
-    [BepInPlugin(Guid, "SOD Motives", "1.2.2")]
+    [BepInPlugin(Guid, "SOD Motives", "1.2.3")]
     public class MotivesPlugin : BasePlugin
     {
         public const string Guid = "com.benhirsh.sodmotives";
@@ -49,6 +49,9 @@ namespace SODMotives
             BindApply("Motive Mix", "MotivatedSniperShare", 1f,
                 "SNIPER analogue of MotiveCaseShare / MotivatedKidnapShare: fraction (0..1) of SNIPER cases that get a motivated killer->victim pair; the rest run vanilla. Default 1 = every sniper case is motivated; 0 = snipers stay vanilla. Requires the sandbox 'Sniper cases' type ON. The MO is chosen by a killer-home line-of-sight test (VoyeurSniper if the killer's home overlooks the victim's home/work, shooting from the killer's own window; else the street/rooftop ExCopSniper). For ExCop the watchdog pins a believable nest that overlooks the victim's workplace when one is streamed in, otherwise it picks a shot site from the city's scored street vantages; the shot itself and a clean give-up to a vanilla site are left to the game. Applies to the next sniper.",
                 v => MurderSelector.MotivatedSniperShare = v, R01(), Order(90));
+            BindApply("Motive Mix", "StructuralVictimWeight", 0.5f,
+                "How often a BOSS or LANDLORD may be the VICTIM, relative to everyone else (1 = as likely as anyone; 0.5 = half as likely, the default; 0 = only when no other victim is available). Bosses and landlords are structural NPCs (a company needs its director, a building its landlord), so keeping this below 1 keeps more of them alive. It doubles as the boss/promotee and landlord/tenant dial: down-weighting the boss shifts a workplace case toward the PROMOTEE, and down-weighting the landlord shifts a property case toward the TENANT. Applies to the next case; murders, kidnaps and snipers all use it. (Debug: press the VictimSampler key, default F2, to measure the effect instantly.)",
+                v => MurderSelector.StructuralVictimWeight = v, R01(), Order(85));
             // The five motive families — each a 0..1 weight, NORMALISED together, so any mix works (they need
             // not sum to 1). Set one to 0 to drop that motive from the blend.
             BindApply("Motive Mix", "AffairShare", 0.35f,
@@ -73,9 +76,6 @@ namespace SODMotives
             BindApply("Selection", "KillerPoolSize", 10,
                 "The real killer is picked uniformly at random from the victim's top-N strongest suspects.",
                 v => MurderSelector.KillerPoolSize = v);
-            BindApply("Selection", "NameKnownThreshold", 0f,
-                "Minimum directed familiarity (Acquaintance.known, 0..1) for an NPC to count as knowing a person's NAME. Gates interrogation gossip + the F9 knower lists. 0 = matches the game's own photo-recognition (any acquaintance edge), so a knower will gossip about ANYONE the player can identify. Raise it to require closer familiarity (real relationships sit ~0.6-0.9; casual ~0.1-0.2) before an NPC will gossip about someone.",
-                v => Motive.NameKnownThreshold = v, R01());
 
             // --- Workplace (built on-demand from live company rosters at murder time) ---
             BindApply("Workplace", "EnableWorkplace", true,
@@ -134,18 +134,9 @@ namespace SODMotives
             BindApply("Troubleshooting", "StallGameHours", 24f,
                 "In-game hours a mod murder may sit stalled in 'executing' before the watchdog force-finishes it (only if killer is present and no damage is landing).",
                 v => MurderWatchdog.StallGameHours = v);
-            BindApply("Troubleshooting", "GameVerboseLogging", false,
-                "OBSERVE: keep the game's OWN verbose murder logging on (its 'Murder:' step-by-step flow), so a vanilla kidnap is narrated from the start. Output goes to the game's Player.log (AppData/LocalLow/ColePowered Games/Shadows of Doubt/Player.log), NOT the BepInEx log. Turn on before running a vanilla kidnapping to observe how it works.",
-                v => DebugTools.GameVerboseLogging = v);
-            BindApply("Troubleshooting", "TimeBoostMultiplier", 2f,
-                "Fast-forward strength: the EXTRA multiple applied on top of the game's fastest built-in speed while the fast-forward key (End) is ON, by pushing the game's own time multiplier (not Time.timeScale). 1 = just simulation speed. Higher tries to go faster; the game may clamp/ignore what it can't keep up with.",
-                v => DebugTools.TimeBoostMultiplier = v);
             BindApply("Troubleshooting", "WaitLocationStallHours", 12f,
                 "In-game hours a mod case may sit stalled in 'waitForLocation' (no seatable location — e.g. a kidnap with no valid holding den) before the watchdog CANCELS it so it can't hang the case indefinitely. A one-time IsValidLocation den probe is logged the moment it stalls.",
                 v => MurderWatchdog.WaitLocationStallHours = v);
-            BindApply("Troubleshooting", "ForceVictimWorkplace", "",
-                "DEV/TEST: when non-empty, motivated cases only target a victim who WORKS at a place whose name contains this text (case-insensitive) -- e.g. set it to 'Daffodil Ward' and press F3 to force ward-employee sniper victims and reproduce the ward -> Lovelace-window shot. Empty = normal victim selection.",
-                v => DebugTools.ForceVictimWorkplace = v);
             BindApply("Troubleshooting", "StripSignatures", true,
                 "Remove serial-killer calling card / moniker / graffiti from motivated cases so they read as personal crimes. (Off = motive cases keep the vanilla serial-killer signatures.)",
                 v => MurderSelector.StripSignatures = v);
@@ -158,12 +149,6 @@ namespace SODMotives
             BindApply("Troubleshooting", "ObviousTestNames", false,
                 "TESTING: rename injected notes to 'MODCLUE ...' so they're easy to find. Leave false for normal play; set true only to locate mod clues while testing.",
                 v => ClueInjector.ObviousNames = v);
-            BindApply("Troubleshooting", "ForceAllPrints", false,
-                "TESTING: force the author's fingerprint onto EVERY motive clue (overrides the per-type print policy, including the normally print-free rent/debt notes). Use to check whether a print on a clue at the scene aids the game's suspect scoring.",
-                v => ClueInjector.ForceAllPrints = v);
-            BindApply("Troubleshooting", "FastMurderCadence", false,
-                "TESTING: force the pause between murders to 0 so cases chain back-to-back with no gap. NOTE: this only compresses the wait BETWEEN murders — it does not speed the current murder's planning/enactment, and it does NOT force a sniper/kidnap case (those are picked by the game and can't be forced without a dev trigger). Leave false for normal play; restores the original cadence when turned off.",
-                v => DebugTools.FastMurderCadence = v);
 
             // --- Debug (developer tooling) ---
             BindApply("Debug", "EnableDebugKeys", false,
@@ -180,15 +165,9 @@ namespace SODMotives
             BindApply("Debug Keys", "TeleportToKiller", UnityEngine.KeyCode.F8,
                 "Teleport to the KILLER's CURRENT position (where they are right now) so you can tail them during a case.",
                 v => DebugTools.KeyTeleportKiller = v);
-            BindApply("Debug Keys", "ForceSniperCase", UnityEngine.KeyCode.F3,
-                "TESTING: immediately create a motivated SNIPER case (killer + victim from the mod's selector, a loaded sniper preset/MO), bypassing the game's slow scheduler. Watch the F9 MURDER STATE to see whether it executes or stalls at waitForLocation. Set to None to disable.",
-                v => DebugTools.KeyForceSniper = v);
             BindApply("Debug Keys", "CaseSolutionOverlay", UnityEngine.KeyCode.F9,
                 "Toggle the on-screen case-solution overlay (killer / victim / suspect pool / injected clues).",
                 v => DebugTools.KeyCaseSolution = v);
-            BindApply("Debug Keys", "CycleForceEvent", UnityEngine.KeyCode.F6,
-                "Cycle the forced next-murder event type (off / affair / promotion / layoffs / eviction / rentarrears / feud / debt).",
-                v => DebugTools.KeyCycleForce = v);
             BindApply("Debug Keys", "TestAccess", UnityEngine.KeyCode.F7,
                 "Toggle TEST ACCESS: ghost mode (NPCs ignore you; invincible) AND always-answer (NPCs never refuse 'do you know this person?') together, since they're used as a pair. Set to None to disable.",
                 v => DebugTools.KeyTestAccess = v);
@@ -201,9 +180,6 @@ namespace SODMotives
             BindApply("Debug Keys", "TeleportToScene", UnityEngine.KeyCode.F10,
                 "Teleport to the current crime scene.",
                 v => DebugTools.KeyTeleportScene = v);
-            BindApply("Debug Keys", "TeleportToMeet", UnityEngine.KeyCode.F11,
-                "Teleport to the kidnap MEETING location (the public spot the killer lures the victim to before the abduction). Only meaningful for a kidnap case with a meet set.",
-                v => DebugTools.KeyTeleportMeet = v);
             BindApply("Debug Keys", "TeleportToVictim", UnityEngine.KeyCode.F12,
                 "Teleport to the VICTIM's CURRENT position (where they are right now) so you can tail them during a case.",
                 v => DebugTools.KeyTeleportVictim = v);

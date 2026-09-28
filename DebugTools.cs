@@ -75,14 +75,15 @@ namespace SODMotives
         // re-applied live from the in-game overlay (which renders KeyCode as a key-binder). Defaults are
         // the original F-keys (F5 left free for the game's quicksave + the config-menu toggle).
         internal static KeyCode KeyCaseSolution   = KeyCode.F9;
-        internal static KeyCode KeyCycleForce     = KeyCode.F6;
+        internal static KeyCode KeyCycleForce     = KeyCode.None; // OFF by default (code kept, set a KeyCode to re-enable). Was F6: cycle forced next-murder event type.
         internal static KeyCode KeyTestAccess     = KeyCode.F7;   // MERGED test toggle: ghost + always-answer together (used as a pair)
         internal static KeyCode KeyTeleportScene  = KeyCode.F10;
-        internal static KeyCode KeyTeleportMeet   = KeyCode.F11;   // teleport to the kidnap MEETING location (was: victim's work)
+        internal static KeyCode KeyTeleportMeet   = KeyCode.None;  // OFF by default (code kept, set a KeyCode to re-enable). Was F11: teleport to the kidnap meeting location.
         internal static KeyCode KeyTeleportVictim = KeyCode.F12;   // teleport to the VICTIM's CURRENT position (tail them)
         internal static KeyCode KeyTriggerMurder  = KeyCode.F4;   // force the game's next murder NOW (fast test loop)
         internal static KeyCode KeyTeleportKiller = KeyCode.F8;   // teleport to the KILLER's CURRENT position (tail them)
-        internal static KeyCode KeyForceSniper    = KeyCode.F3;   // CREATE a motivated sniper case immediately (bypasses the scheduler)
+        internal static KeyCode KeyForceSniper    = KeyCode.None; // OFF by default (removed from config panel; handler code kept, set a KeyCode to re-enable). Was F3: create a motivated sniper case now.
+        internal static KeyCode KeyVictimSampler  = KeyCode.None; // OFF by default (code kept, set a KeyCode to re-enable). Was F2: dry-run victim-distribution sampler (boss/landlord/other %).
         internal static KeyCode KeyTeleportCityHall = KeyCode.Home;   // teleport to City Hall (fixed landmark)
         internal static KeyCode KeyTimeBoost      = KeyCode.End;   // toggle fast-forward for testing
         private static bool _timeBoost = false;
@@ -127,7 +128,7 @@ namespace SODMotives
                 go.hideFlags = HideFlags.HideAndDontSave;
                 go.AddComponent<DebugHotkey>();
                 if (EnableDebugKeys)
-                    MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys ON (defaults; rebindable in the config menu -> SOD Motives / Debug Keys): F3=FORCE a motivated SNIPER case now, F4=trigger the next case now (vanilla's natural type: usually a murder), F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=TEST ACCESS (ghost + always-answer together), F8=teleport to nearest KILLER-knower, F9=case solution overlay, F10=teleport to scene, F11=to kidnap MEETING location, F12=to VICTIM's home, Home=teleport to City Hall, End=toggle fast-forward (simulation speed). (F1 reserved by the game; F2 + F5 unbound.)");
+                    MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys ON (defaults; rebindable in the config menu -> SOD Motives / Debug Keys): F2=victim-distribution sampler (boss/landlord/other %), F3=FORCE a motivated SNIPER case now, F4=trigger the next case now (vanilla's natural type: usually a murder), F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=TEST ACCESS (ghost + always-answer together), F8=teleport to nearest KILLER-knower, F9=case solution overlay, F10=teleport to scene, F11=to kidnap MEETING location, F12=to VICTIM's home, Home=teleport to City Hall, End=toggle fast-forward (simulation speed). (F1 reserved by the game; F2 + F5 unbound.)");
                 else
                     MotivesPlugin.Log.LogInfo($"[SODMotives] Debug tooling OFF. {KeyCaseSolution} = case-solution overlay is always available (set it to None in [Debug Keys] to disable); enable [Debug] EnableDebugKeys in the config overlay for the full test loop (force event, teleports, ghost, etc.).");
             }
@@ -249,6 +250,32 @@ namespace SODMotives
                 }
             }
             catch (Exception e) { log.LogWarning($"[SODMotives][F4] trigger error: {e.Message}"); }
+        }
+
+        // How many dry-run picks the F2 victim-distribution sampler runs per press (config-bound).
+        internal static int VictimSampleCount = 500;
+
+        // F2 (testing): DRY-RUN the victim picker VictimSampleCount times against the CURRENT city with NO
+        // side effects (no case is created, no world state changes) and show how often the chosen victim is
+        // a boss / landlord / other. This is the before/after measuring tool for [Motive Mix]
+        // StructuralVictimWeight: press F2, note the percentages, change the slider in the config overlay,
+        // press F2 again. Because picking a victim is just graph math over the current city, hundreds of
+        // picks run in an instant (the candidate graph is built once). Result goes to the log AND the F9
+        // overlay pane. See MurderSelector.SampleVictimCategories.
+        internal static void SampleVictimDistribution()
+        {
+            var log = MotivesPlugin.Log;
+            try
+            {
+                string result = MurderSelector.SampleVictimCategories(VictimSampleCount);
+                foreach (var line in result.Split('\n')) log.LogInfo("[SODMotives][sampler] " + line.TrimStart());
+                Overlay.Clear();
+                Overlay.Add("VICTIM-DISTRIBUTION SAMPLER (F2)");
+                foreach (var line in result.Split('\n')) Overlay.Add(line.TrimStart());
+                Overlay.Add("lower [Motive Mix] StructuralVictimWeight -> fewer boss/landlord victims; re-press F2");
+                Show = true;
+            }
+            catch (Exception e) { log.LogWarning($"[SODMotives][sampler] error: {e.Message}"); }
         }
 
         // F3 (testing): CREATE a motivated sniper case RIGHT NOW, bypassing the game's slow scheduler.
@@ -986,6 +1013,7 @@ namespace SODMotives
                     if (Input.GetKeyDown(DebugTools.KeyCycleForce)) DebugTools.CycleForceMotive();
                     if (Input.GetKeyDown(DebugTools.KeyTriggerMurder)) DebugTools.TriggerMurder();
                     if (Input.GetKeyDown(DebugTools.KeyForceSniper)) DebugTools.ForceSniperCase();
+                    if (Input.GetKeyDown(DebugTools.KeyVictimSampler)) DebugTools.SampleVictimDistribution();
                     if (Input.GetKeyDown(DebugTools.KeyTeleportCityHall)) DebugTools.TeleportToCityHall();
                     if (Input.GetKeyDown(DebugTools.KeyTimeBoost)) DebugTools.ToggleTimeBoost();
                     if (Input.GetKeyDown(DebugTools.KeyTeleportScene)) DebugTools.TeleportToScene();

@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.2.3
+New Motive Mix slider, Structural Victim Weight: makes bosses and landlords less likely to be the victim (default: half as likely), which also nudges workplace cases toward the promotee and property cases toward the tenant. Set it to 1 for no bias, or toward 0 to spare them unless there is no other victim. Also removed some developer-only test options from the settings panel.
+
 ## 1.2.2
 Fix: closed a rare remaining case where a motivated sniper could still stall. After a sniper gave up its planned nest and fell back to a normal firing site, that fallback site could itself never line up a clear shot, leaving the killer repositioning indefinitely with the case unresolved. A motivated sniper that produces no shot at its fallback site now reverts to an ordinary case after a day, so a sniper can never hang the game.
 

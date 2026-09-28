@@ -1,7 +1,7 @@
 # Changelog
 
 ## 1.3.0
-New interrogation option: "Can I talk to your partner?". When you talk to someone at home, you can ask to speak to their partner instead. The person steps aside and closes the door, then their partner comes to answer it so you can question them too. If they live alone or their partner is out they say so, and a sleeping partner is woken to answer. Toggle it under Talk to Partner in the settings.
+New interrogation option: "Can I talk to your partner?". When you talk to someone at home, you can ask to speak to their partner instead. The person steps aside and closes the door, then their partner comes to answer it so you can question them too. If they live alone or their partner is out they say so, and a sleeping partner is woken to answer.
 
 ## 1.2.3
 New Motive Mix slider, Structural Victim Weight: makes bosses and landlords less likely to be the victim (default: half as likely), which also nudges workplace cases toward the promotee and property cases toward the tenant. Set it to 1 for no bias, or toward 0 to spare them unless there is no other victim. Also removed some developer-only test options from the settings panel.

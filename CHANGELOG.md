@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.3.1
+Fix: motivated sniper cases could throw an error that stopped any further murders from happening. Snipers now run reliably, and a sniper case that loses its target (for example if another mod kills the would-be killer) cancels itself instead of jamming the game.
+
 ## 1.3.0
 New interrogation option: "Can I talk to your partner?". When you talk to someone at home, you can ask to speak to their partner instead. The person steps aside and closes the door, then their partner comes to answer it so you can question them too. If they live alone or their partner is out they say so, and a sleeping partner is woken to answer.
 

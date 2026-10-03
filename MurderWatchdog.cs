@@ -72,46 +72,9 @@ namespace SODMotives
         // (Murder.TryPickNewVictimSite), then defers the shot AND the force-kill fallback to the game exactly like
         // vanilla. No patience/timeout: vanilla has none for an un-executed sniper.
         private static readonly HashSet<int> _sniperSeeded = new HashSet<int>();   // our sniper cases we've made the initial site decision for (once each)
-        // LOCAL-SITE PIN (ExCop variety): a believable local site (victim home/work) we pinned instead of the city's
-        // single best rooftop, so the kill lands somewhere personal to the pair (the "Daffodil Ward" pattern). Local
-        // sites score far below the global best, so the game would never pick them on its own; a set sniperVictimSite
-        // is honoured, so pinning holds. If a (solver false-positive) pin never fires, we RELEASE to the game's own
-        // default after SniperPinStallHours so it can't hang.
         // All of the sniper tuning below is INTERNAL (not player-config): it only ever affects MOTIVATED sniper cases
         // (our overridden pairs). Vanilla snipers are never touched. Edit the defaults here to tune.
-        // NEVER-SHOWED safety cap (in-game hours): the give-up is normally the victim's WORK SHIFT ending in position
-        // without a shot; this cap only covers a victim who NEVER comes to the site at all (e.g. days off). Generous.
-        private const float SniperNeverShowedCapHours = 36f;
-        // Minimum building floor for a self-enumerated PHYSICS nest (NewNode.floor.floor; 0 = ground/street). A sniper
-        // fires from at least a first-story window / rooftop, never a street-side pavement. (NewNode.floorHeight is a
-        // different field that reads 0 everywhere -- floor.floor is the real story index.) 1 = first story.
-        private const int SniperMinNestFloor = 1;
-        // Max distance (metres) a pinned local nest may be from its site. Heuristic (NOT a vanilla value): a real
-        // overlooking nest is across a street, and the game's vantage solver over-reports (it will offer the city's
-        // dominant rooftop as a "vantage" over a site two blocks away -- a cross-city shot that never lines up), so we
-        // reject nests farther than this. ~55m is roughly a wide street / small block.
-        private const float SniperMaxNestMeters = 55f;
-        // How far (metres, building centre to the site) to look for candidate nest buildings. Wider than SniperMaxNestMeters
-        // because a large building's centre can be far while its near-side window is close; the per-nest distance is still
-        // gated by SniperMaxNestMeters. Lets us catch an overlook on ANY side of the site, not just a directly-faced one.
-        private const float SniperNestSearchMeters = 110f;
-        private static readonly Dictionary<int, NewGameLocation> _sniperPin = new Dictionary<int, NewGameLocation>();   // victimId -> pinned local site
-        private static readonly Dictionary<int, float> _sniperPinSince = new Dictionary<int, float>();                  // victimId -> gameTime the pin was set
-        private static readonly HashSet<int> _sniperReachedSite = new HashSet<int>();                                   // victimId -> the victim has been AT the pinned site (their shift started)
-        private static readonly Dictionary<int, float> _sniperAwaySince = new Dictionary<int, float>();                 // victimId -> gameTime they LEFT the site after reaching it (shift ending)
-        private static readonly Dictionary<int, float> _sniperInPosSince = new Dictionary<int, float>();                // victimId -> gameTime they became continuously AT the site (in position); reset when they leave
-        private const float SniperShiftEndGraceHours = 1.5f;                                                            // away-from-site this long (after having reached it) = the shift the killer was in position for has ended -> give up
-        private const float SniperInPositionCapHours = 8f;                                                             // continuously AT the site (in position) this long without a shot = a full shift passed in position -> give up (the herd can pin the victim at work so they never LEAVE, so shiftEnded alone can't catch it)
-        private static readonly HashSet<int> _sniperHerdLogged = new HashSet<int>();                                    // victims we've logged the herd for (once each)
-        private static readonly Dictionary<int, List<NewNode>> _sniperWander = new Dictionary<int, List<NewNode>>();      // victimId -> the site nodes the pinned nest can see (victim wanders among them, in the sightline)
-        private static readonly Dictionary<int, System.IntPtr> _sniperHerdNode = new Dictionary<int, System.IntPtr>();   // victimId -> the wander node currently herded to (to detect when to re-issue the walk goal)
-        private static readonly Dictionary<int, System.IntPtr> _sniperHerdGoalPtr = new Dictionary<int, System.IntPtr>();   // victimId -> the EXACT herd goal we created (removed by pointer on cleanup, so a goal whose node-location != the site can't survive and wedge the victim)
-        private static readonly Dictionary<int, KeyValuePair<int, NewNode>> _sniperWanderPick = new Dictionary<int, KeyValuePair<int, NewNode>>();   // victimId -> (time bucket, randomly-chosen wander node for that bucket)
-        private static readonly System.Random _sniperRng = new System.Random();
-        // Herd wander cadence (game-hours per bucket). COARSE bucket picks which window to hover; FINE bucket jitters
-        // among the nodes near it. (Original timing -- the cadence was fine; the victim just needs to WALK not run.)
-        private const float SniperWanderCoarseHours = 0.00833f;   // ~30 game-sec: which window to hover
-        private const float SniperWanderFineHours   = 0.00417f;   // ~15 game-sec: jitter around it
+        private static readonly System.Random _sniperRng = new System.Random();   // default-site pool randomisation
         // Default-site (vanilla fallback) rooftop variety. We enumerate the game's OWN ranked sites best-first and pick
         // one at RANDOM among the top few instead of always the single best (which is city-universally Mingo/Arquette).
         // Each time we re-seed a default for the same victim (a failed snipe), we climb one rank toward the best so a
@@ -128,52 +91,20 @@ namespace SODMotives
         // definitively hung -> cancel to vanilla (the game rolls a fresh, coherent case) so it can never soft-lock.
         private static readonly Dictionary<int, float> _sniperDefaultSince = new Dictionary<int, float>();   // victimId -> gameTime we first seeded the game's default site (no pin)
         private const float SniperDefaultCapHours = 24f;         // default site unresolved this long (a full day-night of the victim's routine) = hung -> cancel to vanilla
-
-        // FORCE-LOS-NEST (window fix). Decoded from IL2CPP (docs/extensions/sniper-nest-decode.md): the killer's nest
-        // is NOT a settable field — it is re-derived every time his sniper AI action activates by calling
-        // Toolbox.TryGetSniperVantagePoint, whose out NewWall becomes the node he walks to and fires from. The solver
-        // scores windows with a RANDOM term, so it can hand the killer a wrong-facing window with no real line of
-        // sight (the reported "killer at the Lovelace 1st-floor window, victim across the street, never fires"). We fix
-        // that at the one choke point: a Harmony postfix on that solver (Plugin.cs) replaces its pick, for OUR active
-        // motivated sniper only, with a window WE verified has clear node-graph LOS to where the victim will stand,
-        // preferring the closest such window. Everything else (site, herd, shot) is unchanged.
-        private const bool SniperForceLosNest = true;      // internal; mod cases only (vanilla snipers never touched)
-        internal static bool _inNestScan = false;          // reentrancy guard: our own solver calls must not re-enter the postfix
-        private static Human _moSniperKiller, _moSniperVictim;   // the active motivated sniper pair (scopes the postfix to ours only)
-        private static NewWall _moNestWall;                 // cached chosen nest for the current site (null = "checked, nothing better than the game's pick")
-        private static System.IntPtr _moNestSitePtr = System.IntPtr.Zero;   // site the cache is for; recompute when the site changes (re-target/clobber)
-
-        // PHYSICS-LOS NEST RESCUE (docs/extensions/sniper-nest-decode.md pt.4). The node-graph vantage check above
-        // (DataRaycastController.NodeRaycast) only registers windows a site DIRECTLY faces; it is BLIND to a real
-        // overlook across a park / on another building side / a few floors up (the Lovelace-8th-over-Laster's case:
-        // every node-graph candidate scored cover=0, so the case fell to Mingo). The live fire gate is a
-        // UnityEngine.Physics ray, so when the node-graph pass finds NO nest we fall back to a physics raycast
-        // (window-opening to window-opening, mirroring the gate) over nearby self-enumerated ACCESSIBLE windows, and
-        // pin the one that physically overlooks the MOST of the site's own windows (broadest overlook, e.g. a Plaza
-        // Orchid landing that sees many ward windows beats a single-window Lovelace landing). Additive +
-        // false-negative-biased: runs only when Stage 1 found nothing, so working cases are byte-for-byte unchanged
-        // and cast zero rays. All interop members are probe-verified against BepInEx/interop, and every call is try/catch'd.
-        private const bool SniperPhysicsLosNest = true;     // internal; mod cases only
-        // A BROAD physics overlook (>= PhysAdoptMinWindows of the site's windows) is ADOPTED over the node-graph nest
-        // pick, so the killer uses it (e.g. a Plaza Orchid landing seeing many ward windows instead of a narrow
-        // node-graph pick). Validated in-game (fires + resolves off-screen). Requires the site geometry loaded at case
-        // creation (player near) for the physics pass to run; otherwise the node-graph pick is used.
-        private const bool SniperPhysicsAdopt = true;       // internal; mod cases only
-        private const int PhysAdoptMinWindows = 4;          // adopt only a genuinely broad overlook (>= this many site windows)
-        // A sniper nest must be in a DIFFERENT building from the victim's site (a shot across the street), not another
-        // floor of the SAME building. Excludes same-building nests.
-        private const bool SniperNestAllowSameBuilding = false;   // internal; mod cases only
-        private const float PhysEyeUp = 1.4f;               // gun/eye height above a nest node (~killer.transform.position + aim)
-        private const float PhysBodyUp = 1.1f;              // victim torso height above a stand node (~GetBodyAnchor)
-        private const float PhysEdge = 0.35f;               // pull ray ends in from each window opening so we don't hit the opening's own frame
-        private const int   PhysMaxNestWindows = 120;       // cap on self-enumerated candidate nest windows per (failing) case (scanned closest-first)
-        private const int   PhysMaxSiteWindows = 24;        // cap on the site windows we aim at
-        private const float PhysWindowMaxRise = 2.6f;        // skip a window whose opening sits more than this above its interior floor node -- a multi-story-atrium/void window (glass above a lobby's doors) that no one can stand at, so a nest that "sees" it can't actually shoot a victim there
-        private static int  _rainGlassLayer = int.MinValue; // RainWindowGlass layer index (int.MinValue = unresolved, -1 = absent)
-        private static bool _physLayersDumped = false;      // one-time layer/mask diagnostic guard
-        private static bool _lastNestWasPhysics = false;    // FindBestPublicNest: did the LAST pick come from the physics rescue?
-        private static bool _moNestPhys = false;            // the active pinned nest came from the physics rescue (enables arrival re-validation)
-        private static bool _moNestRevalidated = false;     // one-shot: have we re-validated the physics pin once the killer reached it?
+        // RE-SEED (climb the ranking): if a seeded default site hasn't produced a shot this long, re-seed via
+        // SeedSniperDefault (which bumps the per-victim fail count -> climbs toward the guaranteed-best rooftop), so a
+        // case tries a varied site then converges on the reliable one. Does NOT reset the 24h hard-cancel clock.
+        private const float SniperReseedStallHours = 3f;
+        private static readonly Dictionary<int, float> _sniperReseedSince = new Dictionary<int, float>();   // victimId -> gameTime of the last (re)seed
+        // UNIVERSAL STUCK-SNIPER RECOVERY: a current sniper murder whose victim OR murderer is null/destroyed (Unity
+        // fake-null) can never resolve and blocks ALL new murders (the reported "Victim (Null)" bricked save; also hit
+        // by killing the would-be murderer with another mod). The main Tick guard returns on such a case, so recovery
+        // runs ABOVE it, keyed off the murder's own pointer (the victim id may be unreadable). Cancels via the game's
+        // own teardown; retries every SniperRecoverRetryHours if the same broken murder is still current.
+        private static System.IntPtr _sniperRecoverPtr = System.IntPtr.Zero;
+        private static float _sniperRecoverLastTry = -999f;
+        private static int _sniperRecoverTries = 0;
+        private const float SniperRecoverRetryHours = 2f;
 
         // Seal the den behind the fleeing killer. Vanilla (confirmed in-game across 2 sandboxes: frontDoors
         // locked=0 the whole hold, AND a web-search confirmed vacant-address kidnap dens stay UNLOCKED) only
@@ -207,10 +138,8 @@ namespace SODMotives
             _observed.Clear();
             _liveVid = -1; _liveLastLogH = -999f; _liveCount = 0;
             _sniperObserved.Clear(); _sniperLiveVid = -1; _sniperLiveLastLogH = -999f; _sniperLiveCount = 0;
-            _sniperSeeded.Clear(); _sniperPin.Clear(); _sniperPinSince.Clear(); _sniperHerdLogged.Clear(); _sniperWander.Clear(); _sniperHerdNode.Clear(); _sniperWanderPick.Clear(); _sniperHerdGoalPtr.Clear();
-            _sniperReachedSite.Clear(); _sniperAwaySince.Clear(); _sniperInPosSince.Clear(); _sniperDefaultFails.Clear(); _sniperDefaultSince.Clear();
-            _physLayersDumped = false; _rainGlassLayer = int.MinValue; _lastNestWasPhysics = false; _moNestPhys = false; _moNestRevalidated = false;
-            ClearActiveMotivatedSniper();
+            _sniperSeeded.Clear(); _sniperDefaultFails.Clear(); _sniperDefaultSince.Clear();
+            _sniperReseedSince.Clear(); _sniperRecoverPtr = System.IntPtr.Zero; _sniperRecoverTries = 0; _sniperRecoverLastTry = -999f;
             _ransomTried.Clear(); _killTimeReasserted.Clear();
             _killBlockLogged.Clear(); KidnapReachedHold.Clear(); _denSealed.Clear(); _denGoalLogged.Clear();
         }
@@ -247,651 +176,6 @@ namespace SODMotives
             catch { return false; }
         }
 
-        // A believable LOCAL sniper site for an ExCop case: a STATIC location the victim reliably occupies -- their
-        // HOME first, then their WORKPLACE -- with a PUBLIC, accessible nest (a rooftop/window in the building opposite)
-        // that has a genuine, raycast-verified line of sight to where the victim actually stands there. This mirrors
-        // vanilla's "pin the victim to a location, then send the shooter to solve it" (reliable, because the victim is
-        // stationary), rather than a hard-to-line-up shot at a moving commuter. We compute the nest OURSELVES
-        // (FindBestPublicNest) by enumerating the buildings facing the location and scoring their windows by real LOS to
-        // the victim's node, because the game's own solver only ever returns its single global-best rooftop -- which is
-        // exactly why ExCop cases kept funnelling to the one dominant street. Returns the site to pin AND the chosen
-        // nest wall; null if no local public nest overlooks the home or workplace (-> caller falls to the game default).
-        private static NewGameLocation FirstViableLocalSite(Human killer, Human victim, out NewWall nestWall, out List<NewNode> herdNodes)
-        {
-            nestWall = null; herdNodes = null;
-            try
-            {
-                if (killer == null || victim == null) return null;
-                NewGameLocation work = null; try { var j = victim.job; var e = j != null ? j.employer : null; if (e != null) work = e.placeOfBusiness; } catch { }
-
-                // WORKPLACE only. We deliberately do NOT pin the HOME: it is an enclosed residence (poor sniper LOS) and
-                // pinning it strands the victim inside their flat while the case falls back to the game default rooftop
-                // (the reported "victim stuck at home, killer waiting at Mingo"). An exposed workplace (a ward, an open
-                // office) is the believable, snipeable static spot; if it has no nest we fall to the game default.
-                var order = new List<NewGameLocation>();
-                if (work != null) order.Add(work);
-
-                foreach (var loc in order)
-                {
-                    NewNode target = TargetNodeAt(victim, loc);
-                    if (target == null) continue;
-                    if (FindBestPublicNest(killer, loc, target, out var wall, out var dist, out var isPublic, out var seen) && wall != null)
-                    {
-                        nestWall = wall; herdNodes = seen;
-                        NewGameLocation nestLoc = null; try { var bn = wall.node; nestLoc = bn != null ? bn.gameLocation : null; } catch { }
-                        MotivesPlugin.Log.LogInfo($"[SODMotives][sniper] LOCAL nest for {LName(loc)}: {LName(nestLoc)} ({dist:0}m, {(isPublic ? "public/accessible" : "killer-home window")}, verified line of sight) -- herd the victim to the window the nest sees, killer solves it.");
-                        return loc;
-                    }
-                    MotivesPlugin.Log.LogInfo($"[SODMotives][sniper] no public nest with a clear shot overlooks {LName(loc)}; trying next candidate.");
-                }
-                return null;
-            }
-            catch { return null; }
-        }
-
-        // A node representing where the victim will be at 'loc' (for LOS scoring): their real node if already there,
-        // else the location's anchor, else its first node. Read-only; never throws.
-        private static NewNode TargetNodeAt(Human victim, NewGameLocation loc)
-        {
-            try
-            {
-                if (victim != null && loc != null)
-                {
-                    NewGameLocation vl = null; try { vl = victim.currentGameLocation; } catch { }
-                    if (vl != null && vl.Pointer == loc.Pointer) { var vn = victim.currentNode; if (vn != null) return vn; }
-                }
-                var a = SafeAnchor(loc); if (a != null) return a;
-                var ns = loc != null ? loc.nodes : null;
-                if (ns != null && ns.Count > 0) return ns[0];
-            }
-            catch { }
-            return null;
-        }
-
-        // THE BETTER NEST CALCULATION (the user's request). Enumerate candidate nests overlooking 'targetLoc' and pick
-        // the best one with a genuine, raycast-verified line of sight to 'targetNode' (where the victim will stand),
-        // preferring a PUBLIC/accessible nest (not the killer's own home) then the closest, within SniperMaxNestMeters.
-        // Candidates come from TWO sources: (a) the buildings FACING targetLoc's windows (Toolbox.GetFacingBuildingFromWindow),
-        // each scored by the game's per-building window scorer (ScanBuildingForSniperVantagePoints) -- these are the close
-        // local windows/rooftops the global solver hides; and (b) the game's global-best vantage
-        // (TryGetSniperVantagePoint) so a genuine overlooking rooftop is still considered. Each candidate's node is
-        // LOS-checked with DataRaycastController.NodeRaycast (which treats window glass as transparent, matching the
-        // game's own scorer). This is what makes ExCop land local nests instead of always the one dominant rooftop.
-        internal static bool FindBestPublicNest(Human killer, NewGameLocation targetLoc, NewNode targetNode, out NewWall bestWall, out float bestDist, out bool bestPublic, out List<NewNode> seenNodes)
-        {
-            bestWall = null; bestDist = float.MaxValue; bestPublic = false; seenNodes = null;
-            bool diag = false; try { diag = DebugTools.EnableDebugKeys; } catch { }
-            try
-            {
-                if (killer == null || targetLoc == null) return false;
-                var tb = Toolbox.Instance; var drc = DataRaycastController.Instance;
-                if (tb == null || drc == null) return false;
-                NewGameLocation kh = null; try { kh = killer.home; } catch { }
-                NewBuilding siteBuilding = null; try { siteBuilding = targetLoc.building; } catch { }   // exclude same-building nests
-
-                // Target set = the site's nodes (where the victim may stand). targets[0] is the PRIMARY node we most want
-                // covered (the victim's actual node when known, else the anchor). Sample MANY of the site's nodes so a
-                // nest's COVERAGE (how much of the site it can see) is meaningful -- a broad overlook that sees most of
-                // the ward beats a window that only sees one corner.
-                var targets = new List<NewNode>();
-                if (targetNode != null) targets.Add(targetNode);
-                NewNode anchor = null; try { anchor = targetLoc.anchorNode; } catch { }
-                if (anchor != null && !targets.Contains(anchor)) targets.Add(anchor);
-                try { var ns = targetLoc.nodes; if (ns != null) { int c = ns.Count; for (int i = 0; i < c && targets.Count < 30; i++) { var n = ns[i]; if (n != null && !targets.Contains(n)) targets.Add(n); } } }
-                catch (Exception e) { if (diag) MotivesPlugin.Log.LogWarning($"[SODMotives][nest] {LName(targetLoc)} nodes err: {e.Message}"); }
-                if (targets.Count == 0) { if (diag) MotivesPlugin.Log.LogInfo($"[SODMotives][nest] {LName(targetLoc)}: no target nodes."); return false; }
-                Vector3 refPos = default; bool haveRef = false;
-                try { var rn = anchor ?? targets[0]; if (rn != null) { refPos = rn.position; haveRef = true; } } catch { }
-
-                var candidates = new List<NewWall>();
-                int scanned = 0;
-                // Enumerate NEARBY buildings (centre within SniperNestSearchMeters of the site) and scan each for its best
-                // window onto the site. This is the key fix: the game's own GetFacingBuildingFromWindow only finds the
-                // building a ward window DIRECTLY faces on ONE side, so an overlook on a DIFFERENT side (or a few floors up)
-                // -- e.g. Plaza Orchid across from the ward -- is never even considered. Scanning all nearby buildings
-                // catches them. The game's ScanBuilding validates each window's LOS to the site internally.
-                // These call the patched solver overload, so guard against re-entering our own postfix.
-                _inNestScan = true;
-                try
-                {
-                    // Collect DISTINCT buildings that have a location (room/landing) near the site, via the game-location
-                    // directory (CityData has no building directory in interop). Each such building is a candidate nest,
-                    // regardless of which SIDE of the site it faces -- so an overlook like Plaza Orchid across the ward on a
-                    // different side than Lovelace is included.
-                    var cd = CityData.Instance;
-                    var locs = cd != null ? cd.gameLocationDirectory : null;
-                    if (locs != null && haveRef)
-                    {
-                        var nearB = new Dictionary<System.IntPtr, KeyValuePair<float, NewBuilding>>();
-                        int lc = 0; try { lc = locs.Count; } catch { }
-                        for (int i = 0; i < lc; i++)
-                        {
-                            NewGameLocation loc = null; try { loc = locs[i]; } catch { }
-                            if (loc == null) continue;
-                            NewNode an = null; try { an = loc.anchorNode; } catch { }
-                            if (an == null) continue;
-                            float ld; try { ld = Vector3.Distance(an.position, refPos); } catch { continue; }
-                            if (ld > SniperNestSearchMeters) continue;
-                            NewBuilding b = null; try { b = loc.building; } catch { }
-                            if (b == null) continue;
-                            System.IntPtr bp; try { bp = b.Pointer; } catch { continue; }
-                            if (!SniperNestAllowSameBuilding && siteBuilding != null && bp == siteBuilding.Pointer) continue;   // no same-building nest
-                            if (!nearB.TryGetValue(bp, out var ex) || ld < ex.Key) nearB[bp] = new KeyValuePair<float, NewBuilding>(ld, b);
-                        }
-                        var near = new List<KeyValuePair<float, NewBuilding>>(nearB.Values);
-                        near.Sort((x, y) => x.Key.CompareTo(y.Key));
-                        int cap = Math.Min(near.Count, 14);   // nearest N distinct buildings -- bounds the cost of the per-building scans
-                        if (diag)
-                        {
-                            var sb = new System.Text.StringBuilder();
-                            for (int i = 0; i < cap; i++) { try { var b = near[i].Value; sb.Append(b != null ? b.name : "?").Append('(').Append(near[i].Key.ToString("0")).Append("m) "); } catch { } }
-                            MotivesPlugin.Log.LogInfo($"[SODMotives][nest] near buildings for {LName(targetLoc)} ({near.Count} found, scanning {cap}): {sb}");
-                        }
-                        for (int i = 0; i < cap; i++)
-                        {
-                            var b = near[i].Value; scanned++;
-                            for (int s = 0; s < 3; s++)   // a few samples past the scorer's random term
-                            {
-                                NewWall w = null; float sc = 0f; bool ok = false;
-                                var acc = new Il2CppSystem.Collections.Generic.List<NewNode.NodeAccess>();
-                                try { ok = tb.ScanBuildingForSniperVantagePoints(killer, b, targetLoc, out w, out sc, ref acc); } catch { ok = false; }
-                                if (ok && w != null) candidates.Add(w);
-                            }
-                        }
-                    }
-                    // global-best backstop (a genuine overlooking rooftop, if no nearby-building window wins).
-                    try { NewWall w = null; float sc = 0f; if (tb.TryGetSniperVantagePoint(killer, targetLoc, out w, out sc) && w != null) candidates.Add(w); } catch (Exception e) { if (diag) MotivesPlugin.Log.LogWarning($"[SODMotives][nest] global solver err: {e.Message}"); }
-                }
-                catch (Exception e) { if (diag) MotivesPlugin.Log.LogWarning($"[SODMotives][nest] enumerate err: {e.Message}"); }
-                finally { _inNestScan = false; }
-
-                // Rank by COVERAGE: the nest that can SEE THE MOST of the site wins -- a broad overlook (like Plaza Orchid
-                // seeing most of the ward) catches the victim wherever they settle, which a single-window nest can't. Then
-                // prefer public/accessible, then a nest that sees the primary node, then closest. LOS is the game's own
-                // node-graph raycast (windows transparent), the same one its scorer uses. Distance gate rejects a genuinely
-                // far cross-city rooftop (dominant-street false positive).
-                int tooFar = 0, bestCover = -1;
-                bool bestPrimary = false;
-                var seenN = new HashSet<System.IntPtr>();
-                foreach (var w in candidates)
-                {
-                    if (w == null) continue;
-                    NewNode wn = null; try { wn = w.node; } catch { }
-                    if (wn == null) continue;
-                    try { if (!seenN.Add(wn.Pointer)) continue; } catch { }   // score each distinct nest node once
-                    float d = float.MaxValue; int cover = 0; bool seesPrimary = false; var thisSeen = new List<NewNode>();
-                    for (int i = 0; i < targets.Count; i++)
-                    {
-                        var t = targets[i]; if (t == null) continue;
-                        float dd; try { dd = Vector3.Distance(wn.position, t.position); } catch { dd = float.MaxValue; }
-                        if (dd < d) d = dd;
-                        bool c = false; try { c = drc.NodeRaycast(wn, t, out _, (NewDoor)null, false); } catch { }
-                        if (c) { cover++; if (i == 0) seesPrimary = true; thisSeen.Add(t); }
-                    }
-                    bool pub = true; try { var nl = wn.gameLocation; pub = kh == null || nl == null || nl.Pointer != kh.Pointer; } catch { }
-                    bool far = d > SniperMaxNestMeters;   // beyond the believable-overlook cap
-                    if (diag)
-                        MotivesPlugin.Log.LogInfo($"[SODMotives][nest]   candidate {LName(NestLoc(w))} {d:0}m {(pub ? "public" : "killer-home")} cover={cover}/{targets.Count} primary={seesPrimary}{(far ? " TOOFAR" : "")}{(cover < 1 ? " NOLOS" : "")}");
-                    if (far) { tooFar++; continue; }
-                    // A nest that sees NONE of the victim's spots (node-graph LOS) is useless: there is no window to herd
-                    // the victim to and no physics shot can ever clear, so pinning it just strands the victim at the site
-                    // for SniperPinStallHours before falling back. Skip it -- the case then uses the game's default site
-                    // (its best-vantage rooftop) from the START, exactly as vanilla would. (This is what happened to the
-                    // Laster's Management case: every candidate scored cover=0 because node-graph LOS is blind to the real
-                    // overlooking window across the park, so the blind global-solver rooftop got pinned and stalled 8h.)
-                    if (cover < 1) continue;
-                    bool better = bestWall == null
-                        || (pub != bestPublic ? pub
-                            : cover != bestCover ? cover > bestCover
-                            : seesPrimary != bestPrimary ? seesPrimary
-                            : d < bestDist);
-                    if (better)
-                    {
-                        bestWall = w; bestDist = d; bestPublic = pub; bestCover = cover; bestPrimary = seesPrimary;
-                        // ALL the nodes this nest actually has a clear shot to. We herd the victim to WANDER among these,
-                        // so they move through the killer's sightline -- a specific node can be node-graph-"visible" yet
-                        // physics-blocked by furniture (the reported "sniper couldn't fire until the victim moved"), so
-                        // giving them a few in-sightline spots to move between lets a clear physics shot happen.
-                        seenNodes = thisSeen;
-                    }
-                }
-                // STAGE 2 -- PHYSICS-LOS RESCUE. Only when node-graph (Stage 1) found NO nest: enumerate nearby
-                // ACCESSIBLE windows ourselves and pick one with a real physics line to the site's own windows (which
-                // the node-graph check is blind to). Runs on the failing case only, so working cases are untouched.
-                _lastNestWasPhysics = false;
-                bool physicsOn = false; try { physicsOn = SniperPhysicsLosNest; } catch { }
-                if (physicsOn && bestWall == null && haveRef)
-                {
-                    if (PhysicsRescueNest(killer, targetLoc, refPos, kh, out var pWall, out var pDist, out var pPub, out var pSeen) && pWall != null)
-                    {
-                        bestWall = pWall; bestDist = pDist; bestPublic = pPub;
-                        bestCover = pSeen != null ? pSeen.Count : 1; seenNodes = pSeen; _lastNestWasPhysics = true;
-                    }
-                }
-                else if (physicsOn && bestWall != null && haveRef)
-                {
-                    // The node-graph pass already found a nest (e.g. the working Daffodil Ward -> Lovelace 2nd landing).
-                    // Run the physics rescue too and compare. By default this is LOG-ONLY (we keep the firing node-graph
-                    // pick). But if [Troubleshooting] SniperPhysicsAdopt is on AND physics finds a clearly BROAD overlook
-                    // (>= PhysAdoptMinWindows of the site's windows), ADOPT it -- that is how the killer uses a Plaza
-                    // Orchid-style 9/11 nest instead of a narrow node-graph 2-node pick. Opt-in because a physics nest is
-                    // not yet proven to fire end-to-end; off = the previous (safe) behaviour.
-                    bool adopt = false; try { adopt = SniperPhysicsAdopt; } catch { }
-                    if ((adopt || diag) && PhysicsRescueNest(killer, targetLoc, refPos, kh, out var cWall, out var cDist, out var cPub, out var cSeen) && cWall != null)
-                    {
-                        int cwin = cSeen != null ? cSeen.Count : 0;
-                        if (adopt && cwin >= PhysAdoptMinWindows)
-                        {
-                            MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los][adopt] replacing node-graph {LName(NestLoc(bestWall))} (cover={bestCover}/{targets.Count}) with physics {LName(NestLoc(cWall))} {cDist:0}m sees {cwin} site-windows.");
-                            bestWall = cWall; bestDist = cDist; bestPublic = cPub; bestCover = cwin; seenNodes = cSeen; _lastNestWasPhysics = true;
-                        }
-                        else if (diag)
-                            MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los][compare] node-graph PICK {LName(NestLoc(bestWall))} cover={bestCover}/{targets.Count} (kept) vs physics-would-pick {LName(NestLoc(cWall))} {cDist:0}m sees {cwin} site-windows -- {(adopt ? "below adopt threshold (" + PhysAdoptMinWindows + ")" : "adopt off")}.");
-                    }
-                }
-                // Expand the wander set: with only the ~2 strictly-visible nodes the victim just paces a straight line
-                // between them, and if that line is furniture-blocked the shot never clears. Add the ward nodes NEAR the
-                // visible ones so the victim wanders a small CLUSTER around the windows and steps into a physics-clear
-                // spot (physics LOS differs from the node-graph LOS -- the clear spot is often a nearby node not flagged
-                // "visible"). All these nodes are close to the same windows, so the wander stays local.
-                if (seenNodes != null && seenNodes.Count > 0)
-                {
-                    var expanded = new List<NewNode>(seenNodes);
-                    for (int i = 0; i < targets.Count && expanded.Count < 14; i++)
-                    {
-                        var t = targets[i]; if (t == null || expanded.Contains(t)) continue;
-                        bool near = false;
-                        for (int j = 0; j < seenNodes.Count; j++)
-                        { try { if (Vector3.Distance(t.position, seenNodes[j].position) <= 3.5f) { near = true; break; } } catch { } }
-                        if (near) expanded.Add(t);
-                    }
-                    seenNodes = expanded;
-                }
-                if (diag)
-                    MotivesPlugin.Log.LogInfo($"[SODMotives][nest] {LName(targetLoc)}: targets={targets.Count} nearBuildingsScanned={scanned} candidates={candidates.Count} tooFar={tooFar} -> {(bestWall != null ? "PICK " + LName(NestLoc(bestWall)) + " " + bestDist.ToString("0") + "m " + (bestPublic ? "public" : "killer-home") + " cover=" + bestCover + "/" + targets.Count + " wanderNodes=" + (seenNodes != null ? seenNodes.Count : 0) : "NONE")}.");
-                return bestWall != null;
-            }
-            catch (Exception e) { if (diag) MotivesPlugin.Log.LogWarning($"[SODMotives][nest] {LName(targetLoc)} FATAL: {e.Message}"); return false; }
-        }
-
-        private static NewGameLocation NestLoc(NewWall w) { try { var n = w != null ? w.node : null; return n != null ? n.gameLocation : null; } catch { return null; } }
-
-        // F9 overlay: describe the mod's OWN sniper nest (the den the killer shoots FROM) and whether he's reached it.
-        // The game's sniperKillShotNode stays (0,0,0) in our deferred model, so the old "SNIPE SHOT lining up" line never
-        // said anything. This exposes the real nest we forced (via the vantage-solver postfix) + the killer's live
-        // distance to it, so the tester can see whether he's travelling to the nest, is in position, or idling.
-        internal static bool ActiveSniperNest(Human killer, Human victim, out string nestName, out float killerToNestM, out bool pinnedLocal, out int wanderCount)
-        {
-            nestName = null; killerToNestM = -1f; pinnedLocal = false; wanderCount = 0;
-            try
-            {
-                if (_moNestWall == null) return false;
-                nestName = LName(NestLoc(_moNestWall));
-                NewNode nn = null; try { nn = _moNestWall.node; } catch { }
-                if (killer != null && nn != null)
-                { try { var kn = killer.currentNode; if (kn != null) killerToNestM = Vector3.Distance(kn.position, nn.position); } catch { } }
-                if (victim != null)
-                {
-                    try { pinnedLocal = _sniperPin.ContainsKey(victim.humanID); } catch { }
-                    if (_sniperWander.TryGetValue(victim.humanID, out var wl) && wl != null) wanderCount = wl.Count;
-                }
-                return true;
-            }
-            catch { return false; }
-        }
-
-        // ============================ PHYSICS-LOS NEST RESCUE ======================================================
-        // UnityEngine.Physics / Ray / RaycastHit / LayerMask / QueryTriggerInteraction resolve from the interop
-        // PhysicsModule + CoreModule DLLs (probe-confirmed). Vector3 operator overloads are NOT exposed by this
-        // interop build (probe-confirmed: only Vector3.Distance, the (x,y,z) ctor and Vector3.up), so all vector math
-        // here is component-wise. This is the mod's first use of the Physics idiom, so every call is try/catch'd.
-
-        private static int RainGlassLayer()
-        {
-            if (_rainGlassLayer == int.MinValue)
-            { try { _rainGlassLayer = LayerMask.NameToLayer("RainWindowGlass"); } catch { _rainGlassLayer = -1; } }
-            return _rainGlassLayer;
-        }
-
-        // The ray mask = the game's OWN Toolbox.sniperLOSMask (probe-confirmed Int32 property -- the exact mask the
-        // live fire gate uses), with the RainWindowGlass bit STRIPPED so a single closest-hit Raycast passes cleanly
-        // through window glass exactly as the gate treats it. Falls back to DefaultRaycastLayers, then ~0.
-        private static int SniperPhysMask()
-        {
-            int m = 0;
-            try { var tb = Toolbox.Instance; if (tb != null) m = tb.sniperLOSMask; } catch { m = 0; }
-            if (m == 0) { try { m = UnityEngine.Physics.DefaultRaycastLayers; } catch { m = ~0; } }
-            if (m == 0) m = ~0;                                   // never mask 0 (hits nothing -> everything looks clear)
-            int g = RainGlassLayer();
-            if (g >= 0) { try { m &= ~(1 << g); } catch { } }     // window glass must never block the shot
-            return m;
-        }
-
-        // One-time diagnostic (behind EnableDebugKeys): dump the 32 layer names + the game's raw sniperLOSMask + the
-        // resolved RainWindowGlass index + the mask we actually use, so one log line confirms the layer exists and
-        // that glass is stripped from the ray before we trust any physics result.
-        internal static void DumpLayers()
-        {
-            try
-            {
-                var sb = new System.Text.StringBuilder("[SODMotives][phys-los] layers ");
-                for (int i = 0; i < 32; i++)
-                { string nm = null; try { nm = LayerMask.LayerToName(i); } catch { } if (!string.IsNullOrEmpty(nm)) sb.Append(i).Append('=').Append(nm).Append(' '); }
-                int raw = 0; try { var tb = Toolbox.Instance; if (tb != null) raw = tb.sniperLOSMask; } catch { }
-                sb.Append("| sniperLOSMask=0x").Append(raw.ToString("X8")).Append(" RainWindowGlass=").Append(RainGlassLayer()).Append(" usedMask=0x").Append(SniperPhysMask().ToString("X8"));
-                MotivesPlugin.Log.LogInfo(sb.ToString());
-            }
-            catch { }
-        }
-
-        // True when nothing SOLID (non-glass, non-trigger) blocks the straight line strictly BETWEEN two window
-        // openings. Both ends are openings in open air just outside the glass, so we pull each end in by PhysEdge to
-        // avoid self-hitting the opening's own frame, and cap the ray just short of the far opening (we only care
-        // about what is IN BETWEEN, not the far wall). Component-wise math. Never throws.
-        private static bool PhysLosClearBetween(Vector3 a, Vector3 b, int mask)
-        {
-            try
-            {
-                float dist = Vector3.Distance(a, b);
-                if (dist < 0.2f) return true;                                   // effectively the same opening
-                if (dist > SniperMaxNestMeters + 6f) return false;             // never a long cross-city ray
-                float dx = (b.x - a.x) / dist, dy = (b.y - a.y) / dist, dz = (b.z - a.z) / dist;
-                var origin = new Vector3(a.x + dx * PhysEdge, a.y + dy * PhysEdge, a.z + dz * PhysEdge);
-                var dir = new Vector3(dx, dy, dz);
-                float maxD = dist - PhysEdge * 2f;                             // stop just before the far opening
-                if (maxD <= 0.1f) return true;
-                RaycastHit hit; bool got;
-                try { got = UnityEngine.Physics.Raycast(origin, dir, out hit, maxD, mask, QueryTriggerInteraction.Ignore); }
-                catch { return false; }
-                return !got;                                                    // no solid collider in between == clear line
-            }
-            catch { return false; }
-        }
-
-        // Cheap "is this area's geometry actually streamed in?" probe: cast straight DOWN from just above a point and
-        // require a floor hit. At case creation a site far from the player may not be loaded (no colliders), which
-        // would make every LOS ray falsely read "clear"; if the floor under the site isn't there we DON'T trust
-        // physics and let the case use the game default instead. Never throws.
-        private static bool SceneLoadedAt(Vector3 p, int mask)
-        {
-            try
-            {
-                var origin = new Vector3(p.x, p.y + 2.0f, p.z);
-                var down = new Vector3(0f, -1f, 0f);
-                RaycastHit hit; bool got;
-                try { got = UnityEngine.Physics.Raycast(origin, down, out hit, 10f, mask, QueryTriggerInteraction.Ignore); }
-                catch { return false; }
-                return got;
-            }
-            catch { return false; }
-        }
-
-        // The story index of a nest node (NewNode.floor.floor; 0 = ground/street). -999 if unavailable.
-        // (NewNode.floorHeight is a DIFFERENT field that reads 0 for every node in-game; floor.floor is the real one.)
-        private static int NestFloor(NewNode n)
-        {
-            try { var f = n != null ? n.floor : null; if (f != null) return f.floor; } catch { }
-            return -999;
-        }
-
-        // The user's accessibility rule: a nest must be somewhere the KILLER can legitimately be -- a rooftop / public
-        // or building-common area (lobby, hallway, stairwell landing), OR a place the suspect belongs (their home, a
-        // place they own, or their workplace). NOT a stranger's private flat / hotel room. The reliable signal is the
-        // location's own access class NewGameLocation.access (AddressPreset.AccessType: allPublic=0, residents=1,
-        // buildingInhabitants=2, employees=3, none=4). We accept allPublic + buildingInhabitants (common areas a sniper
-        // can walk into) and, for residents/employees, only when the killer belongs there. (IsPublicallyOpen and
-        // FindSafeTeleport(allowTrespass:false) were both tried and are NOT reliable here -- the latter accepted the
-        // private room 301.) accessVal is exposed for diagnostics.
-        private static bool KillerCanAccess(Human killer, NewGameLocation nl, out int accessVal, out bool owned)
-        {
-            accessVal = -1; owned = false;
-            try
-            {
-                if (nl == null) return false;
-                try { accessVal = (int)nl.access; } catch { accessVal = -1; }
-                NewAddress addr = null; try { addr = nl.thisAsAddress; } catch { }
-                if (addr != null)
-                {
-                    try { var kh = killer != null ? killer.home : null; if (kh != null && kh.Pointer == addr.Pointer) owned = true; } catch { }
-                    if (!owned) try { var own = addr.owners; if (own != null) { int c = own.Count; for (int i = 0; i < c; i++) { var o = own[i]; if (o != null && killer != null && o.Pointer == killer.Pointer) { owned = true; break; } } } } catch { }
-                }
-                if (!owned) try { var j = killer != null ? killer.job : null; var e = j != null ? j.employer : null; var pob = e != null ? e.placeOfBusiness : null; if (pob != null && pob.Pointer == nl.Pointer) owned = true; } catch { }
-                if (owned) return true;                                       // killer belongs here (home / owns / works)
-                bool common = false;
-                try { common = nl.access == AddressPreset.AccessType.allPublic || nl.access == AddressPreset.AccessType.buildingInhabitants; } catch { common = false; }
-                return common;                                               // public lobby / hallway / stairwell landing / rooftop
-            }
-            catch { return false; }
-        }
-
-        // Collect a location's exterior WINDOW WALLS via its rooms (NewRoom.windows = List<NewWall>). This is how the
-        // game models view windows -- including a common landing's window, which is NOT a NodeAccess entrance (that is
-        // why the entrance-based enumeration missed it). openings = the window wall's world position (aim/fire point);
-        // stands = the wall's interior node (where the victim is exposed / the killer stands); walls = the window wall.
-        private static void CollectWindows(NewGameLocation loc, List<Vector3> openings, List<NewNode> stands, List<NewWall> walls, int cap)
-        {
-            try
-            {
-                var rooms = loc != null ? loc.rooms : null;
-                if (rooms == null) return;
-                int rc = 0; try { rc = rooms.Count; } catch { }
-                var seen = new HashSet<System.IntPtr>();
-                for (int ri = 0; ri < rc && openings.Count < cap; ri++)
-                {
-                    NewRoom room = null; try { room = rooms[ri]; } catch { }
-                    if (room == null) continue;
-                    Il2CppSystem.Collections.Generic.List<NewWall> wins = null; try { wins = room.windows; } catch { }
-                    if (wins == null) continue;
-                    int wc = 0; try { wc = wins.Count; } catch { }
-                    for (int wi = 0; wi < wc && openings.Count < cap; wi++)
-                    {
-                        NewWall ww = null; try { ww = wins[wi]; } catch { }
-                        if (ww == null) continue;
-                        NewNode node = null; try { node = ww.node; } catch { }
-                        if (node == null) continue;
-                        try { if (!seen.Add(node.Pointer)) continue; } catch { }
-                        Vector3 op; try { op = ww.position; } catch { continue; }
-                        // Skip a multi-story atrium/void window: its opening is far above the interior floor node, so no
-                        // one can stand at it -- counting it inflates a nest's coverage with windows it can never actually
-                        // shoot a victim through, and herding to its node sends the victim into the void.
-                        try { if (op.y - node.position.y > PhysWindowMaxRise) continue; } catch { }
-                        openings.Add(op); stands.Add(node); walls.Add(ww);
-                    }
-                }
-            }
-            catch { }
-        }
-
-        // Node-graph found no nest. Enumerate the site's own windows (aim points) and nearby ACCESSIBLE building
-        // windows (candidate nests), and pick the nest that physically overlooks the MOST of the site's windows.
-        // Window-opening-to-window-opening rays mirror the live fire gate and avoid threading interior furniture.
-        // Only pins a reachable, killer-accessible nest; logs the coverage so the success test is measurable.
-        private static bool PhysicsRescueNest(Human killer, NewGameLocation targetLoc, Vector3 refPos, NewGameLocation kh,
-            out NewWall bestWall, out float bestDist, out bool bestPublic, out List<NewNode> seenNodes)
-        {
-            bestWall = null; bestDist = float.MaxValue; bestPublic = false; seenNodes = null;
-            bool diag = false; try { diag = DebugTools.EnableDebugKeys; } catch { }
-            try
-            {
-                int mask = SniperPhysMask();
-                if (diag && !_physLayersDumped) { _physLayersDumped = true; DumpLayers(); }
-
-                // Bail if the site's geometry isn't streamed in (else every ray falsely reads "clear").
-                if (!SceneLoadedAt(refPos, mask))
-                { if (diag) MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los] {LName(targetLoc)}: site geometry not loaded at case time -> skip physics rescue (game default)."); return false; }
-
-                // 1) The SITE's own windows = the aim points (where the victim is exposed, and where we herd them).
-                var siteOpen = new List<Vector3>(); var siteStand = new List<NewNode>(); var siteWalls = new List<NewWall>();
-                CollectWindows(targetLoc, siteOpen, siteStand, siteWalls, PhysMaxSiteWindows);
-                if (siteOpen.Count == 0)
-                {
-                    // No enumerable windows (e.g. an open site): fall back to the site's nodes as aim points.
-                    try { var ns = targetLoc.nodes; if (ns != null) { int c = ns.Count; for (int i = 0; i < c && siteOpen.Count < PhysMaxSiteWindows; i++) { var n = ns[i]; if (n == null) continue; try { siteOpen.Add(new Vector3(n.position.x, n.position.y + PhysBodyUp, n.position.z)); siteStand.Add(n); } catch { } } } } catch { }
-                }
-                if (siteOpen.Count == 0) { if (diag) MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los] {LName(targetLoc)}: no site windows/nodes to aim at."); return false; }
-
-                // 2) Candidate NEST windows from nearby ACCESSIBLE addresses.
-                var nestWalls = new List<NewWall>(); var nestOpen = new List<Vector3>(); var nestNode = new List<NewNode>(); var nestPub = new List<bool>();
-                var nestSeen = new HashSet<System.IntPtr>();
-                int scanned = 0, accessible = 0, candLogged = 0;
-                _inNestScan = true;
-                try
-                {
-                    var cd = CityData.Instance; var dir = cd != null ? cd.gameLocationDirectory : null;
-                    int lc = 0; try { lc = dir != null ? dir.Count : 0; } catch { }
-                    // Gather near locations CLOSEST-FIRST. The directory is unordered, so iterating it raw fills the
-                    // PhysMaxNestWindows cap with whatever streets/units happen to come first and can cut off the
-                    // CLOSEST building (e.g. Plaza Orchid at 18m) before it is ever scanned. Sorting by distance means
-                    // the cap prioritises the nearest, most-believable overlooks.
-                    NewBuilding siteBuilding = null; try { siteBuilding = targetLoc.building; } catch { }   // exclude same-building nests
-                    var nearLocs = new List<KeyValuePair<float, NewGameLocation>>();
-                    for (int li = 0; li < lc; li++)
-                    {
-                        NewGameLocation loc = null; try { loc = dir[li]; } catch { }
-                        if (loc == null) continue;
-                        try { if (loc.Pointer == targetLoc.Pointer) continue; } catch { }        // can't nest in the target itself
-                        if (!SniperNestAllowSameBuilding && siteBuilding != null) { try { var lb = loc.building; if (lb != null && lb.Pointer == siteBuilding.Pointer) continue; } catch { } }   // no same-building nest (a sniper shoots across the street, not from another floor)
-                        NewNode an = null; try { an = loc.anchorNode; } catch { }
-                        if (an == null) continue;
-                        float ld; try { ld = Vector3.Distance(an.position, refPos); } catch { continue; }
-                        if (ld > SniperNestSearchMeters) continue;
-                        nearLocs.Add(new KeyValuePair<float, NewGameLocation>(ld, loc));
-                    }
-                    nearLocs.Sort((x, y) => x.Key.CompareTo(y.Key));
-                    for (int li = 0; li < nearLocs.Count && nestWalls.Count < PhysMaxNestWindows; li++)
-                    {
-                        NewGameLocation loc = nearLocs[li].Value; float ld = nearLocs[li].Key;
-                        // Collect this location's window walls FIRST and keep only those in range AND at least first-story
-                        // (floor.floor >= SniperMinNestFloor), so the access test runs only on locations that actually
-                        // have a usable elevated nest window near the site.
-                        var wOpen = new List<Vector3>(); var wStand = new List<NewNode>(); var wWall = new List<NewWall>();
-                        CollectWindows(loc, wOpen, wStand, wWall, 16);
-                        int windowsUsable = 0, groundSkipped = 0; float repY = 0f; int repFloor = -999;
-                        for (int wi = 0; wi < wStand.Count; wi++)
-                        {
-                            var n0 = wStand[wi]; if (n0 == null) continue;
-                            float d0; try { d0 = Vector3.Distance(n0.position, refPos); } catch { continue; }
-                            if (d0 > SniperMaxNestMeters) continue;
-                            int fl = NestFloor(n0);
-                            if (fl != -999 && fl < SniperMinNestFloor) { groundSkipped++; continue; }   // ground-level -> not a nest
-                            windowsUsable++;
-                            if (repFloor == -999) { repFloor = fl; try { repY = n0.position.y; } catch { } }
-                        }
-                        if (windowsUsable == 0)
-                        {
-                            // Log NEAR locations we skip, so it is visible WHY an expected building did not become a
-                            // candidate: no window walls / too far / only ground-level windows.
-                            if (diag && candLogged < 45 && ld <= SniperMaxNestMeters + 10f)
-                            { candLogged++; MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los]   skip {LName(loc)} {ld:0}m rawWindows={wWall.Count} usable=0 (groundLevelSkipped={groundSkipped})"); }
-                            continue;
-                        }
-                        scanned++;
-                        int accessVal = -1; bool owned = false, acc = false;
-                        try { acc = KillerCanAccess(killer, loc, out accessVal, out owned); } catch { accessVal = -1; owned = false; acc = false; }
-                        if (diag && candLogged < 45)
-                        { candLogged++; MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los]   cand {LName(loc)} {ld:0}m usable={windowsUsable} floor={repFloor} y={repY:0.0} access={accessVal} owned={owned} -> {(acc ? "ACCEPT" : "reject (private -- killer has no access)")}"); }
-                        if (!acc) continue;
-                        accessible++;
-                        for (int wi = 0; wi < wWall.Count && nestWalls.Count < PhysMaxNestWindows; wi++)
-                        {
-                            var nn = wStand[wi]; var ww = wWall[wi]; if (nn == null || ww == null) continue;
-                            System.IntPtr np; try { np = nn.Pointer; } catch { continue; }
-                            float nd; try { nd = Vector3.Distance(nn.position, refPos); } catch { continue; }
-                            if (nd > SniperMaxNestMeters) continue;
-                            int fl = NestFloor(nn); if (fl != -999 && fl < SniperMinNestFloor) continue;   // no ground-level nests
-                            if (!nestSeen.Add(np)) continue;
-                            nestWalls.Add(ww); nestOpen.Add(wOpen[wi]); nestNode.Add(nn);
-                            bool pub = true; try { pub = kh == null || loc.Pointer != kh.Pointer; } catch { }
-                            nestPub.Add(pub);
-                        }
-                    }
-                }
-                catch (Exception ee) { if (diag) MotivesPlugin.Log.LogWarning($"[SODMotives][phys-los] enumerate err: {ee.Message}"); }
-                finally { _inNestScan = false; }
-
-                // 3) Score each candidate nest by how many SITE windows it physically overlooks (broadest wins).
-                float siteY = refPos.y;
-                int rays = 0, bestCover = 0; bool bestPrimary = false; float bestDy = float.MaxValue;
-                for (int ci = 0; ci < nestWalls.Count; ci++)
-                {
-                    var from = nestOpen[ci];
-                    int cover = 0; bool seesPrimary = false; var thisSeen = new List<NewNode>();
-                    for (int si = 0; si < siteOpen.Count; si++)
-                    {
-                        rays++;
-                        if (PhysLosClearBetween(from, siteOpen[si], mask))
-                        { cover++; if (si == 0) seesPrimary = true; var sn = siteStand[si]; if (sn != null && !thisSeen.Contains(sn)) thisSeen.Add(sn); }
-                    }
-                    if (cover < 1) continue;
-                    float d = float.MaxValue; try { d = Vector3.Distance(nestNode[ci].position, refPos); } catch { }
-                    float dy = float.MaxValue; try { dy = Math.Abs(nestNode[ci].position.y - siteY); } catch { }
-                    bool pub = nestPub[ci];
-                    // Prefer, in order: broadest overlook; public/accessible; sees the primary spot; then a LEVEL, more
-                    // DIRECTLY-facing shot (smaller height offset -- a steep downward shot from a high landing to a low
-                    // site, e.g. Plaza Orchid 10th -> Laster's floor 1, tends not to line up); then closest. The height
-                    // preference only kicks in past a tolerance so it does not thrash on near-equal nests.
-                    bool better = bestWall == null
-                        || (cover != bestCover ? cover > bestCover
-                            : pub != bestPublic ? pub
-                            : seesPrimary != bestPrimary ? seesPrimary
-                            : Math.Abs(dy - bestDy) > 3f ? dy < bestDy          // level shot beats a steep one
-                            : d < bestDist);
-                    if (better)
-                    { bestWall = nestWalls[ci]; bestDist = d; bestPublic = pub; bestCover = cover; bestPrimary = seesPrimary; bestDy = dy; seenNodes = thisSeen; }
-                }
-
-                // (Accessibility is already guaranteed: every accepted candidate location passed KillerCanAccess -- a
-                //  public/building-common area or a place the killer belongs -- so the winning nest is reachable.)
-
-                int pickFloor = -999; try { if (bestWall != null) pickFloor = NestFloor(bestWall.node); } catch { }
-                if (diag)
-                    MotivesPlugin.Log.LogInfo($"[SODMotives][phys-los] {LName(targetLoc)}: siteWindows={siteOpen.Count} nearScanned={scanned} accessibleLocs={accessible} nestWindows={nestWalls.Count} rays={rays} -> {(bestWall != null ? "PHYS-PICK " + LName(NestLoc(bestWall)) + " " + bestDist.ToString("0") + "m floor=" + pickFloor + " " + (bestPublic ? "public" : "killer-home") + " sees " + bestCover + "/" + siteOpen.Count + " site-windows" : "NONE (fall to game default)")}.");
-                return bestWall != null;
-            }
-            catch (Exception e) { if (diag) MotivesPlugin.Log.LogWarning($"[SODMotives][phys-los] {LName(targetLoc)} FATAL: {e.Message}"); return false; }
-        }
-
-        // Once the killer is IN POSITION at a physics-rescued nest, geometry is guaranteed loaded, so re-check that
-        // the nest still physically overlooks at least ONE of the site's windows. Guards against a selection-time
-        // false positive (a phantom un-loaded building between nest and site let the ray read clear); if the nest is
-        // actually blind, we release NOW instead of after the full stall. Window-based (not the victim's transient
-        // position), so a victim momentarily behind furniture never triggers a release. Never throws.
-        private static bool PhysNestStillOverlooksSite(NewGameLocation site)
-        {
-            try
-            {
-                if (_moNestWall == null || site == null) return true;   // nothing to check -> don't release
-                int mask = SniperPhysMask();
-                // Mirror the SELECTION check EXACTLY: from the nest window wall (_moNestWall.position, == the nestOpen
-                // used at selection) to each of the SITE's window walls (openings). If ANY is clear the nest still
-                // overlooks the site -> keep it. Only release when blind to ALL (a genuine streaming false positive).
-                // (Earlier this aimed at interior stand-node body anchors, which are furniture/frame-blocked even when
-                // the window-to-window line is clear -> it false-released a GOOD landing the instant the killer arrived,
-                // pre-empting the shot. Matching the selection endpoints removes that false negative.)
-                Vector3 from; try { from = _moNestWall.position; } catch { return true; }
-                var siteOpen = new List<Vector3>(); var siteStand = new List<NewNode>(); var siteWalls = new List<NewWall>();
-                CollectWindows(site, siteOpen, siteStand, siteWalls, PhysMaxSiteWindows);
-                if (siteOpen.Count == 0) return true;   // can't enumerate site windows -> don't release
-                for (int i = 0; i < siteOpen.Count; i++)
-                    if (PhysLosClearBetween(from, siteOpen[i], mask)) return true;
-                return false;
-            }
-            catch { return true; }
-        }
-
-        // Killer is standing at (within ~4m of) the current pinned nest node.
-        private static bool KillerAtNest(Human killer)
-        {
-            try
-            {
-                if (killer == null || _moNestWall == null) return false;
-                NewNode nn = _moNestWall.node; NewNode kn = killer.currentNode;
-                if (nn == null || kn == null) return false;
-                return Vector3.Distance(nn.position, kn.position) <= 4f;
-            }
-            catch { return false; }
-        }
-
 
         // The game's OWN default sniper site (its best-vantage rooftop, e.g. the city's dominant street) via
         // Murder.TryPickNewVictimSite. When that returns nothing, anchor to a NON-HOME location the victim is usually
@@ -918,7 +202,6 @@ namespace SODMotives
             var ranked = new List<NewGameLocation>();
             if (!voyeur)
             {
-                _inNestScan = true;   // our vantage-postfix is a no-op for non-pinned sites, but guard against any re-entry
                 try
                 {
                     var tb = Toolbox.Instance;
@@ -947,7 +230,6 @@ namespace SODMotives
                     }
                 }
                 catch { }
-                finally { _inNestScan = false; }
             }
             if (ranked.Count == 0)   // Voyeur (needs home/work), or ExCop with no viable street -> the game's own MO-aware picker
             {
@@ -998,6 +280,7 @@ namespace SODMotives
             {
                 MotivesPlugin.Log.LogWarning($"[SODMotives][sniper] no vantage-viable site and no non-home anchor for {MotivesPlugin.Name(killer)} -> {MotivesPlugin.Name(victim)} (un-snipeable); reverting this case to vanilla so it can't strand.");
                 try { murder.CancelCurrentMurder(); } catch (Exception ce) { MotivesPlugin.Log.LogWarning($"[SODMotives][sniper] revert err: {ce.Message}"); }
+                if (vid >= 0) InvalidateSniperOverride(vid);
             }
         }
 
@@ -1027,179 +310,6 @@ namespace SODMotives
                 return false;
             }
             catch { return false; }
-        }
-
-        // Register / clear the active motivated sniper pair so the vantage-solver postfix (Plugin.cs) only ever
-        // rewrites the nest for OUR case and never touches a vanilla sniper or the game's selection scoring. Called
-        // from the override the instant the sniper pair is committed (and cleared for any non-sniper case).
-        internal static void SetActiveMotivatedSniper(Human killer, Human victim)
-        {
-            _moSniperKiller = killer; _moSniperVictim = victim;
-            _moNestWall = null; _moNestSitePtr = System.IntPtr.Zero;
-            _moNestPhys = false; _moNestRevalidated = false;   // physics-pin flags share the nest's single-active-case lifecycle
-        }
-        internal static void ClearActiveMotivatedSniper()
-        {
-            _moSniperKiller = null; _moSniperVictim = null;
-            _moNestWall = null; _moNestSitePtr = System.IntPtr.Zero;
-            _moNestPhys = false; _moNestRevalidated = false;
-        }
-
-        // The nest for the vantage-solver postfix to force -- ONLY for our active motivated sniper's ONE pinned local
-        // site, using the wall FirstViableLocalSite already computed + cached at seeding. This is deliberately narrow:
-        // the game's own site picker (Murder.TryPickNewVictimSite) scores MANY candidate sites through the same solver
-        // overload, and if we override those we FLATTEN the game's real vantage scoring (every candidate came back 999),
-        // which destroys its ranking and makes it pick the same street every time (the "Chandani everywhere" regression).
-        // So we return a nest ONLY when the query's requiredTargetSite is exactly the site we pinned -- never a candidate.
-        // No recompute here (done at seeding); read-only; never throws.
-        internal static bool TryGetPinnedNest(Human sniper, NewGameLocation requiredTargetSite, out NewWall wall)
-        {
-            wall = null;
-            try
-            {
-                if (!SniperForceLosNest || _inNestScan) return false;                                  // disabled / our own re-rolls
-                if (sniper == null || _moSniperKiller == null || sniper.Pointer != _moSniperKiller.Pointer) return false;   // not our killer
-                if (requiredTargetSite == null || _moNestSitePtr == System.IntPtr.Zero
-                    || requiredTargetSite.Pointer != _moNestSitePtr) return false;                      // ONLY our pinned site, never the game's candidate scoring
-                wall = _moNestWall;
-                return _moNestWall != null;
-            }
-            catch { return false; }
-        }
-
-        // HERD the victim to the pinned sniper site so they are actually THERE for the killer at the nest to shoot.
-        // Mirrors the game's own "GoTo VictimSite routine" (state 3), which never fires for an ExCop case because every
-        // location counts as valid -- so we create the same walk goal ourselves, from the game's generic go-to preset
-        // (RoutineControls.toGoGoal), and pin it on top so the victim commits. This is the IDENTICAL mechanism the
-        // kidnap den-hold uses (EnsureVictimDenGoal, proven in-game): a real WALK with a real trail, not a teleport.
-        // Re-asserted each tick (the AI recomputes priority). Never throws.
-        private static void EnsureVictimSniperSiteGoal(Human victim, NewGameLocation site, NewNode herdNode, MurderController.Murder murder, int vid)
-        {
-            try
-            {
-                if (victim == null || site == null) return;
-                NewAIController ai = null; try { ai = victim.ai; } catch { }
-                if (ai == null) return;
-
-                // The node to walk to this tick (the current wander target). Always pass a node -- a GoTo goal with a bare
-                // location + null node makes the AI log "unable to locate node for GoTo" and drop it.
-                NewNode goNode = herdNode;
-                if (goNode == null) { try { goNode = victim.FindSafeTeleport(site, false, true); } catch { } }
-                if (goNode == null) { try { goNode = site.anchorNode; } catch { } }
-                if (goNode == null) return;
-
-                NewAIGoal siteGoal = FindGoalForLocation(ai, site);
-                bool sameTarget = _sniperHerdNode.TryGetValue(vid, out var cur); try { sameTarget = sameTarget && goNode != null && cur == goNode.Pointer; } catch { sameTarget = false; }
-                if (siteGoal == null || !sameTarget)
-                {
-                    // First goal, or the wander target rotated: drop ALL old walk goals for this site and issue a fresh
-                    // one to the new node so the victim actually MOVES there (and so goals don't accumulate across the
-                    // ~30s rotations -- leftovers were keeping the victim stuck at the site after the case fell back).
-                    RemoveAllSiteGoals(ai, site);
-                    siteGoal = null;
-                    AIGoalPreset preset = null; try { preset = RoutineControls.Instance != null ? RoutineControls.Instance.toGoGoal : null; } catch { }
-                    if (preset == null) return;
-                    try { siteGoal = ai.CreateNewGoal(preset, NowHours(), 999f, goNode, null, site, null, murder, -2); }
-                    catch (Exception ce) { MotivesPlugin.Log.LogWarning($"[SODMotives][sniper] CreateNewGoal(GoTo site) threw: {ce.Message}"); return; }
-                    if (siteGoal == null) return;
-                    try { _sniperHerdNode[vid] = goNode.Pointer; } catch { }
-                    try { _sniperHerdGoalPtr[vid] = siteGoal.Pointer; } catch { }   // remember the exact goal so cleanup can kill it by pointer
-                    if (DebugTools.EnableDebugKeys && _sniperHerdLogged.Add(vid))
-                        MotivesPlugin.Log.LogInfo($"[SODMotives][sniper] herding victim {MotivesPlugin.Name(victim)} to wander the nest's sightline at {LName(site)} (walk goal, so a clear physics shot happens even if the exact node is furniture-blocked).");
-                }
-
-                try { siteGoal.basePriority = 100000f; } catch { }
-                try { siteGoal.priority = 100000f; } catch { }
-                try { siteGoal.isActive = true; } catch { }
-                try { ai.currentGoal = siteGoal; } catch { }
-            }
-            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][sniper] EnsureVictimSniperSiteGoal err: {e.Message}"); }
-        }
-
-        // Undo the herd FORCEFULLY: remove our GoTo-site goal so the victim fully resumes their normal routine. Used when
-        // the shot resolves, or when a stalled pin releases to the game default (the reported "victim stayed pinned at
-        // home after the case fell back to Mingo" -- dropping the priority alone wasn't enough, so we Remove() it).
-        private static void ClearVictimSniperSiteGoal(Human victim, NewGameLocation site)
-        {
-            try
-            {
-                if (victim == null) return;
-                NewAIController ai = null; try { ai = victim.ai; } catch { }
-                if (ai == null) return;
-                if (site != null) RemoveAllSiteGoals(ai, site);
-                // ALSO remove the exact goal we tracked, by pointer -- a herd node whose gameLocation differs from the
-                // pinned site (e.g. an atrium/void node) makes RemoveAllSiteGoals' location match miss it, leaving a
-                // priority-100000 goal that wedges the victim OUTSIDE the site for days after the case fell back.
-                int vid = -1; try { vid = victim.humanID; } catch { }
-                if (vid >= 0 && _sniperHerdGoalPtr.TryGetValue(vid, out var gp) && gp != System.IntPtr.Zero)
-                {
-                    RemoveGoalByPtr(ai, gp);
-                    _sniperHerdGoalPtr.Remove(vid);
-                }
-            }
-            catch { }
-        }
-
-        // Remove one goal by its pointer (location-independent). Zeroes priority + isActive then Remove(). Never throws.
-        private static void RemoveGoalByPtr(NewAIController ai, System.IntPtr ptr)
-        {
-            try
-            {
-                var goals = ai != null ? ai.goals : null;
-                if (goals == null) return;
-                int gc = 0; try { gc = goals.Count; } catch { }
-                for (int i = 0; i < gc; i++)
-                {
-                    var g = goals[i]; if (g == null) continue;
-                    System.IntPtr p; try { p = g.Pointer; } catch { continue; }
-                    if (p != ptr) continue;
-                    try { g.basePriority = 0f; g.priority = 0f; g.isActive = false; } catch { }
-                    try { g.Remove(); } catch { }
-                    return;
-                }
-            }
-            catch { }
-        }
-
-        // Remove EVERY GoTo goal on this AI targeting 'loc' (the wander re-issues one each rotation; leftovers were
-        // keeping the victim stuck at the site after a fallback). Bounded, and stops if Remove() is deferred so we
-        // never loop forever on the same goal. Never throws.
-        private static void RemoveAllSiteGoals(NewAIController ai, NewGameLocation loc)
-        {
-            try
-            {
-                var seen = new HashSet<System.IntPtr>();
-                for (int iter = 0; iter < 16; iter++)
-                {
-                    NewAIGoal g = FindGoalForLocation(ai, loc);
-                    if (g == null) return;
-                    System.IntPtr p; try { p = g.Pointer; } catch { return; }
-                    if (!seen.Add(p)) return;   // Remove() didn't take this frame -- stop rather than spin
-                    try { g.basePriority = 0f; g.priority = 0f; g.isActive = false; } catch { }
-                    try { g.Remove(); } catch { return; }
-                }
-            }
-            catch { }
-        }
-
-        // Find a goal on this AI already targeting 'loc' (by gameLocation or passedGameLocation). Read-only; never throws.
-        private static NewAIGoal FindGoalForLocation(NewAIController ai, NewGameLocation loc)
-        {
-            try
-            {
-                var goals = ai != null ? ai.goals : null;
-                if (goals == null || loc == null) return null;
-                for (int i = 0; i < goals.Count; i++)
-                {
-                    var g = goals[i]; if (g == null) continue;
-                    NewGameLocation gl = null, pg = null;
-                    try { gl = g.gameLocation; } catch { }
-                    try { pg = g.passedGameLocation; } catch { }
-                    if ((gl != null && gl.Pointer == loc.Pointer) || (pg != null && pg.Pointer == loc.Pointer)) return g;
-                }
-            }
-            catch { }
-            return null;
         }
 
         // WALK-reachable = the victim can reach a node INSIDE the den by NORMAL pathing (allowTrespass=FALSE),
@@ -1241,6 +351,49 @@ namespace SODMotives
             return 0f;
         }
 
+        // Forget a sniper case entirely: drop it from the mod's "ours" set and all sniper tracking so a dead/cancelled
+        // case is never treated as live again (no stale F9/clue/signature handling, no re-seed on reload). Called when
+        // we cancel a hung case and when we recover a broken one.
+        private static void InvalidateSniperOverride(int vid)
+        {
+            if (vid < 0) return;
+            try { MurderSelector.OverriddenVictimIds.Remove(vid); } catch { }
+            _sniperSeeded.Remove(vid); _sniperDefaultSince.Remove(vid); _sniperDefaultFails.Remove(vid); _sniperReseedSince.Remove(vid);
+        }
+
+        // Cancel a current murder (ANY case type) whose victim OR murderer is null/destroyed (Unity fake-null). Such a
+        // murder can never resolve and blocks EVERY new murder: the reported sniper "Victim (Null)" brick, a case left
+        // stuck after the would-be murderer is killed by another mod, and the same hazard for a motivated kidnap. The
+        // game's own Murder ctor guarantees both parties non-null, so a null here on the CURRENT murder always means a
+        // party was DESTROYED after creation (not a transient half-built state -- ExecuteNewMurder commits both
+        // synchronously). The main Tick guard below returns on a null victim/killer, so this runs ABOVE it, keyed off
+        // the murder's pointer (the victim id may be unreadable). Returns true when THIS murder is broken (so the caller
+        // stops processing it), whether or not the cancel finally takes; retries every SniperRecoverRetryHours while the
+        // same broken murder stays current. A read exception defaults to NOT broken (a genuine destroyed party reads
+        // null reliably), so a transient interop hiccup can never cancel a healthy case. Healthy murders are untouched.
+        private static bool TryRecoverBrokenMurder(MurderController.Murder murder)
+        {
+            try
+            {
+                bool broken; try { broken = murder.victim == null || murder.murderer == null; } catch { broken = false; }
+                if (!broken) return false;   // healthy / unreadable -- leave it alone
+
+                System.IntPtr mp = System.IntPtr.Zero; try { mp = murder.Pointer; } catch { }
+                if (_sniperRecoverPtr != mp) { _sniperRecoverPtr = mp; _sniperRecoverTries = 0; _sniperRecoverLastTry = -999f; }
+                float now = NowHours();
+                if (_sniperRecoverTries > 0 && now - _sniperRecoverLastTry < SniperRecoverRetryHours) return true;   // wait before retrying the same case
+                _sniperRecoverLastTry = now; _sniperRecoverTries++;
+
+                MotivesPlugin.Log.LogWarning($"[SODMotives][recover] the current murder has a null/destroyed victim or murderer (unrecoverable; it blocks all new murders) -> cancelling to vanilla so the scheduler can resume (attempt {_sniperRecoverTries}).");
+                try { if (murder.victim != null) InvalidateSniperOverride(murder.victim.humanID); } catch { }   // best-effort (victim may be unreadable)
+                try { murder.CancelCurrentMurder(); } catch (Exception ce) { MotivesPlugin.Log.LogWarning($"[SODMotives][recover] CancelCurrentMurder threw: {ce.Message}"); }
+                if (_sniperRecoverTries >= 3)
+                    MotivesPlugin.Log.LogWarning("[SODMotives][recover] the broken murder is STILL current after repeated cancels -- CancelCurrentMurder alone is not clearing it; a stronger scheduler reset may be needed (please report this with the log).");
+                return true;
+            }
+            catch { return false; }
+        }
+
         // Polled each frame from DebugTools' Update. Cheap: early-outs unless one of our cases is
         // actually sitting in 'executing'.
         internal static void Tick()
@@ -1252,6 +405,9 @@ namespace SODMotives
                 if (mc == null) return;
                 var murder = mc.GetCurrentMurder();
                 if (murder == null) return;
+                // RECOVER a stuck current murder (any type) whose victim/murderer went null/destroyed, BEFORE the guard
+                // below bails on it and leaves it blocking the whole pipeline.
+                if (TryRecoverBrokenMurder(murder)) return;
                 var victim = murder.victim; var killer = murder.murderer;
                 if (victim == null || killer == null) return;
                 int vid = victim.humanID;
@@ -1335,166 +491,56 @@ namespace SODMotives
 
                 if (!MurderSelector.OverriddenVictimIds.Contains(vid)) return;   // INTERVENTIONS below are OURS only — vanilla cases just get observed above
 
-                // SNIPER SITE. Our pair-swap enters with sniperVictimSite == null, which strands the case (the game
-                // locks the un-snipeable home and never re-targets), so on the first tick we give it a site. For an
-                // ExCop case we PREFER a believable LOCAL nest (the "Daffodil Ward" pattern): pin the victim's HOME if
-                // the killer has a reachable vantage over it, else the WORKPLACE, so the kill lands somewhere personal
-                // to the pair instead of the city's single best-scoring rooftop. Local sites score far below that
-                // global best, so the game would never pick them itself; a SET sniperVictimSite is honoured, so the pin
-                // holds. If no local site is viable we fall to the game's own default (its best rooftop); and if a pin
-                // never fires by the end of the victim's work shift in position (a solver false-positive), we RELEASE to the
-                // default so a marginal pin can't hang. Voyeur cases just use the game's picker (home/work). All is
-                // deferred to the game after seeding; then return so snipers skip the kidnap-oriented interventions.
                 if (murder.preset != null && murder.preset.caseType == MurderPreset.CaseType.sniper)
                 {
-                    bool isExCop = false; try { isExCop = murder.mo != null && !murder.mo.requiresSniperVantageAtHome; } catch { }
+                    // MOTIVATED SNIPER (mimic-vanilla): seed a shot SITE via the game's own ranked vantages, then defer
+                    // the nest, the shot AND the force-kill entirely to the game. We do NOT force a nest -- the old
+                    // vantage-solver postfix that did caused the "During invoking native->managed trampoline" NRE on some
+                    // players' Il2CppInterop builds and has been removed (see Plugin.cs). SeedSniperDefault picks a RANDOM
+                    // site from the game's top-ranked vantage pool (variety over vanilla's always-the-same rooftop) and
+                    // climbs toward the best on each re-seed. Supervision: if no shot lands, RE-SEED every
+                    // SniperReseedStallHours (climbing the ranking); and CANCEL the whole case to vanilla at
+                    // SniperDefaultCapHours so a sniper with no workable shot can never soft-lock the murder pipeline.
                     if (_sniperSeeded.Add(vid))
                     {
-                        NewWall nestWall = null; List<NewNode> herdNodes = null;
-                        NewGameLocation pin = isExCop ? FirstViableLocalSite(killer, victim, out nestWall, out herdNodes) : null;
-                        if (pin != null)
-                        {
-                            try { murder.sniperVictimSite = pin; } catch (Exception se) { MotivesPlugin.Log.LogWarning($"[SODMotives][sniper] pin write err: {se.Message}"); }
-                            _sniperPin[vid] = pin; _sniperPinSince[vid] = NowHours();
-                            // Keep only wander nodes that are ON the pinned site (their gameLocation == the site). A node
-                            // physically near a window but belonging to another location (e.g. a multi-story atrium/void)
-                            // must never become a herd target -- herding there wedges the victim off-site and the goal
-                            // survives cleanup. On-site nodes keep the herd local and removable.
-                            if (herdNodes != null && herdNodes.Count > 0)
-                            {
-                                var onSite = new List<NewNode>();
-                                for (int hi = 0; hi < herdNodes.Count; hi++)
-                                { var hn = herdNodes[hi]; if (hn == null) continue; try { var gl = hn.gameLocation; if (gl != null && gl.Pointer == pin.Pointer) onSite.Add(hn); } catch { } }
-                                if (onSite.Count > 0) _sniperWander[vid] = onSite;   // the on-site nodes the nest can see -- victim wanders among them
-                            }
-                            _moNestWall = nestWall; _moNestSitePtr = pin.Pointer;   // pre-warm the postfix cache so the killer travels to OUR verified nest
-                            _moNestPhys = _lastNestWasPhysics; _moNestRevalidated = false;   // physics-rescued pins get re-validated once the killer arrives
-                            MotivesPlugin.Log.LogInfo($"[SODMotives][sniper] pinned LOCAL site {LName(pin)} (a public nest with a verified shot overlooks the victim's home/work) for {MotivesPlugin.Name(killer)} -> {MotivesPlugin.Name(victim)}; killer travels to the nest, releases to the game's default if the victim's whole work shift passes without a shot.");
-                        }
-                        else
-                        {
-                            SeedSniperDefault(murder, killer, victim);
-                        }
-                    }
-                    else if (_sniperPin.TryGetValue(vid, out var pinned) && pinned != null)
-                    {
-                        bool resolved = murder.state == MurderController.MurderState.executing
-                            || murder.state == MurderController.MurderState.post
-                            || murder.state == MurderController.MurderState.escaping
-                            || murder.state == MurderController.MurderState.unsolved;
-
-                        // WORK-SHIFT WINDOW, tracked by the victim's PRESENCE at the site (V_AT_SITE is reliable; the
-                        // schedule API IsAtWork proved unreliable -- it read false even with the victim demonstrably at
-                        // work). Their access-controlled workplace is locked off-shift, so we wait for their natural
-                        // shift; once they have COME to work and then LEFT (shift ended) without a shot, we give up.
-                        bool atSite = false; try { var vl = victim.currentGameLocation; atSite = vl != null && vl.Pointer == pinned.Pointer; } catch { }
-                        if (atSite)
-                        {
-                            _sniperReachedSite.Add(vid); _sniperAwaySince.Remove(vid);
-                            if (!_sniperInPosSince.ContainsKey(vid)) _sniperInPosSince[vid] = NowHours();   // start timing continuous IN-POSITION at the site
-                        }
-                        else
-                        {
-                            _sniperInPosSince.Remove(vid);   // left the site -> the in-position clock resets
-                            if (_sniperReachedSite.Contains(vid) && !_sniperAwaySince.ContainsKey(vid)) _sniperAwaySince[vid] = NowHours();
-                        }
-                        float pinSince = _sniperPinSince.TryGetValue(vid, out var ps) ? ps : NowHours();
-                        // ONE give-up rule (the user's): the victim was IN POSITION at the site (their shift) and the
-                        // shift then ENDED without a shot -- i.e. they came to work with the killer at the nest for the
-                        // whole shift and nothing lined up. Detected by presence: reached the site, then left it for a
-                        // grace period. Plus physBlind (nest turns out blind on the killer's arrival) and a generous
-                        // internal safety cap for a victim who NEVER comes to the site at all (days off).
-                        bool physBlind = _moNestPhys && !_moNestRevalidated && _moNestWall != null && _moNestSitePtr == pinned.Pointer
-                                         && KillerAtNest(killer) && !PhysNestStillOverlooksSite(pinned);
-                        bool shiftEnded = _sniperReachedSite.Contains(vid) && !atSite
-                                          && _sniperAwaySince.TryGetValue(vid, out var aw) && NowHours() - aw >= SniperShiftEndGraceHours;
-                        // The victim came to the site and STAYED in position for a whole shift without a shot lining up
-                        // (the nest can't get a clear line, e.g. Live Pettersson at the Sync Clinic). Because the herd can
-                        // hold them at work so they never LEAVE, shiftEnded can't catch this -- so cap the time in position.
-                        bool inPositionTooLong = _sniperInPosSince.TryGetValue(vid, out var ip) && NowHours() - ip >= SniperInPositionCapHours;
-                        bool neverShowed = !_sniperReachedSite.Contains(vid) && NowHours() - pinSince >= SniperNeverShowedCapHours;
-
-                        if (resolved)
-                        {
-                            ClearVictimSniperSiteGoal(victim, pinned);            // un-pin the victim (shot fired / resolving)
-                            _sniperPin.Remove(vid); _sniperPinSince.Remove(vid); _sniperWander.Remove(vid); _sniperHerdNode.Remove(vid); _sniperWanderPick.Remove(vid); _sniperHerdGoalPtr.Remove(vid);
-                            _sniperReachedSite.Remove(vid); _sniperAwaySince.Remove(vid); _sniperInPosSince.Remove(vid); _moNestPhys = false;
-                        }
-                        else if (physBlind || shiftEnded || inPositionTooLong || neverShowed)
-                        {
-                            _moNestRevalidated = true;
-                            ClearVictimSniperSiteGoal(victim, pinned);
-                            _sniperPin.Remove(vid); _sniperPinSince.Remove(vid); _sniperWander.Remove(vid); _sniperHerdNode.Remove(vid); _sniperWanderPick.Remove(vid); _sniperHerdGoalPtr.Remove(vid);
-                            _sniperReachedSite.Remove(vid); _sniperAwaySince.Remove(vid); _sniperInPosSince.Remove(vid); _moNestPhys = false;
-                            string why = physBlind ? $"killer reached {LName(NestLoc(_moNestWall))} but it has NO physics line to {LName(pinned)} (streaming false positive)"
-                                       : shiftEnded ? $"victim's whole work shift at {LName(pinned)} passed in position without a shot"
-                                       : inPositionTooLong ? $"victim held in position at {LName(pinned)} for {SniperInPositionCapHours:0.#}h with no shot lining up"
-                                       : $"victim never came to {LName(pinned)} within {SniperNeverShowedCapHours:0.#}h (safety cap)";
-                            MotivesPlugin.Log.LogInfo($"[SODMotives][sniper] {why} -> releasing to the game's default site.");
-                            SeedSniperDefault(murder, killer, victim);
-                        }
-                        else
-                        {
-                            if (_moNestPhys && !_moNestRevalidated && KillerAtNest(killer)) _moNestRevalidated = true;   // in position + still overlooks -> validated
-                            // Re-assert the site so the game's state-4 dwell timeout can't re-target it to the global rooftop.
-                            try { var cur = murder.sniperVictimSite; if (cur == null || cur.Pointer != pinned.Pointer) murder.sniperVictimSite = pinned; } catch { }
-                            if (atSite)
-                            {
-                                // AT THE SITE (on shift): HERD the victim to WANDER the nest's sightline so a clear physics
-                                // shot lines up. Two-tier: a COARSE ~30s bucket picks an anchor window; a FINE ~15s bucket
-                                // jitters among the nodes near it (<=3.5m) -- wander AROUND a window then switch.
-                                NewNode herd = null;
-                                if (_sniperWander.TryGetValue(vid, out var wl) && wl != null && wl.Count > 0)
-                                {
-                                    int coarse = (int)(NowHours() / SniperWanderCoarseHours);   // which window to hover
-                                    int fine = (int)(NowHours() / SniperWanderFineHours);       // jitter around it
-                                    if (!_sniperWanderPick.TryGetValue(vid, out var pick) || pick.Key != fine || pick.Value == null)
-                                    {
-                                        var anchor = wl[Math.Abs(coarse) % wl.Count];
-                                        var nearby = new List<NewNode>();
-                                        for (int k = 0; k < wl.Count; k++)
-                                        { try { if (wl[k] != null && Vector3.Distance(wl[k].position, anchor.position) <= 3.5f) nearby.Add(wl[k]); } catch { } }
-                                        if (nearby.Count == 0) nearby.Add(anchor);
-                                        pick = new KeyValuePair<int, NewNode>(fine, nearby[_sniperRng.Next(nearby.Count)]);
-                                        _sniperWanderPick[vid] = pick;
-                                    }
-                                    herd = pick.Value;
-                                }
-                                EnsureVictimSniperSiteGoal(victim, pinned, herd, murder, vid);
-                                // WALK, don't run: the short hop to each rotated wander node otherwise reads as a
-                                // frantic jog. Tick runs every frame, so re-asserting the desired speed here holds it
-                                // to a walk for the whole hop (only while herding -- normal routine is untouched).
-                                try { victim.SetDesiredSpeed(Human.MovementSpeed.walking); } catch { }
-                            }
-                            // OFF SHIFT (workplace locked): do NOT herd -- just wait for their shift; their natural routine
-                            // brings them to work, the game holds waitForLocation until then, and the killer travels on arrival.
-                            // (No herd goal is created off-shift, so there is nothing to clear.)
-                        }
+                        // Anchor the 24h backstop + re-seed clocks HERE (not only inside SeedSniperDefault), so the
+                        // supervision below can never be orphaned by any internal early-return in SeedSniperDefault.
+                        // SeedSniperDefault's own un-snipeable branch cancels + InvalidateSniperOverride (which clears
+                        // both dicts again), so a reverted case leaves no stale entry.
+                        if (!_sniperDefaultSince.ContainsKey(vid)) _sniperDefaultSince[vid] = NowHours();
+                        _sniperReseedSince[vid] = NowHours();
+                        SeedSniperDefault(murder, killer, victim);
                     }
                     else if (_sniperDefaultSince.TryGetValue(vid, out var defSince))
                     {
-                        // DEFAULT-SITE BACKSTOP (no pin). We released to (or started on) the game's default site and
-                        // handed the shot to the game. That normally resolves, but if the injected site yields no firing
-                        // node for this killer the case loops travellingTo forever and the pin give-up above cannot catch
-                        // it (there is no pin, nobody is in position, the victim does show). This is the absolute
-                        // wall-clock backstop: if the default hasn't produced a shot within SniperDefaultCapHours, cancel
-                        // to vanilla so the game rolls a fresh, coherent case rather than soft-locking.
                         bool resolved = murder.state == MurderController.MurderState.executing
                             || murder.state == MurderController.MurderState.post
                             || murder.state == MurderController.MurderState.escaping
                             || murder.state == MurderController.MurderState.unsolved;
                         if (resolved)
                         {
-                            _sniperDefaultSince.Remove(vid); _sniperDefaultFails.Remove(vid);
-                            _sniperReachedSite.Remove(vid); _sniperAwaySince.Remove(vid); _sniperInPosSince.Remove(vid);
+                            _sniperDefaultSince.Remove(vid); _sniperDefaultFails.Remove(vid); _sniperReseedSince.Remove(vid);
                         }
                         else if (NowHours() - defSince >= SniperDefaultCapHours)
                         {
-                            _sniperDefaultSince.Remove(vid); _sniperDefaultFails.Remove(vid);
-                            _sniperReachedSite.Remove(vid); _sniperAwaySince.Remove(vid); _sniperInPosSince.Remove(vid);
-                            _sniperSeeded.Remove(vid);   // cancel spares the victim; if re-targeted later, let the case re-seed cleanly
-                            MotivesPlugin.Log.LogWarning($"[SODMotives][sniper] {MotivesPlugin.Name(killer)} -> {MotivesPlugin.Name(victim)} never fired from the game's default site within {SniperDefaultCapHours:0.#}h (the injected site yields no firing node -> the case loops travellingTo forever); cancelling to vanilla so it can't hang.");
-                            try { murder.CancelCurrentMurder(); } catch (Exception ce) { MotivesPlugin.Log.LogWarning($"[SODMotives][sniper] default-backstop cancel error: {ce.Message}"); }
+                            MotivesPlugin.Log.LogWarning($"[SODMotives][sniper] {MotivesPlugin.Name(killer)} -> {MotivesPlugin.Name(victim)} never fired from a seeded site within {SniperDefaultCapHours:0.#}h (no workable shot lined up); cancelling to vanilla so the case can't hang the murder pipeline.");
+                            try { murder.CancelCurrentMurder(); } catch (Exception ce) { MotivesPlugin.Log.LogWarning($"[SODMotives][sniper] backstop cancel error: {ce.Message}"); }
+                            InvalidateSniperOverride(vid);
+                        }
+                        else if (murder.state != MurderController.MurderState.travellingTo)
+                        {
+                            // Still un-fired and NOT already travelling to the current site (travellingTo = the killer is
+                            // en route, which is progress; re-seeding then would re-path him and could abort an imminent
+                            // shot). Otherwise re-seed every SniperReseedStallHours to try another top-ranked site and climb
+                            // toward the guaranteed-best rooftop (SeedSniperDefault bumps the per-victim fail count, which
+                            // raises the floor of the random pick). The SniperDefaultCapHours clock is anchored at the
+                            // first seed, not reset by a re-seed, so the 24h hard cancel above still bounds the case.
+                            float lastSeed = _sniperReseedSince.TryGetValue(vid, out var ls) ? ls : defSince;
+                            if (NowHours() - lastSeed >= SniperReseedStallHours)
+                            {
+                                SeedSniperDefault(murder, killer, victim);
+                                _sniperReseedSince[vid] = NowHours();
+                            }
                         }
                     }
                     return;   // snipers defer entirely to the game; skip the kidnap-oriented interventions below

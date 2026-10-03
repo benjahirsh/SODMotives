@@ -47,7 +47,7 @@ namespace SODMotives
                 "KIDNAP analogue of MotiveCaseShare: fraction (0..1) of KIDNAP cases that get a motivated killer->victim pair (a walk-native abduction to a real holding den — the victim walks there and is restrained, leaving a real trail); the rest run vanilla. Default 1 = every kidnap is motivated; 0 = kidnaps stay vanilla. Requires the sandbox 'Kidnapping' case type ON. Sniper cases have their own slider (MotivatedSniperShare). Applies to the next kidnap.",
                 v => MurderSelector.MotivatedKidnapShare = v, R01(), Order(95));
             BindApply("Motive Mix", "MotivatedSniperShare", 1f,
-                "SNIPER analogue of MotiveCaseShare / MotivatedKidnapShare: fraction (0..1) of SNIPER cases that get a motivated killer->victim pair; the rest run vanilla. Default 1 = every sniper case is motivated; 0 = snipers stay vanilla. Requires the sandbox 'Sniper cases' type ON. The MO is chosen by a killer-home line-of-sight test (VoyeurSniper if the killer's home overlooks the victim's home/work, shooting from the killer's own window; else the street/rooftop ExCopSniper). For ExCop the watchdog pins a believable nest that overlooks the victim's workplace when one is streamed in, otherwise it picks a shot site from the city's scored street vantages; the shot itself and a clean give-up to a vanilla site are left to the game. Applies to the next sniper.",
+                "SNIPER analogue of MotiveCaseShare / MotivatedKidnapShare: fraction (0..1) of SNIPER cases that get a motivated killer->victim pair; the rest run vanilla. Default 1 = every sniper case is motivated; 0 = snipers stay vanilla. Requires the sandbox 'Sniper cases' type ON. The MO is chosen by a killer-home line-of-sight test (VoyeurSniper if the killer's home overlooks the victim's home/work, shooting from the killer's own window; else the street/rooftop ExCopSniper). For ExCop the watchdog seeds a shot site from the city's scored street vantages (a random pick among the top-ranked, climbing toward the best if no shot lines up); the nest, the shot and a clean give-up to a vanilla site are all left to the game. Applies to the next sniper.",
                 v => MurderSelector.MotivatedSniperShare = v, R01(), Order(90));
             BindApply("Motive Mix", "StructuralVictimWeight", 0.5f,
                 "How often a BOSS or LANDLORD may be the VICTIM, relative to everyone else (1 = as likely as anyone; 0.5 = half as likely, the default; 0 = only when no other victim is available). Bosses and landlords are structural NPCs (a company needs its director, a building its landlord), so keeping this below 1 keeps more of them alive. It doubles as the boss/promotee and landlord/tenant dial: down-weighting the boss shifts a workplace case toward the PROMOTEE, and down-weighting the landlord shifts a property case toward the TENANT. Applies to the next case; murders, kidnaps and snipers all use it. (Debug: press the VictimSampler key, default F2, to measure the effect instantly.)",
@@ -562,9 +562,8 @@ namespace SODMotives
                     // SNIPER with [Motive Mix] MotivatedSniperShare (both mixer sliders); otherwise leave vanilla.
                     // A motivated kidnap runs the walk-native abduction (den picked below). A motivated SNIPER mimics
                     // vanilla: the MO is chosen by a killer-home LOS test (voyeur else ExCop) and the watchdog seeds a
-                    // shot site via the game's own picker, then defers the shot AND the game's own force-kill fallback
-                    // to the game (default share 0 while it's being validated). The slider exists to TEST it via the
-                    // natural path (see the [sniper-obs]/[sniper-live] logs).
+                    // shot site via the game's own picker, then defers the nest, the shot AND the game's own force-kill
+                    // fallback to the game. Both sliders default to 1 (every special case motivated on a fresh install).
                     bool allowKidnap = preset.caseType == MurderPreset.CaseType.kidnap && MurderSelector.ShouldMotivateKidnap();
                     bool allowSniper = preset.caseType == MurderPreset.CaseType.sniper && MurderSelector.ShouldMotivateSniper();
                     if (!allowKidnap && !allowSniper)
@@ -620,11 +619,6 @@ namespace SODMotives
                     // the vanilla pair in place while the mod victim is already in the bookkeeping.
                     newMurderer = m; newVictim = v; victimSite = null;   // sniper: game picks the site (home/work); other cases: game derives it from the victim's home
                     __instance.currentMurderer = m; __instance.currentVictim = v;
-
-                    // Register (or clear) the active motivated sniper pair so the vantage-solver postfix
-                    // (Patch_SniperVantage_ForceLosNest) forces an LOS-verified nest window for OUR case only.
-                    if (isSniper) MurderWatchdog.SetActiveMotivatedSniper(m, v);
-                    else MurderWatchdog.ClearActiveMotivatedSniper();
 
                     // KIDNAP: the swapped-in killer needs a den or the case hangs at waitForLocation
                     // (IsValidLocation accepts only murderer.den). Assign a vacant, walk-in-able "Vacant address"
@@ -788,46 +782,16 @@ namespace SODMotives
         }
     }
 
-    // WINDOW FIX. Toolbox.TryGetSniperVantagePoint(Human sniper, NewGameLocation requiredTargetSite, out NewWall,
-    // out float, List) is the choke point the game calls at FIRE TIME (NewAIAction.OnActivate) to derive the sniper's
-    // nest node -- its out NewWall becomes the node the killer walks to and shoots from (decoded in
-    // docs/extensions/sniper-nest-decode.md). For our motivated sniper's ONE pinned local site we replace the pick with
-    // a nest we verified has line of sight to the victim (computed at seeding, cached).
-    //
-    // CRITICAL SCOPE: the SAME overload is also called by the game's own site picker (Murder.TryPickNewVictimSite) to
-    // score EVERY candidate site. If we override those, we flatten the game's real vantage ranking (all candidates come
-    // back 999) and it picks the same street every time -- the "Chandani everywhere, never Mingo" regression. So we
-    // override ONLY when requiredTargetSite is exactly our pinned site (MurderWatchdog.TryGetPinnedNest enforces this);
-    // candidate-scoring queries pass through untouched, leaving the game's own picking (and vanilla snipers) intact.
-    [HarmonyPatch]
-    internal static class Patch_SniperVantage_ForceLosNest
-    {
-        static System.Reflection.MethodBase TargetMethod()
-        {
-            // Overload 1 is the only TryGetSniperVantagePoint whose first two params are (Human, NewGameLocation).
-            foreach (var mth in typeof(Toolbox).GetMethods())
-            {
-                if (mth.Name != nameof(Toolbox.TryGetSniperVantagePoint)) continue;
-                var ps = mth.GetParameters();
-                if (ps.Length >= 2 && ps[0].ParameterType == typeof(Human) && ps[1].ParameterType == typeof(NewGameLocation))
-                    return mth;
-            }
-            return null;
-        }
-
-        // Param names match the interop (confirmed present in metadata), same as the ExecuteNewMurder prefix's ref args.
-        static void Postfix(Human sniper, NewGameLocation requiredTargetSite, ref NewWall vantagePoint, ref float vantageScore, ref bool __result)
-        {
-            try
-            {
-                if (MurderWatchdog.TryGetPinnedNest(sniper, requiredTargetSite, out var wall) && wall != null)
-                {
-                    vantagePoint = wall; vantageScore = 999f; __result = true;
-                }
-            }
-            catch { }
-        }
-    }
+    // NOTE: the former Patch_SniperVantage_ForceLosNest postfix on Toolbox.TryGetSniperVantagePoint was REMOVED
+    // (hotfix). Harmony-patching that method installs a native detour at its entry, so every caller -- the game's own
+    // Murder.TryPickNewVictimSite candidate scoring and NewAIAction.OnActivate fire-time nest derivation included -- was
+    // routed through an Il2CppInterop native->managed marshalling trampoline. On some players' BepInEx/Il2CppInterop
+    // builds that trampoline threw a NullReferenceException (the reported "During invoking native->managed trampoline"
+    // error); Il2CppInterop swallowed it and returned false + out NewWall=null, so ExCop snipers could never derive a
+    // nest and hung. There is no settable nest field, so forcing a specific window REQUIRES patching this solver, which
+    // is exactly what reintroduces the hazard -- so we no longer force a nest at all. Motivated snipers now defer the
+    // site's nest + the shot entirely to the game (mimic-vanilla), exactly as docs/extensions/sniper-vanilla-excop-decode.md
+    // concluded; the mod only chooses the pair + MO and seeds a (varied, ranked) shot SITE via SeedSniperDefault.
 
     [HarmonyPatch(typeof(MurderController), nameof(MurderController.ExecuteNewMurder))]
     internal static class Patch_ExecuteNewMurder

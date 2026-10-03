@@ -722,9 +722,8 @@ namespace SODMotives
                 }
                 catch { }
 
-                // Sniper: show the pinned target site, the intended NEST (the vantage wall from the game's OWN
-                // solver Toolbox.TryGetSniperVantagePoint), and the killer's live distance to it — so you can see
-                // whether the killer is actually travelling to the nest or idling somewhere with no line of sight.
+                // Sniper: show the game's own target site + MO, and (since the mod now defers the nest/shot to the
+                // game) the game-side victim/murderer null state, so a stuck "Victim (Null)" case is visible here.
                 try
                 {
                     if (mrd != null && mrd.preset != null && mrd.preset.caseType == MurderPreset.CaseType.sniper)
@@ -737,15 +736,16 @@ namespace SODMotives
                         string moName = "?"; try { if (mrd.mo != null) moName = mrd.mo.name; } catch { }
                         Overlay.Add($"SNIPE MO  : {moName}");
                         Overlay.Add($"SNIPE SITE: {tname}  (where the victim is exposed)");
-                        // The DEN: the nest the mod forced the killer to (where he shoots FROM), + his live distance to it.
-                        // Distinguishes our pinned LOCAL nest (an across-the-street overlook) from the game's default rooftop.
-                        if (MurderWatchdog.ActiveSniperNest(killer, victim, out var nestName, out var kDist, out var pinnedLocal, out var wander))
-                        {
-                            string where = kDist < 0 ? "?" : (kDist <= 3f ? "IN POSITION" : "travelling, " + kDist.ToString("0") + "m away");
-                            Overlay.Add($"SNIPE NEST: {nestName}  ({(pinnedLocal ? "pinned local overlook" : "game default rooftop")}; killer {where})");
-                            if (pinnedLocal) Overlay.Add($"           victim herded to wander {wander} spot(s) in the nest's sightline");
-                        }
-                        else Overlay.Add("SNIPE NEST: <none yet>  (deferred to the game's own site/vantage)");
+                        // The mod no longer forces a nest (the vantage-solver patch was removed; it caused the
+                        // native->managed trampoline NRE); the nest + shot are deferred entirely to the game. Surface
+                        // the GAME-side murder state instead: if victim/murderer read null here (Unity fake-null =
+                        // destroyed) this is the broken, pipeline-blocking "Victim (Null)" state the recovery cancels.
+                        Overlay.Add("SNIPE NEST: deferred to the game's own site/vantage/shot");
+                        bool gvNull = true, gmNull = true;
+                        try { gvNull = mrd.victim == null; } catch { }
+                        try { gmNull = mrd.murderer == null; } catch { }
+                        if (gvNull || gmNull)
+                            Overlay.Add($"           BROKEN: game-side victim={(gvNull ? "NULL" : "ok")} murderer={(gmNull ? "NULL" : "ok")} (recovery will cancel this stuck case)");
                     }
                 }
                 catch { }

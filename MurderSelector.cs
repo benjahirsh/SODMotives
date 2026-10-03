@@ -15,16 +15,16 @@ namespace SODMotives
         internal static bool EnableOverride = true;
         // The mixer's KIDNAP slider ([Motive Mix] MotivatedKidnapShare): probability [0..1] that a KIDNAP case
         // gets a motivated killer -> victim pair (a walk-native abduction to a real holding den) instead of
-        // running fully vanilla — the kidnap analogue of MotiveCaseShare for murders. 1 (default) = every kidnap
-        // is motivated; 0 = kidnaps stay vanilla. Sniper cases always stay vanilla. Read once per kidnap case.
+        // running fully vanilla (the kidnap analogue of MotiveCaseShare for murders). 1 (default) = every kidnap
+        // is motivated; 0 = kidnaps stay vanilla. Sniper cases have their own slider (MotivatedSniperShare). Read once per kidnap case.
         internal static float MotivatedKidnapShare = 1f;
         // The mixer's SNIPER slider ([Motive Mix] MotivatedSniperShare): probability [0..1] that a SNIPER case
-        // gets a motivated killer -> victim pair instead of running fully vanilla. Default 0 = snipers stay
-        // vanilla, because a motivated sniper still LOOPS in travellingTo (the relationship-chosen killer usually
-        // has no reachable vantage onto a site the victim visits; the vantage-viable constraint isn't built yet).
-        // Set it to 1 to TEST motivated snipers via the natural sandbox path (the [sniper-obs]/[sniper-live]
-        // diagnostics observe them) without the F3 force key. Read once per sniper case.
-        internal static float MotivatedSniperShare = 0f;
+        // gets a motivated killer -> victim pair instead of running fully vanilla. Bound to 1f in Plugin.Load (the
+        // shipped default, so a fresh install runs every sniper case motivated); BindApply overwrites this static
+        // initializer at startup, so the value here is only the pre-config fallback. A motivated sniper picks its MO
+        // by a killer-home line-of-sight test (voyeur else ExCop) and seeds a shot SITE via the game's own ranked
+        // vantages; the nest + the shot are deferred entirely to the game (mimic-vanilla). Read once per sniper case.
+        internal static float MotivatedSniperShare = 1f;
         internal static int MinSuspects = 3;            // PREFER victims with at least this many real suspects
         internal static int KillerPoolSize = 10;        // killer = uniform-random among the victim's top-N suspects
         // Diagnostic: after a TryPickVictimCentric call with a preferKiller, how many of the scanned top-pool
@@ -222,7 +222,8 @@ namespace SODMotives
         }
 
         // Should THIS sniper case be motivated? Drawn per sniper by the mixer's MotivatedSniperShare slider.
-        // Default share 0 => snipers stay vanilla (a motivated sniper still loops; see the field comment).
+        // Default share 1 => every sniper is motivated (a motivated sniper now mimics vanilla: pick the pair + MO,
+        // seed a shot site via the game's own ranked vantages, defer the nest + shot to the game; see the field comment).
         internal static bool ShouldMotivateSniper()
         {
             if (MotivatedSniperShare <= 0f) return false;

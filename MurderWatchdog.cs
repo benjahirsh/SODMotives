@@ -96,15 +96,18 @@ namespace SODMotives
         // case tries a varied site then converges on the reliable one. Does NOT reset the 24h hard-cancel clock.
         private const float SniperReseedStallHours = 3f;
         private static readonly Dictionary<int, float> _sniperReseedSince = new Dictionary<int, float>();   // victimId -> gameTime of the last (re)seed
-        // UNIVERSAL STUCK-SNIPER RECOVERY: a current sniper murder whose victim OR murderer is null/destroyed (Unity
-        // fake-null) can never resolve and blocks ALL new murders (the reported "Victim (Null)" bricked save; also hit
-        // by killing the would-be murderer with another mod). The main Tick guard returns on such a case, so recovery
-        // runs ABOVE it, keyed off the murder's own pointer (the victim id may be unreadable). Cancels via the game's
-        // own teardown; retries every SniperRecoverRetryHours if the same broken murder is still current.
-        private static System.IntPtr _sniperRecoverPtr = System.IntPtr.Zero;
-        private static float _sniperRecoverLastTry = -999f;
-        private static int _sniperRecoverTries = 0;
-        private const float SniperRecoverRetryHours = 2f;
+        // UNIVERSAL STUCK-MURDER RECOVERY: a current murder whose victim OR murderer is DESTROYED (Unity fake-null) --
+        // e.g. another mod killed the would-be murderer, or the reported sniper "Victim (Null)" brick -- can never
+        // resolve and blocks ALL new murders. We tear it down DIRECTLY (de-list + null the controller's current-murder
+        // fields + re-enable the scheduler) WITHOUT the game's CancelCurrentMurder/SetMurderState, because those AI-tick
+        // the destroyed actor (guarded only by raw pointer!=0 checks that miss Unity fake-null) and NRE -- the cause of
+        // the 1.3.1 F6-test reward-loop corruption. Decoded + adversarially verified. One-shot per murderID (no churn).
+        private static readonly HashSet<int> _recoveredMurderIds = new HashSet<int>();   // murderIDs we've torn down (never retried)
+        private static int _resumePendingAfter = -1;         // murderID we tore down and are waiting to see the scheduler resume after (-1 = none)
+        private static float _resumeDeadline = -999f;        // gameTime by which a fresh case should have scheduled
+        private static int _resumeReapplies = 0;             // times we've re-applied the scheduler enable while waiting
+        private const float SniperRecoverResumeWindowHours = 6f;   // wait this long for a fresh case before re-applying the enable
+        private const int SniperRecoverMaxReapplies = 4;           // cap the re-applies, then defer to the game's own cadence
 
         // Seal the den behind the fleeing killer. Vanilla (confirmed in-game across 2 sandboxes: frontDoors
         // locked=0 the whole hold, AND a web-search confirmed vacant-address kidnap dens stay UNLOCKED) only
@@ -139,7 +142,7 @@ namespace SODMotives
             _liveVid = -1; _liveLastLogH = -999f; _liveCount = 0;
             _sniperObserved.Clear(); _sniperLiveVid = -1; _sniperLiveLastLogH = -999f; _sniperLiveCount = 0;
             _sniperSeeded.Clear(); _sniperDefaultFails.Clear(); _sniperDefaultSince.Clear();
-            _sniperReseedSince.Clear(); _sniperRecoverPtr = System.IntPtr.Zero; _sniperRecoverTries = 0; _sniperRecoverLastTry = -999f;
+            _sniperReseedSince.Clear(); _recoveredMurderIds.Clear(); _resumePendingAfter = -1; _resumeDeadline = -999f; _resumeReapplies = 0;
             _ransomTried.Clear(); _killTimeReasserted.Clear();
             _killBlockLogged.Clear(); KidnapReachedHold.Clear(); _denSealed.Clear(); _denGoalLogged.Clear();
         }
@@ -361,37 +364,91 @@ namespace SODMotives
             _sniperSeeded.Remove(vid); _sniperDefaultSince.Remove(vid); _sniperDefaultFails.Remove(vid); _sniperReseedSince.Remove(vid);
         }
 
-        // Cancel a current murder (ANY case type) whose victim OR murderer is null/destroyed (Unity fake-null). Such a
-        // murder can never resolve and blocks EVERY new murder: the reported sniper "Victim (Null)" brick, a case left
-        // stuck after the would-be murderer is killed by another mod, and the same hazard for a motivated kidnap. The
-        // game's own Murder ctor guarantees both parties non-null, so a null here on the CURRENT murder always means a
-        // party was DESTROYED after creation (not a transient half-built state -- ExecuteNewMurder commits both
-        // synchronously). The main Tick guard below returns on a null victim/killer, so this runs ABOVE it, keyed off
-        // the murder's pointer (the victim id may be unreadable). Returns true when THIS murder is broken (so the caller
-        // stops processing it), whether or not the cancel finally takes; retries every SniperRecoverRetryHours while the
-        // same broken murder stays current. A read exception defaults to NOT broken (a genuine destroyed party reads
-        // null reliably), so a transient interop hiccup can never cancel a healthy case. Healthy murders are untouched.
+        // True iff a Human is null or Unity-DESTROYED (fake-null). Human derives from UnityEngine.Object in the interop,
+        // so comparing through the UnityEngine.Object operator invokes the real Unity equality (true for a destroyed
+        // object whose native m_CachedPtr is zeroed) -- unlike a raw reference / Pointer check, which the game's own
+        // guards use and which is exactly why a destroyed actor slips past them and NREs when AI-ticked.
+        private static bool DeadHuman(Human h)
+        {
+            try { return (UnityEngine.Object)(object)h == null; } catch { return true; }
+        }
+
+        // Discard a current murder whose murderer OR victim is destroyed (fake-null) by DIRECT controller teardown --
+        // never CancelCurrentMurder/SetMurderState (they AI-tick the destroyed actor and NRE; that is what corrupted
+        // the case + looped the reward payout in the 1.3.1 F6 test). De-listing from activeMurders is the load-bearing
+        // step: GetCurrentMurder returns null only when the list no longer holds it, which also starves the resolve/
+        // reward path. One-shot per murderID so it can never churn. Returns true when THIS murder is broken (the caller
+        // then stops processing it). Healthy murders (both parties live) are left completely untouched.
         private static bool TryRecoverBrokenMurder(MurderController.Murder murder)
         {
             try
             {
-                bool broken; try { broken = murder.victim == null || murder.murderer == null; } catch { broken = false; }
-                if (!broken) return false;   // healthy / unreadable -- leave it alone
+                var mc = MurderController.Instance; if (mc == null) return false;
+                bool broken; try { broken = DeadHuman(murder.murderer) || DeadHuman(murder.victim); } catch { broken = false; }
+                if (!broken) return false;   // healthy -- leave it alone
 
-                System.IntPtr mp = System.IntPtr.Zero; try { mp = murder.Pointer; } catch { }
-                if (_sniperRecoverPtr != mp) { _sniperRecoverPtr = mp; _sniperRecoverTries = 0; _sniperRecoverLastTry = -999f; }
-                float now = NowHours();
-                if (_sniperRecoverTries > 0 && now - _sniperRecoverLastTry < SniperRecoverRetryHours) return true;   // wait before retrying the same case
-                _sniperRecoverLastTry = now; _sniperRecoverTries++;
+                int mid = -1; try { mid = murder.murderID; } catch { }
+                if (mid >= 0 && _recoveredMurderIds.Contains(mid)) return true;   // already torn down -- never retry
+                if (mid >= 0) _recoveredMurderIds.Add(mid);                       // one-shot BEFORE mutating, so a throw can't re-enter
 
-                MotivesPlugin.Log.LogWarning($"[SODMotives][recover] the current murder has a null/destroyed victim or murderer (unrecoverable; it blocks all new murders) -> cancelling to vanilla so the scheduler can resume (attempt {_sniperRecoverTries}).");
-                try { if (murder.victim != null) InvalidateSniperOverride(murder.victim.humanID); } catch { }   // best-effort (victim may be unreadable)
-                try { murder.CancelCurrentMurder(); } catch (Exception ce) { MotivesPlugin.Log.LogWarning($"[SODMotives][recover] CancelCurrentMurder threw: {ce.Message}"); }
-                if (_sniperRecoverTries >= 3)
-                    MotivesPlugin.Log.LogWarning("[SODMotives][recover] the broken murder is STILL current after repeated cancels -- CancelCurrentMurder alone is not clearing it; a stronger scheduler reset may be needed (please report this with the log).");
+                MotivesPlugin.Log.LogWarning($"[SODMotives][recover] discarding broken murder id={mid} (murdererDead={DeadHuman(murder.murderer)} victimDead={DeadHuman(murder.victim)}) by direct teardown so the scheduler can resume.");
+
+                // Drop our override tracking for this victim while it is still readable.
+                try { if (!DeadHuman(murder.victim)) InvalidateSniperOverride(murder.victim.humanID); } catch { }
+
+                // Mark terminal with a PLAIN field write (NOT SetMurderState -> no AI tick on the destroyed actor).
+                try { murder.state = MurderController.MurderState.unsolved; } catch { }
+                // DE-LIST (load-bearing): remove the murder from the lists GetCurrentMurder + the resolve/reward path walk.
+                try { var am = mc.activeMurders; if (am != null && am.Contains(murder)) am.Remove(murder); } catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][recover] activeMurders remove err: {e.Message}"); }
+                try { var im = mc.inactiveMurders; if (im != null && im.Contains(murder)) im.Remove(murder); } catch { }
+                // Null the controller's current-murder fields (currentVictim is GetCurrentMurder's match key).
+                try { mc.currentMurderer = null; } catch { }
+                try { mc.currentVictim = null; } catch { }
+                try { mc.currentVictimSite = null; } catch { }
+                // Clear routine + timers so a fresh case rolls promptly, then re-enable scheduling.
+                try { mc.murderRoutineActive = false; } catch { }
+                try { mc.pauseBetweenMurders = 0f; } catch { }
+                try { mc.pauseBeforeKidnapperKill = 0f; } catch { }
+                try { mc.SetProcGenKillerLoop(true); } catch { }
+                try { mc.SetUpdateEnabled(true); } catch { }
+
+                bool cleared = true; try { cleared = mc.GetCurrentMurder() == null; } catch { }
+                MotivesPlugin.Log.LogWarning($"[SODMotives][recover] teardown done; GetCurrentMurder()=={(cleared ? "null (cleared)" : "NON-NULL (de-list missed)")}. Watching for a fresh case.");
+                // Arm the deferred resume check (a single enable can be undone by the game's completion-reset).
+                _resumePendingAfter = mid; _resumeDeadline = NowHours() + SniperRecoverResumeWindowHours; _resumeReapplies = 0;
                 return true;
             }
-            catch { return false; }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][recover] teardown error: {e.Message}"); return true; }
+        }
+
+        // Deferred resume check (runs ABOVE the Tick null-guard): after a teardown, confirm the scheduler rolled a fresh
+        // case; if not within the window, re-apply the enable up to a cap (the game's Update completion-reset can
+        // re-disable the controller, so a single enable is not guaranteed to stick). Never throws.
+        private static void CheckRecoverResume(MurderController mc)
+        {
+            try
+            {
+                Human cm = null; try { cm = mc.currentMurderer; } catch { }
+                if (!DeadHuman(cm))   // a live current murderer = PickNewMurderer ran -> resumed
+                {
+                    MotivesPlugin.Log.LogInfo("[SODMotives][recover] scheduler resumed -- a fresh case was picked.");
+                    _resumePendingAfter = -1; return;
+                }
+                if (NowHours() < _resumeDeadline) return;
+                if (_resumeReapplies >= SniperRecoverMaxReapplies)
+                {
+                    MotivesPlugin.Log.LogWarning("[SODMotives][recover] no fresh case after repeated enables; leaving it to the game's own between-murder cadence (not retrying further).");
+                    _resumePendingAfter = -1; return;
+                }
+                _resumeReapplies++;
+                MotivesPlugin.Log.LogWarning($"[SODMotives][recover] no fresh case yet; re-applying scheduler enable ({_resumeReapplies}/{SniperRecoverMaxReapplies}).");
+                try { mc.murderRoutineActive = false; } catch { }
+                try { mc.pauseBetweenMurders = 0f; } catch { }
+                try { mc.SetProcGenKillerLoop(true); } catch { }
+                try { mc.SetUpdateEnabled(true); } catch { }
+                _resumeDeadline = NowHours() + SniperRecoverResumeWindowHours;
+            }
+            catch { }
         }
 
         // Polled each frame from DebugTools' Update. Cheap: early-outs unless one of our cases is
@@ -403,10 +460,14 @@ namespace SODMotives
             {
                 var mc = MurderController.Instance;
                 if (mc == null) return;
+                // Deferred scheduler-resume check after a recovery teardown. Runs BEFORE the null-guard: after a clean
+                // teardown GetCurrentMurder() is null, so the guard below would otherwise return before we can confirm
+                // the pipeline resumed (and re-apply the enable if the game re-disabled the controller).
+                if (_resumePendingAfter >= 0) CheckRecoverResume(mc);
                 var murder = mc.GetCurrentMurder();
                 if (murder == null) return;
-                // RECOVER a stuck current murder (any type) whose victim/murderer went null/destroyed, BEFORE the guard
-                // below bails on it and leaves it blocking the whole pipeline.
+                // RECOVER a stuck current murder (any type) whose victim/murderer went null/destroyed by DIRECT teardown,
+                // BEFORE the guard below bails on it and leaves it blocking the whole pipeline.
                 if (TryRecoverBrokenMurder(murder)) return;
                 var victim = murder.victim; var killer = murder.murderer;
                 if (victim == null || killer == null) return;

@@ -83,8 +83,6 @@ namespace SODMotives
         internal static KeyCode KeyTriggerMurder  = KeyCode.F4;   // force the game's next murder NOW (fast test loop)
         internal static KeyCode KeyTeleportKiller = KeyCode.F8;   // teleport to the KILLER's CURRENT position (tail them)
         internal static KeyCode KeyForceSniper    = KeyCode.None; // OFF by default (removed from config panel; handler code kept, set a KeyCode to re-enable). Was F3: create a motivated sniper case now.
-        internal static KeyCode KeyBreakMurderer  = KeyCode.None; // TEST, OFF by default: destroy the current case's murderer to simulate the destroyed/"Victim (Null)" fake-null state and verify the stuck-case recovery. Set a KeyCode in [Debug Keys] to enable (throwaway save only).
-        internal static KeyCode KeyBreakVictim    = KeyCode.None; // TEST, OFF by default: destroy the current case's VICTIM (companion to BreakMurderer) to verify recovery handles a destroyed victim too. Throwaway save only.
         internal static KeyCode KeyVictimSampler  = KeyCode.None; // OFF by default (code kept, set a KeyCode to re-enable). Was F2: dry-run victim-distribution sampler (boss/landlord/other %).
         internal static KeyCode KeyTeleportCityHall = KeyCode.Home;   // teleport to City Hall (fixed landmark)
         internal static KeyCode KeyTimeBoost      = KeyCode.End;   // toggle fast-forward for testing
@@ -289,34 +287,6 @@ namespace SODMotives
         // waitForLocation (the vantage/target-site question). Generalised to any case type for kidnap later.
         internal static void ForceSniperCase() => ForceCase(MurderPreset.CaseType.sniper, "F3");
 
-        // TEST ONLY (default keys None): destroy the CURRENT murder's murderer or victim to simulate the destroyed,
-        // Unity "fake-null" entity state (the Nasty-Dog repro: the would-be killer was shot, then cleaned up by the
-        // game). Destroying the gameObject makes murder.murderer/victim read fake-null next frame, which
-        // MurderWatchdog.TryRecoverBrokenMurder then tears down DIRECTLY (de-list + null the current-murder fields +
-        // re-enable the scheduler), so a fresh case schedules without the NRE/reward-loop the old cancel caused.
-        // Expected log: "[SODMotives][recover] discarding broken murder ..." then "scheduler resumed". Abruptly
-        // destroying an NPC is not a clean game state, so do this only on a THROWAWAY save.
-        internal static void BreakCurrentMurderer() => BreakCurrentParty(false);
-        internal static void BreakCurrentVictim()   => BreakCurrentParty(true);
-        private static void BreakCurrentParty(bool victim)
-        {
-            try
-            {
-                var mc = MurderController.Instance;
-                var murder = mc != null ? mc.GetCurrentMurder() : null;
-                if (murder == null) { MotivesPlugin.Log.LogWarning("[SODMotives][break-test] no current murder to break."); return; }
-                string role = victim ? "victim" : "murderer";
-                Human target = null; try { target = victim ? murder.victim : murder.murderer; } catch { }
-                if (target == null) { MotivesPlugin.Log.LogWarning($"[SODMotives][break-test] current murder has no live {role} to destroy (already null?)."); return; }
-                string who = MotivesPlugin.Name(target);
-                string ctype = "?"; try { ctype = murder.preset != null ? murder.preset.caseType.ToString() : "?"; } catch { }
-                MotivesPlugin.Log.LogWarning($"[SODMotives][break-test] destroying {role} {who} of the current {ctype} case to simulate the fake-null state; expect [SODMotives][recover] next, then murders to resume. (Throwaway save only.)");
-                var go = target.gameObject;
-                if (go != null) UnityEngine.Object.Destroy(go);
-                else MotivesPlugin.Log.LogWarning($"[SODMotives][break-test] {role} has no gameObject to destroy.");
-            }
-            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][break-test] error: {e.Message}"); }
-        }
 
         // Turn ON the game's OWN verbose murder logging so it narrates the kidnap flow ("Murder: Completing
         // meet goal 1", "Victim is knocked out and restrained", etc.) into the log. Those messages call
@@ -1044,8 +1014,6 @@ namespace SODMotives
                     if (Input.GetKeyDown(DebugTools.KeyCycleForce)) DebugTools.CycleForceMotive();
                     if (Input.GetKeyDown(DebugTools.KeyTriggerMurder)) DebugTools.TriggerMurder();
                     if (Input.GetKeyDown(DebugTools.KeyForceSniper)) DebugTools.ForceSniperCase();
-                    if (Input.GetKeyDown(DebugTools.KeyBreakMurderer)) DebugTools.BreakCurrentMurderer();
-                    if (Input.GetKeyDown(DebugTools.KeyBreakVictim)) DebugTools.BreakCurrentVictim();
                     if (Input.GetKeyDown(DebugTools.KeyVictimSampler)) DebugTools.SampleVictimDistribution();
                     if (Input.GetKeyDown(DebugTools.KeyTeleportCityHall)) DebugTools.TeleportToCityHall();
                     if (Input.GetKeyDown(DebugTools.KeyTimeBoost)) DebugTools.ToggleTimeBoost();

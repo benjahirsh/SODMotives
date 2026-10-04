@@ -167,12 +167,6 @@ namespace SODMotives
             BindApply("Debug Keys", "TriggerMurder", UnityEngine.KeyCode.F4,
                 "TESTING: create the next case NOW (fast test loop), letting the game choose the case type naturally (usually a murder, occasionally a kidnap/sniper), created directly rather than waiting for the vanilla scheduler (whose own TriggerNextMurder button never actually spawns a case). Unlike ForceSniperCase (F3) it does not force a special case type. Set to None to disable.",
                 v => DebugTools.KeyTriggerMurder = v);
-            BindApply("Debug Keys", "BreakCurrentMurderer", UnityEngine.KeyCode.None,
-                "TEST (default None = off): DESTROY the current case's murderer to simulate the destroyed/'Victim (Null)' fake-null entity state (the 'shot the would-be murderer' repro), to verify the stuck-case recovery clears it and murders resume. Watch the log for '[SODMotives][recover] ...'. Use on a THROWAWAY save only. Set a key to enable.",
-                v => DebugTools.KeyBreakMurderer = v);
-            BindApply("Debug Keys", "BreakCurrentVictim", UnityEngine.KeyCode.None,
-                "TEST (default None = off): DESTROY the current case's VICTIM (companion to BreakCurrentMurderer) to verify the recovery handles a destroyed victim too. Watch the log for '[SODMotives][recover] ...'. THROWAWAY save only. Set a key to enable.",
-                v => DebugTools.KeyBreakVictim = v);
             BindApply("Debug Keys", "TeleportToKiller", UnityEngine.KeyCode.F8,
                 "Teleport to the KILLER's CURRENT position (where they are right now) so you can tail them during a case.",
                 v => DebugTools.KeyTeleportKiller = v);

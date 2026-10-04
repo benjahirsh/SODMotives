@@ -41,21 +41,31 @@ Read the log yourself at `BepInEx/LogOutput.log` (and `Player.log`). No need to 
    good cases short). If good cases are getting re-pathed, tell me and I'll raise `SniperReseedStallHours`.
    (Use the FastCadence / TimeBoost debug keys to shorten the wait to the 3h / 24h windows.)
 
-## Test 3 - Bug 2 recovery (THE one that needs your eyes)
-This is the item I couldn't fully verify statically: does `CancelCurrentMurder` on a fake-null case actually let
-the scheduler roll a NEW murder? You test it by driving a case into the broken state and watching for recovery.
-1. With a motivated sniper active and the victim selected in F9, make the victim OR murderer get destroyed out from
-   under the case - e.g. kill the would-be murderer with another mod (the exact Nasty-Dog repro), or kill the
-   victim.
-2. Watch the log for: `[SODMotives][recover] the current murder has a null/destroyed victim or murderer ...
-   cancelling to vanilla so the scheduler can resume (attempt 1).`
-3. **Success = a NEW murder gets scheduled within ~a game-day** (murders resume; the pipeline is un-jammed). F9's
-   sniper line will also show `BROKEN: game-side victim=NULL ...` while the case is in the broken state.
-4. **If instead you see** `the broken murder is STILL current after repeated cancels` (logged after 3 attempts) and
-   no new murders ever appear, then `CancelCurrentMurder` alone isn't enough on your build - tell me and I'll add a
-   stronger scheduler reset (directly clearing the controller's current-murder pointers).
-5. **Bricked-save heal:** if you still have (or can recreate) a save that's already stuck, just LOAD it with this
-   build and watch for the same `[SODMotives][recover] ...` line and murders resuming - no action needed in-game.
+## Test 3 - Bug 2 recovery (REDESIGNED - the one that needs your eyes)
+The recovery was rewritten after the first F6 test: it no longer calls the game's CancelCurrentMurder (that
+AI-ticked the destroyed actor and NRE'd, which corrupted the case and caused the never-ending reward loop). It now
+tears the broken murder down DIRECTLY (remove it from the murder list, null the controller's current-murder
+fields, re-enable the scheduler) and never ticks the dead actor, so no NRE and nothing left to over-pay.
+1. With a motivated sniper active and the pair shown in F9, destroy a party out from under the case. Two dev keys
+   (gated behind `EnableDebugKeys`, both default-unbound - bind free keys like **F6** and **F5** under
+   `[Debug Keys]`): `BreakCurrentMurderer` (the Nasty-Dog repro) and `BreakCurrentVictim` (the destroyed-victim
+   variant). Run BOTH, in separate attempts.
+2. Watch `BepInEx/LogOutput.log` for, in order:
+   - `[SODMotives][recover] discarding broken murder id=<n> (murdererDead=.. victimDead=..) by direct teardown ...`
+   - `[SODMotives][recover] teardown done; GetCurrentMurder()==null (cleared). Watching for a fresh case.`
+   - `[SODMotives][recover] scheduler resumed -- a fresh case was picked.`
+3. **Success =** that `scheduler resumed` line appears and a new murder runs; and **no NRE** (`During invoking
+   native->managed trampoline` / `NullReferenceException`) anywhere after the break. Hit **End** (TimeBoost) to
+   fast-forward the wait.
+4. **CRITICAL reward-loop check:** after recovery, play on and when a fresh case comes up, **hand it in / resolve it**
+   and confirm the payout happens **once** (no never-ending money + social credit). That loop was the symptom; it
+   must be gone.
+5. **If instead** you see `no fresh case after repeated enables` with no new murders, or any NRE after the break,
+   tell me - the teardown or the scheduler re-enable needs more work.
+6. **Migration / bricked-save heal:** if you still have (or can make) a save that is ALREADY stuck/over-paying from
+   the earlier failed test, **load it with this build**: the recovery runs on load - watch for the same `[recover]`
+   lines, confirm murders resume, and **save + reload once more** to confirm it comes back clean and the old case is
+   no longer resolvable/over-paying.
 
 ## If all three pass
 Merge `sniper-hotfix` into `v2`, bump the version + changelog, and ship. (Say the word and I'll do the merge +

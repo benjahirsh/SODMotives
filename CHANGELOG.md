@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.3.2
+Fix: the mod's injected emails and notes (affair love letters, threatening notes, redundancy and eviction letters, and so on) could turn up blank, showing the sender but no body, after you fully quit the game and loaded a save again. The mod was failing to find its saved data on a cold restart, so it could not rebuild those letters. They now survive a full restart and display correctly. Note: saves that were already affected before this fix may keep some blank entries from before; newly created and still-intact letters are restored.
+
 ## 1.3.1
 Fix: motivated sniper cases could throw an error that stopped any further murders from happening. Snipers now run reliably, and a sniper case that loses its target (for example if another mod kills the would-be killer) cancels itself instead of jamming the game.
 

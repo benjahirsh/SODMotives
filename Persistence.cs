@@ -70,7 +70,11 @@ namespace SODMotives
         // path. On load we prefer the explicit menu choice, else the last save this session (covers
         // save -> load-from-pause without the menu hook having fired).
         private static string _currentSavePath;    // last CaptureSaveStateAsync path (this session)
-        private static string _selectedSavePath;   // last save slot clicked in the load menu
+        private static string _selectedSavePath;   // last save slot selected in the load menu
+        // Set when a load this session could NOT read its sidecar (path unknown / file missing). Guards
+        // OnSave against overwriting an existing, populated sidecar with empty records -- the "strip
+        // cascade" that permanently lost injected vmail/note records on older saves after a cold restart.
+        private static bool _sidecarReadFailedThisLoad;
 
         // ---------- replay state (armed by LoadSaveState, driven by PersistenceRunner) ----------
         private static bool _replayPending;
@@ -190,6 +194,20 @@ namespace SODMotives
             _currentSavePath = sodbPath;
             string side = SidecarFor(sodbPath);
             if (side == null) { MotivesPlugin.Log.LogWarning("[SODMotives] persist: no sidecar path from save path; skipping write."); return; }
+            // Anti-strip guard: if the load this session FAILED to read a sidecar (path unknown / missing),
+            // our in-memory note/email lists were never repopulated and are empty. Overwriting an existing,
+            // populated sidecar now would permanently strip its vmail/note records (the cascade that blanked
+            // older saves). Leave the existing file intact so a (fixed) load can still read it. E-events
+            // regenerate from the live graph on load, so not re-writing them here is harmless.
+            try
+            {
+                if (_sidecarReadFailedThisLoad && Records.Count == 0 && Emails.Count == 0 && File.Exists(side))
+                {
+                    MotivesPlugin.Log.LogWarning($"[SODMotives] persist: load could not read a sidecar this session and in-memory mail/note state is empty; preserving existing sidecar instead of overwriting it -> {side}");
+                    return;
+                }
+            }
+            catch { }
             try
             {
                 var sb = new StringBuilder();
@@ -420,7 +438,16 @@ namespace SODMotives
         internal static void MarkReplayPending()
         {
             if (!Enable) return;
-            _replayPath = !string.IsNullOrEmpty(_selectedSavePath) ? _selectedSavePath : _currentSavePath;
+            // Resolve the save being loaded. Prefer an explicit menu click; then the save made THIS
+            // session (save -> load-from-pause); then the menu's CURRENTLY-SELECTED entry read straight
+            // off MainMenuController. That last source is the fix for the cold-restart blank-mail bug:
+            // on a fresh process the menu auto-selects the first/most-recent entry with NO click, so the
+            // per-entry OnLeftClick hook never fires, the path was <unknown>, the whole sidecar went
+            // unread, and every injected vmail/note blanked (KeyNotFoundException on the custom tree id).
+            _replayPath =
+                !string.IsNullOrEmpty(_selectedSavePath) ? _selectedSavePath :
+                !string.IsNullOrEmpty(_currentSavePath)  ? _currentSavePath  :
+                TrySelectedSavePathFromMenu();
             _selectedSavePath = null;   // consume: a stale last-clicked slot must not shadow a later save's path
             _replayPending = true;
             _replayAttempts = 0;
@@ -430,7 +457,28 @@ namespace SODMotives
             _eventsImported = false;
             _sideRead = false;
             _loadedSide = null;
+            _sidecarReadFailedThisLoad = string.IsNullOrEmpty(_replayPath);   // refined after the read attempt in Tick
             MotivesPlugin.Log.LogInfo($"[SODMotives] persist: load detected; replay armed (path={_replayPath ?? "<unknown>"}).");
+        }
+
+        // Read the path of the save the load menu is about to load, straight from the game's selected
+        // entry (MainMenuController.selectedSave.info). Robust to HOW it was selected -- click, keyboard,
+        // or the menu's own auto-select on open -- unlike the per-entry OnLeftClick hook. Safe to call
+        // from the LoadSaveState hook (the menu is still alive then). Returns null if unavailable.
+        private static string TrySelectedSavePathFromMenu()
+        {
+            try
+            {
+                var mm = MainMenuController.Instance;
+                if (mm == null) return null;
+                var sel = mm.selectedSave;
+                if (sel == null) return null;
+                var fi = sel.info;
+                if (fi == null) return null;
+                var fn = fi.FullName;
+                return fn != null ? fn.ToString() : null;
+            }
+            catch { return null; }
         }
 
         internal static void OnSaveSlotClicked(string fullPath)
@@ -464,7 +512,7 @@ namespace SODMotives
             }
 
             // Parse the sidecar once.
-            if (!_sideRead) { _loadedSide = ReadSidecarFull(_replayPath); _sideRead = true; }
+            if (!_sideRead) { _loadedSide = ReadSidecarFull(_replayPath); _sideRead = true; _sidecarReadFailedThisLoad = _loadedSide == null; }
 
             // (1) EVENTS + MAPS — once, as soon as citizens exist (needs no interactables).
             if (!_eventsImported)
@@ -731,6 +779,28 @@ namespace SODMotives
             try
             {
                 var fi = __instance.info;
+                if (fi == null) return;
+                string full = null;
+                try { var fn = fi.FullName; full = fn != null ? fn.ToString() : null; } catch { }
+                Persistence.OnSaveSlotClicked(full);
+            }
+            catch { }
+        }
+    }
+
+    // Load menu: the game routes EVERY save-entry selection -- user click, keyboard, and the menu's own
+    // auto-select of the first/most-recent entry when the Load screen opens -- through SelectNewSave(sec).
+    // The per-entry OnLeftClick above misses the auto-select (no click), which is why a cold-restart load
+    // had no path and blanked all injected mail. Capturing here covers that route too.
+    [HarmonyPatch(typeof(MainMenuController), nameof(MainMenuController.SelectNewSave))]
+    internal static class Patch_Persist_SelectSave
+    {
+        static void Postfix(SaveGameEntryController sec)
+        {
+            try
+            {
+                if (sec == null) return;
+                var fi = sec.info;
                 if (fi == null) return;
                 string full = null;
                 try { var fn = fi.FullName; full = fn != null ? fn.ToString() : null; } catch { }

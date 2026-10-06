@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.3.3
+Fix: in 1.3.1 and 1.3.2, fully quitting and reloading a save could stop murders from happening. The current case would show as active but never play out, and no new cases would follow. On load the mod briefly saw the killer and victim as missing (while the save was still streaming them back in) and wrongly scrapped the in-progress case. It now waits to confirm someone is genuinely gone before stepping in, so a reloaded case simply continues. Cases that are truly broken (for example if another mod kills the would-be killer) are still cleaned up so the game never jams.
+
 ## 1.3.2
 Fix: the mod's injected emails and notes (affair love letters, threatening notes, redundancy and eviction letters, and so on) could turn up blank, showing the sender but no body, after you fully quit the game and loaded a save again. The mod was failing to find its saved data on a cold restart, so it could not rebuild those letters. They now survive a full restart and display correctly. Note: saves that were already affected before this fix may keep some blank entries from before; newly created and still-intact letters are restored.
 

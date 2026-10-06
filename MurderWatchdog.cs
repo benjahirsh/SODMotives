@@ -108,6 +108,15 @@ namespace SODMotives
         private static int _resumeReapplies = 0;             // times we've re-applied the scheduler enable while waiting
         private const float SniperRecoverResumeWindowHours = 6f;   // wait this long for a fresh case before re-applying the enable
         private const int SniperRecoverMaxReapplies = 4;           // cap the re-applies, then defer to the game's own cadence
+        // Load false-positive guard: on LOAD a save's murder reads BOTH parties as destroyed for a short window while
+        // its actors are rebuilt, so the old one-shot-on-first-sight teardown destroyed a HEALTHY case on every load
+        // (confirmed from a player's save: id=1 murdererDead=True victimDead=True right on load, then a dead pipeline).
+        // A GENUINE brick (another mod destroyed the murderer mid-game) stays dead indefinitely. Distinguish them by
+        // REAL-time persistence during active play: only tear down after the broken state holds this many real seconds
+        // while SessionData.play is true. Real time is monotonic (immune to the gameTime load-jump) and the dwell never
+        // accrues during a load (play is false, gameTime frozen).
+        private const float SniperRecoverBrokenDwellSeconds = 20f;
+        private static readonly Dictionary<int, float> _brokenSince = new Dictionary<int, float>();   // murderID -> realtimeSinceStartup first seen broken in play
 
         // Seal the den behind the fleeing killer. Vanilla (confirmed in-game across 2 sandboxes: frontDoors
         // locked=0 the whole hold, AND a web-search confirmed vacant-address kidnap dens stay UNLOCKED) only
@@ -142,7 +151,7 @@ namespace SODMotives
             _liveVid = -1; _liveLastLogH = -999f; _liveCount = 0;
             _sniperObserved.Clear(); _sniperLiveVid = -1; _sniperLiveLastLogH = -999f; _sniperLiveCount = 0;
             _sniperSeeded.Clear(); _sniperDefaultFails.Clear(); _sniperDefaultSince.Clear();
-            _sniperReseedSince.Clear(); _recoveredMurderIds.Clear(); _resumePendingAfter = -1; _resumeDeadline = -999f; _resumeReapplies = 0;
+            _sniperReseedSince.Clear(); _recoveredMurderIds.Clear(); _brokenSince.Clear(); _resumePendingAfter = -1; _resumeDeadline = -999f; _resumeReapplies = 0;
             _ransomTried.Clear(); _killTimeReasserted.Clear();
             _killBlockLogged.Clear(); KidnapReachedHold.Clear(); _denSealed.Clear(); _denGoalLogged.Clear();
         }
@@ -354,6 +363,13 @@ namespace SODMotives
             return 0f;
         }
 
+        // Monotonic real (wall-clock) seconds since process start -- unaffected by the gameTime freeze/jump across a
+        // load, and unaffected by fast-forward. Used only to time how long a murder has been continuously broken.
+        private static float RealSeconds()
+        {
+            try { return UnityEngine.Time.realtimeSinceStartup; } catch { return 0f; }
+        }
+
         // Forget a sniper case entirely: drop it from the mod's "ours" set and all sniper tracking so a dead/cancelled
         // case is never treated as live again (no stale F9/clue/signature handling, no re-seed on reload). Called when
         // we cancel a hung case and when we recover a broken one.
@@ -385,13 +401,32 @@ namespace SODMotives
             {
                 var mc = MurderController.Instance; if (mc == null) return false;
                 bool broken; try { broken = DeadHuman(murder.murderer) || DeadHuman(murder.victim); } catch { broken = false; }
-                if (!broken) return false;   // healthy -- leave it alone
 
                 int mid = -1; try { mid = murder.murderID; } catch { }
-                if (mid >= 0 && _recoveredMurderIds.Contains(mid)) return true;   // already torn down -- never retry
-                if (mid >= 0) _recoveredMurderIds.Add(mid);                       // one-shot BEFORE mutating, so a throw can't re-enter
 
-                MotivesPlugin.Log.LogWarning($"[SODMotives][recover] discarding broken murder id={mid} (murdererDead={DeadHuman(murder.murderer)} victimDead={DeadHuman(murder.victim)}) by direct teardown so the scheduler can resume.");
+                if (!broken)
+                {
+                    if (mid >= 0) _brokenSince.Remove(mid);   // healthy (or the actors finished rebuilding after a load) -- reset the dwell
+                    return false;                              // leave a healthy murder completely alone
+                }
+                if (mid >= 0 && _recoveredMurderIds.Contains(mid)) return true;   // already torn down -- never retry
+
+                // DWELL + IN-PLAY GUARD (the load false-positive fix). A broken murder is only torn down once the dead
+                // state has PERSISTED for SniperRecoverBrokenDwellSeconds of REAL time while the game is actively
+                // PLAYING. On a load the parties read dead only transiently (actors rebuilding) and play is false, so
+                // the dwell never starts -- the broken murder is simply skipped this tick (its fake-null parties fail
+                // the null-guard below anyway) and then processed normally once the actors come back. A genuinely
+                // destroyed murderer stays dead in play past the dwell and is still cleaned up.
+                bool inPlay = false; try { var s = SessionData.Instance; inPlay = s != null && s.play && s.startedGame; } catch { }
+                if (!inPlay || mid < 0) return true;   // loading / not-yet-keyed -> never tear down; just skip this murder this tick
+                float now = RealSeconds();
+                if (!_brokenSince.TryGetValue(mid, out float since)) { _brokenSince[mid] = now; return true; }   // first broken tick in play -- start the dwell
+                if (now - since < SniperRecoverBrokenDwellSeconds) return true;                                   // still settling -- wait, do not tear down
+
+                _brokenSince.Remove(mid);
+                _recoveredMurderIds.Add(mid);   // one-shot BEFORE mutating, so a throw can't re-enter
+
+                MotivesPlugin.Log.LogWarning($"[SODMotives][recover] discarding broken murder id={mid} (murdererDead={DeadHuman(murder.murderer)} victimDead={DeadHuman(murder.victim)}, broken {SniperRecoverBrokenDwellSeconds:0}s+ in play) by direct teardown so the scheduler can resume.");
 
                 // Drop our override tracking for this victim while it is still readable.
                 try { if (!DeadHuman(murder.victim)) InvalidateSniperOverride(murder.victim.humanID); } catch { }

@@ -13,7 +13,7 @@ namespace SODMotives
     // It intentionally changes NOTHING in the game yet — this is how we lock the
     // design to reality (call order, whether victim depends on murderer, and the
     // actual range/meaning of Acquaintance.like) before writing the override.
-    [BepInPlugin(Guid, "SOD Motives", "1.3.2")]
+    [BepInPlugin(Guid, "SOD Motives", "1.3.3")]
     public class MotivesPlugin : BasePlugin
     {
         public const string Guid = "com.benhirsh.sodmotives";

@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.3.4
+Renamed the Troubleshooting setting "UnstickStalledMurders" to "MotiveCaseWatchdog", with a clearer description of what it does. It stays on by default and the mod plays exactly the same; if you had changed the old setting it resets to on.
+
 ## 1.3.3
 Fix: fully quitting and reloading a save could stop murders from happening, an in-progress case would show as active but never play out. Reloaded cases now continue correctly.
 

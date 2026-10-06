@@ -133,8 +133,8 @@ namespace SODMotives
                 v => TalkToPartner.Enable = v);
 
             // --- Troubleshooting: you shouldn't normally need these — fixes, test aids, and inverted toggles. ---
-            BindApply("Troubleshooting", "UnstickStalledMurders", true,
-                "Recover a mod motive-murder that soft-locks in the 'executing' state (killer never lands a lethal blow). ONLY acts on our overridden cases, and ONLY when the killer is co-located with the victim; touches no vanilla murder.",
+            BindApply("Troubleshooting", "MotiveCaseWatchdog", true,
+                "Supervises the mod's own motive cases: recovers one whose killer or victim gets destroyed so the game can't jam, force-finishes a case stuck in 'executing' with the killer present (see StallGameHours), and manages motivated sniper setup. Leave this ON. Turn it OFF only for troubleshooting, to check whether a stuck or misbehaving case is caused by this supervision. Off disables all of the above and only ever affects the mod's own cases, never vanilla. (Renamed from UnstickStalledMurders; an old setting of that name is ignored and this defaults back to on.)",
                 v => MurderWatchdog.Enable = v);
             BindApply("Troubleshooting", "StallGameHours", 24f,
                 "In-game hours a mod murder may sit stalled in 'executing' before the watchdog force-finishes it (only if killer is present and no damage is landing).",

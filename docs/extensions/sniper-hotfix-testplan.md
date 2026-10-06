@@ -13,7 +13,7 @@ The DLL is already built + deployed to `BepInEx/plugins/SODMotives`. If you rebu
 ## Config to set before testing
 In `BepInEx/config/com.benhirsh.sodmotives.cfg` (BindApply keeps an existing value, so verify, don't assume):
 - `[Motive Mix] MotivatedSniperShare = 1`  (every sniper motivated - the shipped default)
-- `[Troubleshooting] UnstickStalledMurders = true`  (gates the whole watchdog incl. the recovery - must be on)
+- `[Troubleshooting] MotiveCaseWatchdog = true`  (renamed from UnstickStalledMurders; gates the whole motive-case watchdog incl. the recovery - must be on)
 - `[Debug] EnableDebugKeys = true`  (turns on the `[sniper*]` / `[recover]` logging and the F-keys)
 - Sandbox: the **"Sniper cases"** murder type must be enabled.
 

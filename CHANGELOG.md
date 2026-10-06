@@ -1,10 +1,7 @@
 # Changelog
 
-## 1.3.4
-Renamed the Troubleshooting setting "UnstickStalledMurders" to "MotiveCaseWatchdog", with a clearer description of what it does. It stays on by default and the mod plays exactly the same; if you had changed the old setting it resets to on.
-
 ## 1.3.3
-Fix: fully quitting and reloading a save could stop murders from happening, an in-progress case would show as active but never play out. Reloaded cases now continue correctly.
+Fix: fully quitting and reloading a save could stop murders from happening, an in-progress case would show as active but never play out. Reloaded cases now continue correctly. Also renamed the Troubleshooting setting "UnstickStalledMurders" to "MotiveCaseWatchdog" with a clearer description; it stays on by default and gameplay is unchanged.
 
 ## 1.3.2
 Fix: the mod's injected emails and notes (affair love letters, threatening notes, redundancy and eviction letters, and so on) could turn up blank, showing the sender but no body, after you fully quit the game and loaded a save again. The mod was failing to find its saved data on a cold restart, so it could not rebuild those letters. They now survive a full restart and display correctly. Note: saves that were already affected before this fix may keep some blank entries from before; newly created and still-intact letters are restored.

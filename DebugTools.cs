@@ -696,6 +696,13 @@ namespace SODMotives
                 try { if (mrd != null) Overlay.Add($"MURDER STATE: {mrd.state}"); } catch { }
 
                 Overlay.Add($"KILLER: {MotivesPlugin.Name(killer)}  @ {HomeName(killer)}");
+                // DEBUG READOUT for the "foreshadow letter" check. The vanilla clue block e53764ff
+                // ("...some |killer.nextmurder.killer.gender| coming around late at night...") renders the
+                // CURRENT proc-gen murder's killer gender, live (it's a token, not baked text). Surface it so
+                // you can watch it flip as cases cycle (F4) without hunting the physical letter: read the letter,
+                // press F4, re-check here. If this tracks the killer as cases change even with the Motive Mix
+                // shares at 0, the letter is pure vanilla, not our pairing.
+                try { if (killer != null) Overlay.Add($"  foreshadow letter reads: \"some {killer.gender}\"  (live = this murder's killer gender)"); } catch { }
                 Overlay.Add($"VICTIM: {MotivesPlugin.Name(victim)}  @ {HomeName(victim)}");
                 Overlay.Add($"SCENE : {scene}");
                 // Meeting location (kidnap): the public spot the killer lures the victim to before the abduction.

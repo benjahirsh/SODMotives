@@ -128,7 +128,7 @@ namespace SODMotives
                 go.hideFlags = HideFlags.HideAndDontSave;
                 go.AddComponent<DebugHotkey>();
                 if (EnableDebugKeys)
-                    MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys ON (defaults; rebindable in the config menu -> SOD Motives / Debug Keys): F2=victim-distribution sampler (boss/landlord/other %), F3=FORCE a motivated SNIPER case now, F4=trigger the next case now (vanilla's natural type: usually a murder), F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=TEST ACCESS (ghost + always-answer together), F8=teleport to nearest KILLER-knower, F9=case solution overlay, F10=teleport to scene, F11=to kidnap MEETING location, F12=to VICTIM's home, Home=teleport to City Hall, End=toggle fast-forward (simulation speed). (F1 reserved by the game; F2 + F5 unbound.)");
+                    MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys ON (defaults; rebindable in the config menu -> SOD Motives / Debug Keys): F2=victim-distribution sampler (boss/landlord/other %), F3=FORCE a motivated SNIPER case now, F4=fast-forward to the game's next NATURAL case (auto-stops when it rolls; F4 again cancels), F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=TEST ACCESS (ghost + always-answer together), F8=teleport to nearest KILLER-knower, F9=case solution overlay, F10=teleport to scene, F11=to kidnap MEETING location, F12=to VICTIM's home, Home=teleport to City Hall, End=toggle fast-forward (simulation speed). (F1 reserved by the game; F2 + F5 unbound.)");
                 else
                     MotivesPlugin.Log.LogInfo($"[SODMotives] Debug tooling OFF. {KeyCaseSolution} = case-solution overlay is always available (set it to None in [Debug Keys] to disable); enable [Debug] EnableDebugKeys in the config overlay for the full test loop (force event, teleports, ghost, etc.).");
             }
@@ -211,45 +211,74 @@ namespace SODMotives
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] ghost: echelon access {(on ? "grant" : "revoke")} error: {e.Message}"); }
         }
 
-        // F4: create the next case NOW (fast test loop), letting VANILLA choose the case type — unlike F3,
-        // which forces a sniper. We run the scheduler's own pick (PickNewMurderer -> PickNewVictim, which set
-        // currentMurderer/murderPreset/chosenMO/currentVictim/currentVictimSite) and then create exactly what it
-        // chose via ExecuteNewMurder. So the type is whatever vanilla would roll next (overwhelmingly a regular
-        // murder; occasionally a kidnap/sniper), and our ExecuteNewMurder override then applies motivation per
-        // the mixer sliders, exactly like a naturally-scheduled case.
-        // WHY NOT the game's own trigger: MurderController.TriggerNextMurder() is a dev inspector [Button] that
-        // only zeroes a scheduler timer and Completes an objective — it never calls ExecuteNewMurder, so it never
-        // actually produced a case (decoded in docs/extensions/sniper-recon.md). The scheduler otherwise runs
-        // this same pick on its own game-days-out timing, which a key press can't shortcut. If the pick comes
-        // back incomplete (e.g. no eligible pair yet), fall back to forcing an ordinary murder so F4 still fires.
-        internal static void TriggerMurder()
+        // F4: FAST-FORWARD to the game's next NATURAL case instead of force-spawning one. The old behaviour
+        // called ExecuteNewMurder directly, which skipped the normal schedule/discover flow, so no proper case
+        // was created and rapid presses just piled up killers with no case each. Now F4 accelerates the game's
+        // OWN murder loop: proc-gen loop on, pauseBetweenMurders held at 0, fast-forward on, then it lets the
+        // game roll and create the next case through its normal path and AUTO-STOPS the moment a new murder
+        // becomes current. Press F4 again to cancel; it also self-cancels after a safety cap. (If a current
+        // murder is stuck in 'executing' because its scene is not streamed, the next roll can be delayed -- that
+        // is the vanilla streaming behaviour, not this.)
+        internal static bool AdvancingToNextCase;
+        private static int _ffBaselineMid = -999;
+        private static float _ffStartReal;
+        private static bool _ffTurnedBoostOn;
+        private static bool _ffTurnedCadenceOn;
+        private const float AdvanceToNextCaseCapSeconds = 120f;   // safety: auto-cancel if nothing rolls in this much REAL time
+
+        internal static void AdvanceToNextCase()
         {
             var log = MotivesPlugin.Log;
             try
             {
+                if (AdvancingToNextCase) { StopAdvanceToNextCase("cancelled (F4 pressed again)"); return; }
                 var mc = MurderController.Instance;
                 if (mc == null) { log.LogInfo("[SODMotives][F4] no MurderController."); return; }
-                // Run vanilla's own next-case pick, in the scheduler's order (murderer first, then victim).
-                try { mc.PickNewMurderer(); } catch (Exception e) { log.LogWarning($"[SODMotives][F4] PickNewMurderer: {e.Message}"); }
-                try { mc.PickNewVictim(); } catch (Exception e) { log.LogWarning($"[SODMotives][F4] PickNewVictim: {e.Message}"); }
-                Human killer = null, victim = null; MurderPreset preset = null; MurderMO mo = null; NewGameLocation site = null;
-                try { killer = mc.currentMurderer; } catch { }
-                try { victim = mc.currentVictim; } catch { }
-                try { preset = mc.murderPreset; } catch { }
-                try { mo = mc.chosenMO; } catch { }
-                try { site = mc.currentVictimSite; } catch { }
-                if (killer != null && victim != null && preset != null && mo != null)
-                {
-                    log.LogInfo($"[SODMotives][F4] vanilla picked {preset.caseType} '{preset.name}' (mo={mo.name}): {MotivesPlugin.Name(killer)} -> {MotivesPlugin.Name(victim)}; creating it now. Our override then motivates it per the mixer sliders.");
-                    mc.ExecuteNewMurder(killer, victim, preset, mo, site);
-                }
-                else
-                {
-                    log.LogWarning($"[SODMotives][F4] vanilla pick incomplete (killer={(killer != null)}, victim={(victim != null)}, preset={(preset != null)}, mo={(mo != null)}) — falling back to forcing an ordinary murder.");
-                    ForceCase(MurderPreset.CaseType.murder, "F4");
-                }
+                int mid = -1; try { var cm = mc.GetCurrentMurder(); if (cm != null) mid = cm.murderID; } catch { }
+                try { mc.SetProcGenKillerLoop(true); } catch { }   // make sure the game is actively scheduling
+                try { mc.SetUpdateEnabled(true); } catch { }
+                _ffTurnedCadenceOn = !FastMurderCadence; if (!FastMurderCadence) FastMurderCadence = true;   // ApplyFastCadence zeroes pauseBetweenMurders each frame
+                _ffTurnedBoostOn = !_timeBoost; if (!_timeBoost) ToggleTimeBoost();                          // fast-forward ON (no-op if already on)
+                _ffBaselineMid = mid;
+                _ffStartReal = Time.realtimeSinceStartup;
+                AdvancingToNextCase = true;
+                log.LogInfo("[SODMotives][F4] fast-forwarding to the game's NEXT natural case (proc-gen loop on, no pause between murders, sim sped up). The game creates the case through its normal flow (not a forced spawn); auto-stops when the next murder rolls. Press F4 again to cancel.");
             }
-            catch (Exception e) { log.LogWarning($"[SODMotives][F4] trigger error: {e.Message}"); }
+            catch (Exception e) { log.LogWarning($"[SODMotives][F4] advance error: {e.Message}"); }
+        }
+
+        // Called every frame from the runner while AdvancingToNextCase: stop as soon as a NEW murder becomes
+        // current (a fresh case rolled), or after the safety cap if nothing rolls (e.g. a current murder stuck
+        // in 'executing' until its scene streams). No-op when not advancing.
+        internal static void ApplyAdvanceToNextCase()
+        {
+            if (!AdvancingToNextCase) return;
+            try
+            {
+                var mc = MurderController.Instance;
+                if (mc == null) return;
+                int mid = -1; MurderController.Murder cm = null;
+                try { cm = mc.GetCurrentMurder(); if (cm != null) mid = cm.murderID; } catch { }
+                if (mid >= 0 && mid != _ffBaselineMid)
+                {
+                    string who = "?"; try { who = $"{MotivesPlugin.Name(cm.murderer)} -> {MotivesPlugin.Name(cm.victim)}"; } catch { }
+                    StopAdvanceToNextCase($"next case rolled (id {mid}): {who}");
+                    return;
+                }
+                if (Time.realtimeSinceStartup - _ffStartReal > AdvanceToNextCaseCapSeconds)
+                    StopAdvanceToNextCase($"timed out after {AdvanceToNextCaseCapSeconds:0}s real with no new murder (a current murder may be stuck in 'executing' until its scene streams)");
+            }
+            catch { }
+        }
+
+        private static void StopAdvanceToNextCase(string reason)
+        {
+            AdvancingToNextCase = false;
+            if (_ffTurnedCadenceOn) FastMurderCadence = false;   // ApplyFastCadence restores pauseBetweenMurders
+            _ffTurnedCadenceOn = false;
+            try { if (_ffTurnedBoostOn && _timeBoost) ToggleTimeBoost(); } catch { }   // fast-forward OFF (only if we turned it on)
+            _ffTurnedBoostOn = false;
+            MotivesPlugin.Log.LogInfo($"[SODMotives][F4] advance stopped: {reason}. Fast-forward + cadence restored.");
         }
 
         // How many dry-run picks the F2 victim-distribution sampler runs per press (config-bound).
@@ -1026,7 +1055,7 @@ namespace SODMotives
                 if (DebugTools.EnableDebugKeys)
                 {
                     if (Input.GetKeyDown(DebugTools.KeyCycleForce)) DebugTools.CycleForceMotive();
-                    if (Input.GetKeyDown(DebugTools.KeyTriggerMurder)) DebugTools.TriggerMurder();
+                    if (Input.GetKeyDown(DebugTools.KeyTriggerMurder)) DebugTools.AdvanceToNextCase();
                     if (Input.GetKeyDown(DebugTools.KeyForceSniper)) DebugTools.ForceSniperCase();
                     if (Input.GetKeyDown(DebugTools.KeyVictimSampler)) DebugTools.SampleVictimDistribution();
                     if (Input.GetKeyDown(DebugTools.KeyTeleportCityHall)) DebugTools.TeleportToCityHall();
@@ -1058,6 +1087,8 @@ namespace SODMotives
                 // murder cadence low while on, restore on off. Self-gates on FastMurderCadence.
                 DebugTools.ApplyFastCadence();
 
+                // F4 "advance to next natural case": watch for the next murder to roll, then stop fast-forward.
+                DebugTools.ApplyAdvanceToNextCase();
 
                 // Testing fast-forward: re-assert Time.timeScale multiplier while ON (never overrides a pause).
                 DebugTools.ApplyTimeBoost();

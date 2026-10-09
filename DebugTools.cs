@@ -697,12 +697,19 @@ namespace SODMotives
 
                 Overlay.Add($"KILLER: {MotivesPlugin.Name(killer)}  @ {HomeName(killer)}");
                 // DEBUG READOUT for the "foreshadow letter" check. The vanilla clue block e53764ff
-                // ("...some |killer.nextmurder.killer.gender| coming around late at night...") renders the
-                // CURRENT proc-gen murder's killer gender, live (it's a token, not baked text). Surface it so
-                // you can watch it flip as cases cycle (F4) without hunting the physical letter: read the letter,
-                // press F4, re-check here. If this tracks the killer as cases change even with the Motive Mix
-                // shares at 0, the letter is pure vanilla, not our pairing.
-                try { if (killer != null) Overlay.Add($"  foreshadow letter reads: \"some {killer.gender}\"  (live = this murder's killer gender)"); } catch { }
+                // ("...some |killer.nextmurder.killer.gender| coming around late at night...") resolves the
+                // "nextmurder" part through the game's OWN static Strings.GetNextMurder(time) -- the city's NEXT
+                // upcoming murder -- then reads THAT murder's killer gender, live. So it is a vanilla foreshadow
+                // of the next killer, not our code. We read it via the same Strings.GetNextMurder call so this
+                // line matches what those clues render (NOT the current murder's killer).
+                try
+                {
+                    float _t = 0f; try { var _sd = SessionData.Instance; if (_sd != null) _t = _sd.gameTime; } catch { }
+                    var _nm = Strings.GetNextMurder(_t);
+                    Human _nk = _nm != null ? _nm.murderer : null;
+                    Overlay.Add($"  foreshadow letter reads: \"some {(_nk != null ? _nk.gender.ToString() : "?")}\"  (vanilla Strings.GetNextMurder -> next murder's killer)");
+                }
+                catch { }
                 Overlay.Add($"VICTIM: {MotivesPlugin.Name(victim)}  @ {HomeName(victim)}");
                 Overlay.Add($"SCENE : {scene}");
                 // Meeting location (kidnap): the public spot the killer lures the victim to before the abduction.

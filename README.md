@@ -12,10 +12,10 @@ I'm keeping this vague on purpose so as not to spoil the experience. The rest of
 
 Some things to know before starting:
 
-- **Asking "Do you know this person?" now tells you more.** On top of the usual reply, an NPC will also share what they know about that person's involvement in events around town. This is your main tool for building a suspect list, and it is easy to miss, so lean on it.
-- **You can ask to speak to someone's partner.** When talking to a resident at their home, a "Can I talk to your partner?" option sends them to fetch their partner so you can question them too.
-- **By default every murder, kidnapping, and sniper case is a motive case.** You can configure this in the overlay (`` ` `` key) to mix motive cases in with the classic vanilla ones; under Motive Mix, separate sliders set the share for murders, kidnappings, and snipers.
-- **"Procedural Murders" in the Gameplay settings must be turned ON (default)** for the mod to generate motives, with "Regular Murders" enabled for murder cases, the "Kidnapping" case type enabled for motivated kidnappings, and the "Sniper cases" type enabled for motivated snipers.
+- **"Do you know this person?"** In addition to the usual reply, an NPC will also share what they know about that person's involvement in events. This is your main tool for building a suspect list.
+- **"Can I talk to your partner?"** This dialog option appears when speaking to an NPC at home, which sends them to fetch their partner so you can question them too.
+- **By default every murder, kidnapping, and sniper case is a motive case.** Change this in the settings overlay (opened with the backquote key, `` ` `` above Tab) to mix motive murders with the vanilla cases.
+- **"Procedural Murders" in the Gameplay settings must be switched ON (default)** with "Regular Murders" enabled for murder cases, the "Kidnappings" enabled for motivated kidnappings, and "Sniper cases" enabled for motivated snipers.
 
 ## Requirements
 
@@ -28,17 +28,17 @@ This mod has not been tested alongside other mods yet. It should coexist with mo
 
 ## Installation
 
-Easiest is a mod manager (r2modman or the Thunderstore Mod Manager): install the mod and launch through the manager. Manual install works too: put the plugin in `BepInEx/plugins`.
+Mod manager (r2modman or the Thunderstore Mod Manager): install the mod and launch through the manager. Get it here: [Better Leads and Motives on Thunderstore](https://thunderstore.io/c/shadows-of-doubt/p/opi/Better_Leads_and_Motives/). Manual install works too: put the plugin in `BepInEx/plugins`.
 
-**Works with existing saves, no need to start a new game.**
+**Works with existing saves.**
 
-That is everything you need to play. If you want to discover the rest yourself, stop reading here.
+STOP HERE - that is everything you need to play.
 
 ---
 
 ## Mild spoilers: what changes
 
-Normally a murder in the city is an anonymous killing by a roaming serial killer. With this mod the game instead chooses a victim who has real, human reasons for someone to want them gone, and a killer who is one of those someones. Everyone else with a reason is a genuine suspect, not a fabricated one, so the culprit never stands out as obviously guilty. The game's normal forensic evidence (fingerprints, cameras, alibis) still decides the case, and the motive layer sits above the physical evidence, so you can now know why a murder happened and use that as a lead toward solving it.
+Vanilla murders are anonymous killings by a roaming serial killer. This mod instead chooses an NPC killer and victim with real reasons behind why the murder would occur. Every case has a list of genuine suspects (not fabricated ones) so the killer is never obvious. The game's normal forensic evidence (fingerprints, cameras, footprints) still decides the case, and the motive layer sits above the physical evidence, so you can know why a murder happened and use that as a lead toward solving it.
 
 ---
 
@@ -48,15 +48,13 @@ Traces left behind by the motivated murder:
 
 - **Physical clues.** Bespoke notes and documents turn up among the victim's things, written in a real person's hand and carrying links you can pin to your case board.
 - **Emails.** Emails are now useful leads too.
-- **Questioning people.** As noted above, the "Do you know this person?" option now surfaces gossip about that person's involvement in events, so you build your suspect pool by asking around.
-
-The mod deliberately does not hand you the answer.
+- **Questioning people.** The "Do you know this person?" option now relays gossip about that person's involvement in events, allowing you to better solve the case by talking to NPCs.
 
 ---
 
 ## Full spoilers: the mechanics
 
-Motives come from simulated social events, not the static "like" value, and each is traceable:
+Motives come from simulated social events:
 
 | Family | Events | Who is involved |
 |---|---|---|
@@ -66,17 +64,17 @@ Motives come from simulated social events, not the static "like" value, and each
 | Feud | personal bad blood | the two feuding parties |
 | Debt | unpaid debts | creditor and debtor |
 
-Feuds and debts are seeded at the start of a new game from genuinely soured relationships. Workplace and property cases are built on demand from real company rosters and the residency graph at the moment of the murder.
+Feuds and debts are seeded at the start of a new game. Workplace and property cases are built on demand from company rosters and the residency graph when the murder happens.
 
-**How a case is built.** The mod finds a victim with several real, event-backed enemies, then picks the killer at random from that pool, so every suspect is a real red herring and the killer looks no guiltier than the rest. Serial-killer dressing (calling card, moniker, graffiti) is stripped so the crime reads as personal.
+The mod finds a victim with several event-backed suspects, then picks the killer at random from that pool. Every suspect is a red herring and the killer looks no guiltier than the rest. Vanilla serial-killer dressing (calling card, moniker, graffiti) is stripped so the crime reads as personal.
 
-**The clue layer.** Notes render from in-game document templates and are placed among the victim's things, at home or at their workplace so the location never betrays the motive. They carry the author's handwriting and sometimes their fingerprints. Custom notes contain clickable, board-pinnable links to citizens and addresses.
+Notes are placed at the victim's home or workplace. They carry the author's handwriting and sometimes fingerprints. Notes contain clickable links to citizens and addresses.
 
 ---
 
 ## Configuration
 
-Everything is tunable, live, through the BepInExConfigManager overlay (`` ` `` to open), or by editing the config file:
+Mixing the probability of a motivated murder and other tweaks can be made in the BepInExConfigManager overlay (the backquote key, `` ` ``), or by editing the config file:
 
 - **Motive mixer:** how many murders are motive cases versus left vanilla, and the relative weight of each motive family.
 - **Selection, Workplace, Property, Feud, Clues:** suspect counts, how often each sub-type appears, clue caps, and whether clues favour home, workplace, or email.
@@ -85,7 +83,7 @@ Everything is tunable, live, through the BepInExConfigManager overlay (`` ` `` t
 
 ## Running into problems?
 
-There is a built-in diagnostics view to help me fix issues. Press **F9** to open a panel showing what the mod thinks is going on for the current case: the case type, its current state, the killer and victim, the motive, and which clues were placed. If you hit a bug, open this panel and include what it says (a screenshot is perfect) in your report, and it will help me track the problem down. Note it reveals the answer to the current case, so it doubles as a spoiler. If you would rather never see it, set `CaseSolutionOverlay` to `None` in the config; turning on `ShowSuspectPoolAndKnowers` adds even more detail for a report.
+There is a built-in diagnostics view to help me fix issues. Press **F9** to open a panel showing what the mod thinks is going on for the current case. If you hit a bug, open this panel and include what it says (a screenshot is perfect). To turn it off, set `CaseSolutionOverlay` to `None` in the config; turning on `ShowSuspectPoolAndKnowers` adds more detail for a report.
 
 **Please leave a comment on the [Steam guide](https://steamcommunity.com/sharedfiles/filedetails/?id=3804929108).** Feedback and bug reports are very welcome.
 

@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.3.5
+Readme update.
+
 ## 1.3.4
 Fix: each motivated murder now opens its own case instead of unrelated murders folding into one shared case/overwriting each other. Motivated and vanilla cases also no longer get merged together. Injected notes now just read "Note" instead of "Threatening Note" to match vanilla clues.
 

@@ -511,7 +511,10 @@ namespace SODMotives
         // "elsewhere", not "victim home").
         private static int InjectAnonThreatNote(Human noteOwner, Human writer, Human murderVictim, string treeId, int linkedBody, string kind, List<string> recList)
         {
-            const string label = "Threatening Note";
+            // Vanilla titles every note (incl. its own murder notes: murder_noteonboard / murder_notetoself /
+            // murder_notefromsupervisor) simply "Note" in evidence.names.csv, so we match that EXACTLY -- a
+            // "Threatening Note" title stood out as non-vanilla and gave away the mod. Blends in as an ordinary note.
+            const string label = "Note";
 
             // A note the VICTIM received can sit at their home OR their workplace (like the other clues).
             // A note the SUSPECT received (the debt reversal, where the debtor is the killer) stays in

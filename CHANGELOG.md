@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.4
+Fix: each motivated murder now opens its own case instead of unrelated murders folding into one shared case/overwriting each other. Motivated and vanilla cases also no longer get merged together. Injected notes now just read "Note" instead of "Threatening Note" to match vanilla clues.
+
+Known issue: kidnapping cases may not resolve, after the ransom deadline the kidnapper fails to return to kill the victim, leaving the case stuck. Seems to be an issue with vanilla, sniper/regular murders are unaffected.
+
 ## 1.3.3
 Fix: fully quitting and reloading a save could stop murders from happening, an in-progress case would show as active but never play out. Reloaded cases now continue correctly. Also renamed the Troubleshooting setting "UnstickStalledMurders" to "MotiveCaseWatchdog" with a clearer description; it stays on by default and gameplay is unchanged.
 

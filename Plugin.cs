@@ -43,6 +43,9 @@ namespace SODMotives
             BindApply("Motive Mix", "MotiveCaseShare", 1.0f,
                 "MAIN KNOB: fraction (0..1) of murders that are relationship-MOTIVE cases; the rest are left as vanilla serial-killer cases. Default 1 = every case is a motive case (so the mod always shows). Lower it to mix in some classic untraceable serial-killer hunts (with their signatures) for variety; 0 = all vanilla. Applies to the next case.",
                 v => MurderSelector.MotiveCaseShare = v, R01(), Order(100));
+            BindApply("Motive Mix", "SeparateCasePerKiller", true,
+                "Open a FRESH case for each motivated murder instead of letting the game bundle them all into its single ongoing serial-killer 'Murder Case'. Vanilla reuses one murder case for every proc-gen victim (one serial killer, one case); the mod's murders each have a DIFFERENT killer, so without this the game folds them into one case and overwrites its resolve questions to the newest victim whenever a body is found (what looks like the case 'switching' to an unrelated killer). On (default) = every motivated murder is its own case, like the first murder of a fresh game. Only affects the mod's own cases; any mixed-in vanilla serial murders still bundle. Applies at the next victim discovery.",
+                v => MurderSelector.SeparateCasePerKiller = v, null, Order(99));
             BindApply("Motive Mix", "MotivatedKidnapShare", 1f,
                 "KIDNAP analogue of MotiveCaseShare: fraction (0..1) of KIDNAP cases that get a motivated killer->victim pair (a walk-native abduction to a real holding den — the victim walks there and is restrained, leaving a real trail); the rest run vanilla. Default 1 = every kidnap is motivated; 0 = kidnaps stay vanilla. Requires the sandbox 'Kidnapping' case type ON. Sniper cases have their own slider (MotivatedSniperShare). Applies to the next kidnap.",
                 v => MurderSelector.MotivatedKidnapShare = v, R01(), Order(95));
@@ -185,7 +188,7 @@ namespace SODMotives
             BindApply("Debug Keys", "TeleportToScene", UnityEngine.KeyCode.F10,
                 "Teleport to the current crime scene.",
                 v => DebugTools.KeyTeleportScene = v);
-            BindApply("Debug Keys", "TeleportToVictim", UnityEngine.KeyCode.F12,
+            BindApply("Debug Keys", "TeleportToVictim", UnityEngine.KeyCode.F11,
                 "Teleport to the VICTIM's CURRENT position (where they are right now) so you can tail them during a case.",
                 v => DebugTools.KeyTeleportVictim = v);
 
@@ -521,6 +524,15 @@ namespace SODMotives
         {
             Human m = __instance.currentMurderer;
             MotivesPlugin.Log.LogInfo($"[SODMotives] --- PickNewMurderer() -> murderer = {MotivesPlugin.Name(m)}");
+            // The game picks a fresh serial killer when the previous one is CAUGHT (the vanilla case was solved) or at
+            // game start. Either way the vanilla serial-killer episode is over, so clear the serialization lock and let
+            // motive cases resume. (We never drive PickNewMurderer ourselves -- our overrides set currentMurderer
+            // directly -- so this only fires on a genuine game serial-killer change.)
+            if (DebugTools.VanillaSerialActive)
+            {
+                DebugTools.VanillaSerialActive = false;
+                MotivesPlugin.Log.LogInfo("[SODMotives] serialize: serial killer replaced (PickNewMurderer) — vanilla mode cleared; motive cases may resume.");
+            }
         }
     }
 
@@ -545,6 +557,7 @@ namespace SODMotives
     {
         static void Prefix(MurderController __instance, ref Human newMurderer, ref Human newVictim, MurderPreset preset, ref MurderMO motive, ref NewGameLocation victimSite)
         {
+            _restoreSerialKiller = false;   // reset per call; set true only when we actually commit an override below
             if (!MurderSelector.EnableOverride) return;
             // Only touch ordinary generated (proc-gen sandbox) MURDERS. Special case
             // types (kidnap, sniper) and cover-ups/story are left entirely to the game
@@ -556,29 +569,47 @@ namespace SODMotives
                     MotivesPlugin.Log.LogInfo("[SODMotives] override: not a proc-gen sandbox murder; leaving vanilla case untouched.");
                     return;
                 }
+                // ===== A vanilla serial-killer episode locks SUBSEQUENT murders to that killer =====
+                // Once the game's own serial killer is at large (a vanilla murder case is open) we leave EVERY new
+                // murder vanilla, so the base game bundles them into its one ongoing case WITH its own per-crime-scene
+                // objectives -- we never steer the bundling. A vanilla episode MAY start while our motive cases are
+                // open; those stay open and solvable, we just don't start a NEW motive case during the episode. The
+                // share chooses the mode when no vanilla episode is running. The lock clears when the serial killer is
+                // caught -- the game then runs PickNewMurderer (Patch_PickNewMurderer clears the flag).
+                bool vanillaMode = DebugTools.VanillaSerialActive;
+
                 if (preset != null && preset.caseType != MurderPreset.CaseType.murder)
                 {
-                    // Special case types: motivate KIDNAP with probability [Motive Mix] MotivatedKidnapShare and
-                    // SNIPER with [Motive Mix] MotivatedSniperShare (both mixer sliders); otherwise leave vanilla.
-                    // A motivated kidnap runs the walk-native abduction (den picked below). A motivated SNIPER mimics
-                    // vanilla: the MO is chosen by a killer-home LOS test (voyeur else ExCop) and the watchdog seeds a
-                    // shot site via the game's own picker, then defers the nest, the shot AND the game's own force-kill
-                    // fallback to the game. Both sliders default to 1 (every special case motivated on a fresh install).
-                    bool allowKidnap = preset.caseType == MurderPreset.CaseType.kidnap && MurderSelector.ShouldMotivateKidnap();
-                    bool allowSniper = preset.caseType == MurderPreset.CaseType.sniper && MurderSelector.ShouldMotivateSniper();
+                    // Special case types (kidnap/sniper): motivate per their own shares -- but NOT during vanilla mode
+                    // (keep the serial-killer episode entirely vanilla). A motivated kidnap/sniper is itself a mod case.
+                    bool allowKidnap = !vanillaMode && preset.caseType == MurderPreset.CaseType.kidnap && MurderSelector.ShouldMotivateKidnap();
+                    bool allowSniper = !vanillaMode && preset.caseType == MurderPreset.CaseType.sniper && MurderSelector.ShouldMotivateSniper();
                     if (!allowKidnap && !allowSniper)
                     {
-                        MotivesPlugin.Log.LogInfo($"[SODMotives] override: special case type '{preset.caseType}' left vanilla, untouched (kidnap share {MurderSelector.MotivatedKidnapShare:0.##}, sniper share {MurderSelector.MotivatedSniperShare:0.##}).");
+                        MotivesPlugin.Log.LogInfo(vanillaMode
+                            ? $"[SODMotives] override: special case type '{preset.caseType}' left vanilla (serialized: vanilla serial killer at large until solved)."
+                            : $"[SODMotives] override: special case type '{preset.caseType}' left vanilla, untouched (kidnap share {MurderSelector.MotivatedKidnapShare:0.##}, sniper share {MurderSelector.MotivatedSniperShare:0.##}).");
                         return;
                     }
                     MotivesPlugin.Log.LogInfo(allowSniper
                         ? "[SODMotives] override: motivating a SNIPER case (mimic-vanilla: voyeur/ExCop MO by LOS, watchdog seeds the site, shot + force-kill deferred to the game)."
                         : "[SODMotives] override: motivating a KIDNAP case (walk-native abduction to a real den).");
                 }
-                if (MurderSelector.ShouldForceVanilla())
+                else
                 {
-                    MotivesPlugin.Log.LogInfo("[SODMotives] override: forced VANILLA case (every-N cadence) — leaving it untouched, signature and all.");
-                    return;
+                    // Regular murder: a vanilla episode (vanillaMode) keeps every subsequent murder vanilla until the
+                    // killer is caught; otherwise the share decides. A vanilla episode may BEGIN while motive cases are
+                    // open (they keep coexisting + stay solvable); we simply never start a NEW motive case during it,
+                    // so the serial killer's murders all bundle into one case. We do NOT force motivated otherwise.
+                    bool goVanilla = vanillaMode ? true : MurderSelector.ShouldForceVanilla();
+                    if (goVanilla)
+                    {
+                        DebugTools.VanillaSerialActive = true;   // vanilla serial killer at large until caught
+                        MotivesPlugin.Log.LogInfo(vanillaMode
+                            ? "[SODMotives] override: leaving this murder VANILLA (serialized: same serial killer still at large — bundled with the game's own crime-scene objectives)."
+                            : "[SODMotives] override: leaving this murder VANILLA (share chose vanilla) — starting a vanilla serial-killer episode; its later murders stay vanilla until it is solved.");
+                        return;
+                    }
                 }
             }
             catch { }
@@ -597,7 +628,18 @@ namespace SODMotives
                 System.Func<Human, Human, bool> preferKiller = isSniper
                     ? (System.Func<Human, Human, bool>)((k, vv) => MurderWatchdog.SniperVoyeurViable(k, vv))
                     : null;
-                if (MurderSelector.TryPickVictimCentric(out m, out v, out var suspectPool, preferKiller))
+                // Reserve every NPC already committed to an OPEN case so a new motive case can't reuse them. This
+                // covers (a) the game's own serial killer (currentMurderer) -- kept alive + distinct for vanilla
+                // murders; and (b) the killer AND victim of every unsolved murder, mod or vanilla -- both are "spoken
+                // for" (the killer is busy until caught, the victim is being/has been killed, both removed from the
+                // sandbox). Without this the motive engine could pick the serial killer as a victim (we murdered them
+                // -> dead killer -> the next vanilla case stalled at acquire-equipment), target an in-flight vanilla
+                // victim, or reuse another open case's killer (breaking it). Only when the split is on (the game's
+                // one-case-at-a-time model has no concurrency to protect).
+                HashSet<int> reserved = null;
+                if (MurderSelector.SeparateCasePerKiller)
+                    reserved = BuildReservedParticipants(__instance);
+                if (MurderSelector.TryPickVictimCentric(out m, out v, out var suspectPool, preferKiller, reserved))
                 {
                     if (isSniper)
                     {
@@ -613,6 +655,23 @@ namespace SODMotives
                         if (DebugTools.EnableDebugKeys)
                             MotivesPlugin.Log.LogInfo($"[SODMotives][sniper] voyeur-viable suspects in the victim's pool: {MurderSelector.LastPreferViableCount}/{MurderSelector.LastPoolScanned} (voyeur preferred at selection).");
                         MotivesPlugin.Log.LogInfo($"[SODMotives] override: SNIPER -- motivated pair {MotivesPlugin.Name(m)} -> {MotivesPlugin.Name(v)}; MO {(chosen != null ? chosen.name : "left to the game")} ({(voyeur ? "voyeur: killer home overlooks victim" : "street/rooftop")}); site/shot deferred to the game (watchdog seeds the site).");
+                    }
+
+                    // Preserve the game's OWN serial killer for any following VANILLA murder (see the fields below):
+                    // capture currentMurderer BEFORE we overwrite it, then restore it in the postfix once this mod
+                    // murder is built. Done for REGULAR and SNIPER mod murders, but NOT kidnaps. A regular murder is
+                    // instant, and a sniper runs its shot off its OWN Murder object (execution is not load-bearing on
+                    // currentMurderer -- see the field note below), so restoring currentMurderer is safe for both -- and
+                    // it stops a following vanilla murder from REUSING the mod killer, which otherwise gave the mod case
+                    // and the vanilla case the same press-moniker name and bundled them into one case. A KIDNAP is the
+                    // sole exclusion: its kill is a DEFERRED re-cycle and the game pins that kill on whoever
+                    // currentMurderer is at the ransom deadline, so restoring there drives the kill onto the wrong
+                    // person and hangs the held victim. Kidnap-vs-vanilla name overlap stays outstanding until the
+                    // base-game kidnap flow is fixed (kidnaps already do not complete on the current build).
+                    bool isKidnap = preset != null && preset.caseType == MurderPreset.CaseType.kidnap;
+                    if (MurderSelector.SeparateCasePerKiller && !isKidnap)
+                    {
+                        try { _serialKillerToRestore = __instance.currentMurderer; _restoreSerialKiller = true; } catch { _restoreSerialKiller = false; }
                     }
 
                     // Commit the override FIRST so a hiccup in the logging block below can't leave
@@ -669,6 +728,605 @@ namespace SODMotives
                 }
             }
             catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] override error (leaving vanilla pick): {e}"); }
+        }
+
+        // ===== Preserve the game's own serial killer across our overrides =====
+        // Vanilla keeps ONE persistent serial killer in currentMurderer and REUSES it for the next murder (it only
+        // re-picks via PickNewMurderer at game start / after the killer is caught). When we override a murder we set
+        // currentMurderer to OUR motivated killer -- which the game then reuses for any following VANILLA murder, so
+        // the vanilla murder inherits a mod killer. With the per-killer split that put a mod case and a vanilla case
+        // on the SAME killer: identical case name (the press moniker is stored on the shared killer) and solving one
+        // "caught" that killer and cleaned the other case's bodies + objectives (OnCaseSolved cleans the solved
+        // case's killer's murders). We restore the game's serial killer once the mod murder is built, so the mod
+        // murder keeps our killer on its own Murder object while vanilla murders keep using the game's serial killer.
+        // Safe: execution runs off the Murder object (concurrent murders already prove currentMurderer is not
+        // load-bearing for a murder in progress), and GetCurrentMurder keys on currentVictim (which we leave alone).
+        private static Human _serialKillerToRestore;
+        private static bool _restoreSerialKiller;
+
+        // Collect humanIDs already committed to an OPEN case, so a new motive case never reuses them: the game's
+        // persistent serial killer (currentMurderer), plus the killer AND victim of every unsolved murder (mod or
+        // vanilla). Participants of SOLVED cases are released (killer caught, case done). Cheap: a handful of murders.
+        private static HashSet<int> BuildReservedParticipants(MurderController mc)
+        {
+            var set = new HashSet<int>();
+            try { var sk = mc.currentMurderer; if (sk != null) set.Add(sk.humanID); } catch { }
+            try
+            {
+                foreach (var list in new[] { mc.activeMurders, mc.inactiveMurders })
+                {
+                    if (list == null) continue;
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        MurderController.Murder mm = null; try { mm = list[i]; } catch { }
+                        if (mm == null) continue;
+                        Human mv = null, mk = null;
+                        try { mv = mm.victim; } catch { }
+                        try { mk = mm.murderer; } catch { }
+                        int mvid = -1; try { if (mv != null) mvid = mv.humanID; } catch { }
+                        if (mvid >= 0 && Patch_PreserveCrimeScene.VictimCaseFinished(mvid)) continue;   // finished -> released
+                        if (mvid >= 0) set.Add(mvid);
+                        try { if (mk != null) set.Add(mk.humanID); } catch { }
+                    }
+                }
+            }
+            catch { }
+            return set;
+        }
+
+        static void Postfix(MurderController __instance)
+        {
+            try
+            {
+                // Defensive: only restore a LIVE serial killer. The reservation above keeps it alive, but if it is
+                // somehow dead we must not point currentMurderer at a corpse (that stalls the next vanilla murder at
+                // acquire-equipment). Leaving currentMurderer as the mod killer is the safe fallback (no stall).
+                bool skAlive = false; try { skAlive = _serialKillerToRestore != null && !_serialKillerToRestore.isDead; } catch { skAlive = false; }
+                if (_restoreSerialKiller && __instance != null && skAlive)
+                {
+                    __instance.currentMurderer = _serialKillerToRestore;
+                    MotivesPlugin.Log.LogInfo($"[SODMotives] serial-killer: restored the game's serial killer ({MotivesPlugin.Name(_serialKillerToRestore)}) after a mod override, so following vanilla murders keep their own killer (not the mod one).");
+                }
+                else if (_restoreSerialKiller && !skAlive)
+                {
+                    MotivesPlugin.Log.LogWarning("[SODMotives] serial-killer: captured serial killer is not alive; leaving currentMurderer as the mod killer to avoid stalling a vanilla murder on a dead killer.");
+                }
+            }
+            catch { }
+            finally { _restoreSerialKiller = false; _serialKillerToRestore = null; }
+        }
+    }
+
+    // ===== Per-killer case split =====
+    // Vanilla keeps ONE ongoing "Murder Case" and folds every proc-gen murder into it: at each victim
+    // discovery MurderController.OnVictimDiscovery searches CasePanelController.activeCases for an active
+    // (unsubmitted) murder case and REUSES it instead of opening a new one, then rebuilds THAT case's resolve
+    // questions from the latest murder (GetCurrentMurder). For one serial killer that is coherent; for our
+    // motivated murders -- each a DIFFERENT killer -- it bundles unrelated crimes into a single case and
+    // overwrites the earlier victim's questions (the player-reported "the case switched to an unrelated killer").
+    //
+    // The board (CasePanelController.UpdateCaseControls) makes one tab per case in activeCases with NO caseType
+    // filter, so murder cases CAN coexist as separate tabs just like side-op cases -- vanilla simply never makes
+    // a second one. So we open a fresh murder case OURSELVES, in a prefix, while every existing case is still in
+    // activeCases: CreateNewCase adds it to the list and runs UpdateCaseControls with all cases present, so the
+    // new tab appears alongside the old ones (the previous bug hid the old cases during that rebuild, which
+    // destroyed their tabs). We then AssignActiveCase to the new case so this victim's evidence + resolve
+    // questions attach to it. The original OnVictimDiscovery then runs, finds a matching murder case (ours), takes
+    // its reuse branch and skips its own creation -- leaving currentActiveCase pointing at our fresh case.
+    //
+    // Our (overridden) murders each get their OWN case (the 2nd+; the game's very first murder is left to vanilla).
+    // A vanilla serial-killer episode is kept in its own case too: we open a fresh tracked case for the episode's
+    // FIRST murder so it can't fold into a mod case, and let the game bundle every later murder of that episode in
+    // natively (with its own per-scene objectives). Motivated and vanilla episodes are serialized by the override.
+    [HarmonyPatch(typeof(MurderController), nameof(MurderController.OnVictimDiscovery))]
+    internal static class Patch_OnVictimDiscovery_SeparateCase
+    {
+        static void Prefix(MurderController __instance)
+        {
+            try
+            {
+                if (!MurderSelector.EnableOverride || !MurderSelector.SeparateCasePerKiller) return;
+                MurderController.Murder murder = __instance.GetCurrentMurder();
+                if (murder == null || murder.victim == null) return;
+                int vid = murder.victim.humanID;
+
+                CasePanelController cpc = CasePanelController.Instance;
+                var list = cpc != null ? cpc.activeCases : null;
+                if (cpc == null || list == null) return;
+
+                // Is there already an OPEN (unsubmitted) murder case? The FIRST murder of a game has none, so we
+                // leave it entirely to vanilla (100% vanilla creation + naming + timing), whether it is a mod or a
+                // vanilla murder. Same reuse test the game's own OnVictimDiscovery predicate uses (caseType murder,
+                // status not submitted/closable/archived). The postfix tags that first case as a mod case if ours.
+                bool anyOpenMurderCase = false;
+                for (int i = 0; i < list.Count; i++)
+                {
+                    Case c = null; try { c = list[i]; } catch { }
+                    if (c == null) continue;
+                    try
+                    {
+                        if (c.caseType == Case.CaseType.murder
+                            && c.caseStatus != Case.CaseStatus.submitted
+                            && c.caseStatus != Case.CaseStatus.closable
+                            && c.caseStatus != Case.CaseStatus.archived)
+                        { anyOpenMurderCase = true; break; }
+                    }
+                    catch { }
+                }
+                bool ours = MurderSelector.OverriddenVictimIds.Contains(vid);
+
+                if (!ours)
+                {
+                    // VANILLA serial-killer murder. A vanilla episode may coexist with open mod cases, so steer the
+                    // FIRST murder of the episode into a fresh, TRACKED vanilla case (so it can't reuse/pollute an
+                    // open mod case). Every SUBSEQUENT vanilla murder bundles into that case NATIVELY -- we must NOT
+                    // re-point the active case then, because the game adds each new scene's objective on its own
+                    // reuse path and a manual AssignActiveCase suppresses it (that was the missing-objective bug).
+                    // When the serial killer is caught the case closes; the next episode opens a new tracked case.
+                    if (!AnyOpenVanillaCase(cpc))
+                    {
+                        string vn = "New Murder Case"; try { vn = Strings.Get("ui.interface", "New Murder Case"); } catch { }
+                        Case vfresh = cpc.CreateNewCase(Case.CaseType.murder, Case.CaseStatus.handInNotCollected, true, vn);
+                        if (vfresh != null)
+                        {
+                            __instance.AssignActiveCase(vfresh);
+                            try { DebugTools.VanillaCaseIds.Add(vfresh.id); } catch { }
+                            MotivesPlugin.Log.LogInfo($"[SODMotives] case-split: opened a fresh VANILLA serial-killer case for {MotivesPlugin.Name(murder.victim)} (id={vfresh.id}); its later murders bundle in natively.");
+                        }
+                    }
+                    return;
+                }
+
+                // MOD murder: give it its OWN case. The FIRST murder of the game (no open murder case yet) is left
+                // entirely to vanilla (100% vanilla creation + naming + timing); our split only runs for the 2nd+.
+                if (!anyOpenMurderCase) return;
+                // Skip if this victim already has a case -- CaseToVictim records every discovery, so a reverse match
+                // means this body was already processed (don't make a second case if discovery fires twice).
+                foreach (var kv in DebugTools.CaseToVictim) if (kv.Value == vid) return;
+
+                // Name the new case with the SAME initial string vanilla gives a murder case -- Strings.Get(
+                // "ui.interface","New Murder Case") -- via the same CreateNewCase call, so it is indistinguishable
+                // from a vanilla case on the board and inherits vanilla's own naming + display timing. NEVER a
+                // custom/victim title: that would reveal the murder is a mod case (only the F9 panel should).
+                string caseName = "New Murder Case";
+                try { caseName = Strings.Get("ui.interface", "New Murder Case"); } catch { }
+
+                // Open the new case NOW, with every existing case still in activeCases so the board keeps their tabs
+                // and adds one for this (never remove around CreateNewCase -- that destroys the other tabs). Then
+                // point the controller's active case at it. The game's own body finds this active murder case and
+                // reuse-skips its own creation, leaving currentActiveCase = ours. Tag it as a mod case.
+                Case fresh = cpc.CreateNewCase(Case.CaseType.murder, Case.CaseStatus.handInNotCollected, true, caseName);
+                if (fresh != null)
+                {
+                    __instance.AssignActiveCase(fresh);
+                    try { DebugTools.ModCaseIds.Add(fresh.id); } catch { }
+                    MotivesPlugin.Log.LogInfo($"[SODMotives] case-split: opened a fresh vanilla-named MOD murder case for {MotivesPlugin.Name(murder.victim)} (own board tab).");
+                }
+            }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] case-split prefix error (leaving vanilla bundling): {e.Message}"); }
+        }
+
+        // True if an OPEN vanilla serial-killer case we created for this episode is still on the board. Used to steer
+        // only the FIRST vanilla murder of an episode into a fresh tracked case; later ones bundle in natively.
+        private static bool AnyOpenVanillaCase(CasePanelController cpc)
+        {
+            try
+            {
+                var list = cpc != null ? cpc.activeCases : null;
+                if (list == null) return false;
+                for (int i = 0; i < list.Count; i++)
+                {
+                    Case c = null; try { c = list[i]; } catch { }
+                    if (c == null) continue;
+                    int cid = -1; try { cid = c.id; } catch { }
+                    if (!DebugTools.VanillaCaseIds.Contains(cid)) continue;   // only the vanilla case(s) WE opened
+                    bool isMurder = false; try { isMurder = c.caseType == Case.CaseType.murder; } catch { }
+                    if (!isMurder) continue;
+                    bool open = false; try { var s = c.caseStatus; open = s != Case.CaseStatus.submitted && s != Case.CaseStatus.closable && s != Case.CaseStatus.archived; } catch { }
+                    if (open) return true;
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        // Record which victim this discovery's case ended up being (whether we split it or vanilla created/reused
+        // it), so the F9 overlay can follow the case SELECTED on the board. Runs for every murder, mod or vanilla.
+        // ALSO give each of OUR murders a UNIQUE press MONIKER (MonikerGen): the game names a murder case by the
+        // killer's moniker, but our concurrent murders share the city's one serial-killer moniker, so all cases came
+        // out identically named. MonikerGen generates a distinct one per murder (vanilla generator, style fallback)
+        // and GetMonkier is overridden to return it -- which drives BOTH the board tab (ApplyMonikerToCaseCheck) and
+        // the resolution typewriter, so they match and read distinctly.
+        static void Postfix(MurderController __instance)
+        {
+            try
+            {
+                Case c = __instance.currentActiveCase;
+                if (c == null) return;
+                int cid = -1; try { cid = c.id; } catch { }
+                // NEVER fold a VANILLA bundle case into our bookkeeping. GetCurrentMurder can momentarily point at a
+                // mod victim while the active case is the vanilla one; recording that would (a) paint the vanilla
+                // case with a mod moniker via Patch_UniqueCaseTab ("both called Marble Philatelist"), and (b) make
+                // our solve-cleanup fire on the vanilla case. Vanilla cases stay the base game's, entirely.
+                if (DebugTools.VanillaCaseIds.Contains(cid)) return;
+
+                MurderController.Murder m = __instance.GetCurrentMurder();
+                if (m == null || m.victim == null) return;
+                int vid = m.victim.humanID;
+                // Only OUR motivated victims enter CaseToVictim / ModCaseIds / CaseMonikers. A vanilla victim (not
+                // overridden) is left out so nothing of ours (naming, solve-cleanup, F9) ever attaches to it.
+                if (!MurderSelector.OverriddenVictimIds.Contains(vid)) return;
+
+                DebugTools.CaseToVictim[cid] = vid;
+                try { DebugTools.ModCaseIds.Add(cid); } catch { }
+                if (MurderSelector.EnableOverride && MurderSelector.SeparateCasePerKiller)
+                    MonikerGen.EnsureFor(m);
+            }
+            catch { }
+        }
+    }
+
+    // Mints a UNIQUE press moniker per motivated murder and stores it (victim id -> "Adj Noun"), from curated
+    // vanilla-STYLE word pools. (We deliberately do NOT invoke the game's own Murder.GenerateMoniker here -- calling
+    // that complex method out of its normal setup context hard-crashed the game between cases. These pools read like
+    // the game's monikers and are guaranteed present, unique and stable.) Patch_CaseMoniker returns the stored value
+    // from GetMonkier, which drives BOTH the board tab and the resolution typewriter.
+    internal static class MonikerGen
+    {
+        private static readonly HashSet<string> Used = new HashSet<string>();
+        private static readonly string[] Adjs =
+            { "Rotten", "Velvet", "Midnight", "Crimson", "Silent", "Hollow", "Pale", "Gilded", "Ashen", "Grinning",
+              "Weeping", "Porcelain", "Rusted", "Marble", "Shrouded", "Whispering", "Faceless", "Gentle", "Patient", "Tin" };
+        private static readonly string[] Nouns =
+            { "Magpie", "Lantern", "Harlequin", "Cobbler", "Usher", "Clockmaker", "Philatelist", "Gardener", "Curator",
+              "Milkman", "Organist", "Taxidermist", "Valentine", "Sandman", "Cartographer", "Lamplighter", "Watchmaker",
+              "Undertaker", "Ferryman", "Locksmith" };
+
+        internal static void EnsureFor(MurderController.Murder m)
+        {
+            try
+            {
+                if (m == null || m.victim == null) return;
+                int vid = m.victim.humanID;
+                if (DebugTools.CaseMonikers.ContainsKey(vid)) return;   // already named
+
+                string mon = Fallback(vid);
+                int guard = 0;
+                // Avoid a moniker already in use.
+                while (Used.Contains(mon) && guard < 64) { guard++; mon = Fallback(vid + guard * 7919); }
+                Used.Add(mon);
+                DebugTools.CaseMonikers[vid] = mon;
+                MotivesPlugin.Log.LogInfo($"[SODMotives] case-moniker: '{mon}' for {MotivesPlugin.Name(m.victim)} (drives tab + typewriter).");
+            }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] case-moniker error: {e.Message}"); }
+        }
+
+        private static string Fallback(int k)
+        {
+            if (k < 0) k = -k;
+            return Adjs[k % Adjs.Length] + " " + Nouns[(k / Adjs.Length) % Nouns.Length];
+        }
+    }
+
+    // Override the killer moniker for OUR murders so both the board tab and the resolution typewriter show the
+    // unique per-case name MonikerGen stored (the game otherwise returns the shared city serial-killer moniker).
+    [HarmonyPatch(typeof(MurderController.Murder), nameof(MurderController.Murder.GetMonkier))]
+    internal static class Patch_CaseMoniker
+    {
+        static void Postfix(MurderController.Murder __instance, ref string __result)
+        {
+            try
+            {
+                if (!MurderSelector.EnableOverride || !MurderSelector.SeparateCasePerKiller || __instance == null) return;
+                // The game is currently naming a VANILLA case: do NOT substitute a mod press-name, even if this call
+                // happens to be for a mod victim's murder (ApplyMonikerToCaseCheck can drift via GetCurrentMurder).
+                // That drift is what stamped a mod moniker onto a vanilla case.
+                if (DebugTools.NamingVanillaCase) return;
+                Human v = null; try { v = __instance.victim; } catch { }
+                if (v == null) return;
+                if (DebugTools.CaseMonikers.TryGetValue(v.humanID, out string mon) && !string.IsNullOrEmpty(mon))
+                    __result = mon;
+            }
+            catch { }
+        }
+    }
+
+    // Make the board TAB distinct per case. The game names every concurrent case from ONE shared murder, so even
+    // with unique per-murder monikers the tabs collapse to a single name. After vanilla applies its name (at the
+    // resolution-form rename), overwrite OUR case's tab with the moniker stored for THAT case's own victim, so the
+    // board reads distinctly. Timing-guarded to vanilla's own rename (only once the name is off the generic
+    // "New Murder Case"), so the name still appears only after the form. (The resolution typewriter still reads one
+    // shared murder's moniker -- a known, accepted limitation.)
+    [HarmonyPatch(typeof(Case), nameof(Case.ApplyMonikerToCaseCheck))]
+    internal static class Patch_UniqueCaseTab
+    {
+        // While the game names a VANILLA case, suppress our GetMonkier mod-substitution (Patch_CaseMoniker) so a
+        // drifted GetCurrentMurder can't stamp a mod moniker onto it. Set here, cleared in the postfix's finally.
+        static void Prefix(Case __instance)
+        {
+            DebugTools.NamingVanillaCase = false;
+            try { if (__instance != null && DebugTools.VanillaCaseIds.Contains(__instance.id)) DebugTools.NamingVanillaCase = true; } catch { }
+        }
+
+        static void Postfix(Case __instance)
+        {
+            try
+            {
+                if (!MurderSelector.EnableOverride || !MurderSelector.SeparateCasePerKiller || __instance == null) return;
+                if (__instance.caseType != Case.CaseType.murder) return;
+                int cid = -1; try { cid = __instance.id; } catch { }
+                if (DebugTools.VanillaCaseIds.Contains(cid)) return;                                        // never rename a vanilla case
+                if (!DebugTools.CaseToVictim.TryGetValue(cid, out int vid)) return;                         // not one of ours
+                if (!DebugTools.CaseMonikers.TryGetValue(vid, out string mon) || string.IsNullOrEmpty(mon)) return;
+                string def = "New Murder Case"; try { def = Strings.Get("ui.interface", "New Murder Case"); } catch { }
+                string cur = null; try { cur = __instance.name; } catch { }
+                if (string.IsNullOrEmpty(cur) || cur == def) return;   // vanilla hasn't named it yet -> keep generic until the form
+                if (cur == mon) return;                                // already ours
+                __instance.name = mon;
+                try { var cpc = CasePanelController.Instance; if (cpc != null) cpc.UpdateCaseControls(); } catch { }
+                MotivesPlugin.Log.LogInfo($"[SODMotives] case-tab: named case id={cid} '{mon}' (unique per case).");
+            }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives] case-tab error: {e.Message}"); }
+            finally { DebugTools.NamingVanillaCase = false; }   // always clear the suppression flag set in the prefix
+        }
+    }
+
+    // ===== Preserve a split case's crime scene until it is solved =====
+    // Vanilla keeps ONE murder scene: when the next murder takes over, the previous Murder's OnCleanCrimeScene
+    // tears the old scene down (Interactable.Delete/MarkAsTrash/RemoveFromPlacement on its placed items -- the
+    // body among them, leaving only the blood pool). With our per-killer split the previous case is still OPEN,
+    // so that teardown wrongly strips the body + evidence of a case the player hasn't solved yet (the reported
+    // "the previous body/killer/victim got removed before I solved it"). We block OnCleanCrimeScene for OUR
+    // murders while their case is still open, and let it run once the case is solved/closed (vanilla cleanup).
+    [HarmonyPatch(typeof(MurderController.Murder), nameof(MurderController.Murder.OnCleanCrimeScene))]
+    internal static class Patch_PreserveCrimeScene
+    {
+        static bool Prefix(MurderController.Murder __instance)
+        {
+            try
+            {
+                if (!MurderSelector.EnableOverride || !MurderSelector.SeparateCasePerKiller) return true;  // vanilla behaviour
+                Human v = null; try { v = __instance.victim; } catch { }
+                if (v == null) return true;
+                if (!MurderSelector.OverriddenVictimIds.Contains(v.humanID)) return true;  // not one of ours
+                if (VictimCaseFinished(v.humanID))
+                {
+                    MotivesPlugin.Log.LogInfo($"[SODMotives][diag] OnCleanCrimeScene ALLOWED for {MotivesPlugin.Name(v)} (case counts as finished) — vanilla cleanup runs.");
+                    return true;                             // solved -> allow vanilla cleanup
+                }
+                MotivesPlugin.Log.LogInfo($"[SODMotives] preserve-scene: blocked crime-scene cleanup for {MotivesPlugin.Name(v)} (case still open; keeping body + evidence).");
+                return false;  // skip the teardown so the body + evidence survive for the still-open case
+            }
+            catch { return true; }
+        }
+
+        // True if the victim's case has been solved/closed (so vanilla may clean its scene). Finds the case id
+        // from DebugTools.CaseToVictim, then the Case in the panel's active/archived lists. Unknown -> false
+        // (preserve), the safe default for an open case.
+        internal static bool VictimCaseFinished(int victimId)
+        {
+            try
+            {
+                // The player has started resolving this case -> let vanilla's solve-cleanup run (status flips too
+                // late to rely on during Case.Resolve, which was causing stuck bodies / inconsistent cleanup).
+                if (DebugTools.SolvedVictims.Contains(victimId)) return true;
+                int caseId = -1;
+                foreach (var kv in DebugTools.CaseToVictim) if (kv.Value == victimId) { caseId = kv.Key; break; }
+                if (caseId < 0) return false;
+                var cpc = CasePanelController.Instance;
+                if (cpc == null) return false;
+                Case c = FindCaseById(cpc.activeCases, caseId);
+                if (c == null) c = FindCaseById(cpc.archivedCases, caseId);
+                if (c == null) return false;
+                try { if (c.isSolved) return true; } catch { }
+                try
+                {
+                    var s = c.caseStatus;
+                    if (s == Case.CaseStatus.submitted || s == Case.CaseStatus.closable || s == Case.CaseStatus.archived) return true;
+                }
+                catch { }
+                return false;
+            }
+            catch { return false; }
+        }
+
+        internal static Case FindCaseById(Il2CppSystem.Collections.Generic.List<Case> list, int caseId)
+        {
+            try
+            {
+                if (list == null) return null;
+                for (int i = 0; i < list.Count; i++)
+                {
+                    Case c = null; try { c = list[i]; } catch { }
+                    if (c == null) continue;
+                    try { if (c.id == caseId) return c; } catch { }
+                }
+            }
+            catch { }
+            return null;
+        }
+    }
+
+    // (Case naming is handled at the source now: each of our murders gets a unique monkierPre/monkierPost in
+    // Patch_OnVictimDiscovery_SeparateCase.Postfix, so vanilla's own ApplyMonikerToCaseCheck names the tab AND the
+    // resolution typewriter show the same unique moniker. No Case.name override -- that desynced the typewriter.)
+
+    // Helper + a log-only Case.Resolve diagnostic. Playtest confirmed the body remover is Human.RemoveFromWorld
+    // (handled by Patch_PreserveVictimBody above), NOT Case.Resolve -- the Resolve log never fired. Kept as a
+    // cheap confirmation for when the player actually solves a case.
+    internal static class CaseParticipants
+    {
+        internal static bool IsOurParticipant(Human h, out string role)
+        {
+            role = null;
+            try
+            {
+                if (h == null) return false;
+                int id = h.humanID;
+                if (MurderSelector.OverriddenVictimIds.Contains(id)) { role = "our victim"; return true; }
+                var mc = MurderController.Instance;
+                if (mc != null)
+                {
+                    foreach (var list in new[] { mc.activeMurders, mc.inactiveMurders })
+                    {
+                        if (list == null) continue;
+                        for (int i = 0; i < list.Count; i++)
+                        {
+                            var m = list[i]; if (m == null) continue;
+                            try
+                            {
+                                if (m.murderer != null && m.murderer.humanID == id && m.victim != null
+                                    && MurderSelector.OverriddenVictimIds.Contains(m.victim.humanID))
+                                { role = "our killer"; return true; }
+                            }
+                            catch { }
+                        }
+                    }
+                }
+            }
+            catch { }
+            return false;
+        }
+    }
+
+    // ===== Keep a split case's victim BODY at the scene until the case is solved =====
+    // Confirmed from a playtest: when the NEXT murder starts, vanilla calls Human.RemoveFromWorld(true) on the
+    // PREVIOUS victim -- despawning the body (blood pool remains) and relocating the citizen to a default street
+    // (the player kept teleporting to that empty "Sherman Boulevard"). Vanilla keeps one body at a time; our split
+    // keeps the old case open, so this strips a body the player still needs. We block the removal of OUR victims
+    // while their case is unsolved, and allow it once solved (vanilla cleanup). Only val==true (the removal) is
+    // blocked; val==false (restore to world) always passes. Scoped to dead victims only -- live NPCs (incl.
+    // killers) are never blocked, so normal area-unload is untouched.
+    [HarmonyPatch(typeof(Human), nameof(Human.RemoveFromWorld))]
+    internal static class Patch_PreserveVictimBody
+    {
+        static bool Prefix(Human __instance, bool val)
+        {
+            try
+            {
+                if (!MurderSelector.EnableOverride || !MurderSelector.SeparateCasePerKiller || __instance == null) return true;
+                if (!val) return true;   // only block the REMOVAL; always allow restore-to-world
+                int id = __instance.humanID;
+                if (!MurderSelector.OverriddenVictimIds.Contains(id)) return true;   // only our victims (bodies)
+                if (Patch_PreserveCrimeScene.VictimCaseFinished(id)) return true;    // solved -> allow vanilla cleanup
+                MotivesPlugin.Log.LogInfo($"[SODMotives] preserve-body: blocked RemoveFromWorld for {MotivesPlugin.Name(__instance)} (case still open; keeping the body at the scene).");
+                return false;   // keep the body where it was killed, for the still-open case
+            }
+            catch { return true; }
+        }
+    }
+
+    // NOTE: a previous attempt BLOCKED Objective.Cancel/Remove (return false) to keep a prior case's objectives.
+    // That CRASHED/froze the game (the game clears objectives via a `while (list.Count>0) list[0].Remove()` loop,
+    // and blocking left the list non-empty forever). NEVER block Objective.Remove. Instead we block the HIGHER-LEVEL
+    // decommission below -- a single call, not a loop.
+
+    // ===== Keep a split case's crime-scene STATUS until it is solved =====
+    // The explore-crime-scene objective (and the crime-scene tape) drop for the OLDEST case once a THIRD opens -- the
+    // game caps active crime scenes (~2) and DECOMMISSIONS the oldest via NewGameLocation.SetAsCrimeScene(false),
+    // which strips its tape + "Explore Reported Crime Scene" objective. (With only 2 cases it never fires, matching
+    // the report.) We block that decommission for OUR still-open cases' scenes so the scene + objective survive; once
+    // the case is solved we allow it (vanilla cleanup, which also clears the body). Single call, no remove-loop, so
+    // it's safe unlike the Objective.Remove block. Logs so the 3-case repro confirms the mechanism + timing.
+    [HarmonyPatch(typeof(NewGameLocation), nameof(NewGameLocation.SetAsCrimeScene))]
+    internal static class Patch_PreserveSceneStatus
+    {
+        static bool Prefix(NewGameLocation __instance, bool val)
+        {
+            try
+            {
+                if (!MurderSelector.EnableOverride || !MurderSelector.SeparateCasePerKiller || __instance == null) return true;
+                if (val) return true;                        // only guard the DECOMMISSION (false); setting true is fine
+                if (!IsOurOpenScene(__instance, out string vname)) return true;
+                MotivesPlugin.Log.LogInfo($"[SODMotives] preserve-scene-status: blocked SetAsCrimeScene(false) for {vname}'s scene (case still open; keeping crime scene + objective).");
+                return false;                                // keep the crime scene (tape + objective) for the open case
+            }
+            catch { return true; }
+        }
+
+        // True if this location is the murder scene of one of OUR still-unsolved cases.
+        private static bool IsOurOpenScene(NewGameLocation loc, out string victimName)
+        {
+            victimName = "?";
+            try
+            {
+                var mc = MurderController.Instance;
+                if (mc == null || loc == null) return false;
+                foreach (var list in new[] { mc.activeMurders, mc.inactiveMurders })
+                {
+                    if (list == null) continue;
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        MurderController.Murder m = null; try { m = list[i]; } catch { }
+                        if (m == null) continue;
+                        Human v = null; try { v = m.victim; } catch { }
+                        if (v == null || !MurderSelector.OverriddenVictimIds.Contains(v.humanID)) continue;
+                        if (Patch_PreserveCrimeScene.VictimCaseFinished(v.humanID)) continue;   // solved -> allow decommission
+                        NewGameLocation ml = null; try { ml = m.location; } catch { }
+                        if (ml != null && ml.Pointer == loc.Pointer) { victimName = MotivesPlugin.Name(v); return true; }
+                    }
+                }
+            }
+            catch { }
+            return false;
+        }
+    }
+
+    [HarmonyPatch(typeof(Case), nameof(Case.Resolve))]
+    internal static class Patch_Diag_CaseResolve
+    {
+        static void Prefix(Case __instance)
+        {
+            try
+            {
+                if (!MurderSelector.EnableOverride || !MurderSelector.SeparateCasePerKiller || __instance == null) return;
+                string nm = "?"; try { nm = __instance.name; } catch { }
+                string st = "?"; try { st = __instance.caseStatus.ToString(); } catch { }
+                string ty = "?"; try { ty = __instance.caseType.ToString(); } catch { }
+                int id = -1; try { id = __instance.id; } catch { }
+                // Our case only: a vanilla bundle case is never ours (defensive -- it shouldn't be in CaseToVictim).
+                int vid = -1;
+                bool ours = !DebugTools.VanillaCaseIds.Contains(id) && DebugTools.CaseToVictim.TryGetValue(id, out vid);
+                // Latch the victim as "being solved" so the body/scene/objective blocks lift and vanilla's own
+                // solve-cleanup runs consistently (fixes the stuck body + inconsistent cleanup).
+                if (ours) DebugTools.SolvedVictims.Add(vid);
+                MotivesPlugin.Log.LogInfo($"[SODMotives][diag] Case.Resolve() id={id} name='{nm}' status={st} type={ty} ours={ours}.");
+            }
+            catch { }
+        }
+
+        // ===== Clear THE RESOLVED case's own body =====
+        // Vanilla's solve-cleanup (MurderController.OnCaseSolved / the rest of Case.Resolve) removes the CURRENT
+        // murder's victim (GetCurrentMurder) -- fine in vanilla's one-case-at-a-time model, but with our per-killer
+        // split the resolved case is usually NOT the active/current one, so only the case that was active when the
+        // forms were collected ever had its body cleared; every other solved case left its body at the scene.
+        // The Prefix above latched this victim into SolvedVictims, so Patch_PreserveVictimBody now ALLOWS the removal
+        // (and still BLOCKS vanilla's misdirected removal of any still-unsolved current victim). Here we remove THIS
+        // resolved case's own victim explicitly, once, so each solved case clears its own body. RemoveFromWorld(true)
+        // relocates the citizen to a default street exactly as vanilla does -- no extra teardown (OnCleanCrimeScene
+        // strips furniture, which we deliberately avoid).
+        static void Postfix(Case __instance)
+        {
+            try
+            {
+                if (!MurderSelector.EnableOverride || !MurderSelector.SeparateCasePerKiller || __instance == null) return;
+                int id = -1; try { id = __instance.id; } catch { }
+                if (DebugTools.VanillaCaseIds.Contains(id)) return;                  // vanilla case -> the base game clears its own bodies
+                if (!DebugTools.CaseToVictim.TryGetValue(id, out int vid)) return;   // not one of ours
+                if (DebugTools.BodiesCleared.Contains(vid)) return;                  // already cleared this body
+
+                var mc = MurderController.Instance;
+                if (mc == null) return;
+                var m = DebugTools.FindMurderByVictim(mc, vid);
+                Human victim = null; try { if (m != null) victim = m.victim; } catch { }
+                if (victim == null) return;
+
+                DebugTools.BodiesCleared.Add(vid);   // guard BEFORE the call so a re-entrant Resolve can't double-fire
+                MotivesPlugin.Log.LogInfo($"[SODMotives] solve-cleanup: removing {MotivesPlugin.Name(victim)}'s body for resolved case id={id} (RemoveFromWorld).");
+                try { victim.RemoveFromWorld(true); }
+                catch (Exception ex) { MotivesPlugin.Log.LogWarning($"[SODMotives] solve-cleanup: RemoveFromWorld failed for vid={vid}: {ex.Message}"); }
+            }
+            catch { }
         }
     }
 

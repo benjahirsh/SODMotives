@@ -139,6 +139,7 @@ namespace SODMotives
         // kill gated on the game's OWN Murder.killTime (the value the ransom note counts down to), clearing the
         // premature kidnapKillPhase and blocking the kill's state transitions until then. See ShouldBlockKidnapKill.
         private static readonly HashSet<int> _killTimeReasserted = new HashSet<int>();  // victims where we've logged holding the kidnapper off
+        private static readonly HashSet<int> _killReleased = new HashSet<int>();  // victims where the deadline passed and we re-armed the kill
         private static readonly HashSet<int> _killBlockLogged = new HashSet<int>();  // victims where we've logged blocking the premature kill
         internal static readonly HashSet<int> KidnapReachedHold = new HashSet<int>();  // our kidnap victims whose case has gone to the hold (post/escaping/unsolved) — a later travellingTo/executing is the KILL
 
@@ -152,7 +153,7 @@ namespace SODMotives
             _sniperObserved.Clear(); _sniperLiveVid = -1; _sniperLiveLastLogH = -999f; _sniperLiveCount = 0;
             _sniperSeeded.Clear(); _sniperDefaultFails.Clear(); _sniperDefaultSince.Clear();
             _sniperReseedSince.Clear(); _recoveredMurderIds.Clear(); _brokenSince.Clear(); _resumePendingAfter = -1; _resumeDeadline = -999f; _resumeReapplies = 0;
-            _ransomTried.Clear(); _killTimeReasserted.Clear();
+            _ransomTried.Clear(); _killTimeReasserted.Clear(); _killReleased.Clear();
             _killBlockLogged.Clear(); KidnapReachedHold.Clear(); _denSealed.Clear(); _denGoalLogged.Clear();
         }
 
@@ -659,6 +660,17 @@ namespace SODMotives
                             try { if (murder.kidnapKillPhase) murder.kidnapKillPhase = false; } catch { }
                             if (kt > 0.5f && _killTimeReasserted.Add(vid))
                                 MotivesPlugin.Log.LogInfo($"[SODMotives][kidnap-kill] holding the kidnapper off until the game's own killTime={kt:0.0} (now={now2:0.0}) so the kill matches the ransom note; victim held/rescuable until then.");
+                        }
+                        else
+                        {
+                            // Deadline reached -> RE-ARM the kill. We cleared kidnapKillPhase during the hold, and the
+                            // game sets the kidnapper's go-to-den KILL goal off that flag -- so with it false the
+                            // killer gets the travellingTo state but is never pinned to actually walk to the den (the
+                            // "killer never leaves their apartment" report). The game does NOT re-flip it on its own,
+                            // so we assert it now (deadline passed, kill is due) every tick until the kill completes.
+                            try { if (!murder.kidnapKillPhase) murder.kidnapKillPhase = true; } catch { }
+                            if (_killReleased.Add(vid))
+                                MotivesPlugin.Log.LogInfo($"[SODMotives][kidnap-kill] deadline reached (killTime={kt:0.0}, now={now2:0.0}) — re-armed kidnapKillPhase so the kidnapper walks to the den and carries out the kill.");
                         }
                     }
                     catch (Exception ke) { MotivesPlugin.Log.LogWarning($"[SODMotives][kidnap-kill] error: {ke.Message}"); }

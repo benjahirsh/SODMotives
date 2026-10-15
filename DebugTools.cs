@@ -19,6 +19,42 @@ namespace SODMotives
             try { if (!string.IsNullOrEmpty(line)) { ClueHud.Add(line); while (ClueHud.Count > 8) ClueHud.RemoveAt(0); } } catch { }
         }
         internal static bool Show = false;
+        // Maps a murder Case's id -> the victim humanID of the murder it was opened for, so the F9 overlay can
+        // follow the case SELECTED on the board (CasePanelController.activeCase): switching tabs switches the
+        // panel. Populated after every victim discovery (Patch_OnVictimDiscovery_SeparateCase.Postfix), for both
+        // our split cases and vanilla's. Cleared on a new game. caseId is unique per game (Case.assignCaseID).
+        internal static readonly Dictionary<int, int> CaseToVictim = new Dictionary<int, int>();
+        // victim humanID -> the unique press moniker minted for that murder (MonikerGen), returned by the GetMonkier
+        // override so the board tab and resolution typewriter both show it. Per-game; cleared on a new game.
+        internal static readonly Dictionary<int, string> CaseMonikers = new Dictionary<int, string>();
+        // victim humanIDs whose case the player has started RESOLVING (Case.Resolve). Lifts the body/scene/objective
+        // preservation blocks so vanilla's own solve-cleanup runs consistently (the case status flips too late to
+        // rely on during Resolve). Per-game; cleared on a new game.
+        internal static readonly HashSet<int> SolvedVictims = new HashSet<int>();
+        // victim humanIDs whose body we have already proactively removed on case resolve (Case.Resolve postfix), so a
+        // re-entrant / repeated Resolve can't call RemoveFromWorld twice for the same victim. Per-game; cleared on a
+        // new game. Needed because vanilla's solve-cleanup removes only the CURRENT murder's victim, not the specific
+        // resolved case's victim, so each split case must clear its OWN body explicitly.
+        internal static readonly HashSet<int> BodiesCleared = new HashSet<int>();
+        // Case ids that belong to one of our per-killer MOD (motivated) murder cases -- the ones our split opens,
+        // plus the FIRST motivated murder's vanilla-created case. A VANILLA murder must never bundle into one of
+        // these, so the discovery prefix steers vanilla murders to a SEPARATE shared vanilla bundle case. Per-game.
+        internal static readonly HashSet<int> ModCaseIds = new HashSet<int>();
+        // Case ids we OURSELVES opened as the shared VANILLA bundle case (in SteerVanillaToBundleCase). A vanilla
+        // murder is only ever bundled into one of THESE -- never into the first-murder case or any case we did not
+        // positively create as a vanilla bundle. This is robust to the victim-identification timing that can leave a
+        // mod case untagged when murders fire in quick succession (fast-forward). Per-game; cleared on a new game.
+        internal static readonly HashSet<int> VanillaCaseIds = new HashSet<int>();
+        // SERIALIZATION: true while the game's own serial killer is at large (a vanilla murder case is open). While
+        // set, we leave EVERY new murder vanilla so the base game bundles them into its one case with its own
+        // per-crime-scene objectives -- we never steer or touch vanilla. Cleared when the serial killer is caught
+        // (the game runs PickNewMurderer). This guarantees our motive cases and a vanilla case never run at once.
+        internal static bool VanillaSerialActive = false;
+        // Set true ONLY while the game is applying a moniker to a VANILLA case (Patch_UniqueCaseTab prefix/postfix).
+        // While set, Patch_CaseMoniker (our GetMonkier override) does NOT substitute a mod press-name -- otherwise a
+        // drift in the game's own ApplyMonikerToCaseCheck (which can query a mod murder via GetCurrentMurder) would
+        // stamp a mod moniker onto the vanilla case's name + typewriter (the "both called Marble Philatelist" bug).
+        internal static bool NamingVanillaCase = false;
         internal static bool Ghost = false;         // NPCs ignore the player (testing aid)
         internal static bool AlwaysAnswer = false;  // NPCs always accept "do you know this person?" (no bribe)
 
@@ -79,7 +115,7 @@ namespace SODMotives
         internal static KeyCode KeyTestAccess     = KeyCode.F7;   // MERGED test toggle: ghost + always-answer together (used as a pair)
         internal static KeyCode KeyTeleportScene  = KeyCode.F10;
         internal static KeyCode KeyTeleportMeet   = KeyCode.None;  // OFF by default (code kept, set a KeyCode to re-enable). Was F11: teleport to the kidnap meeting location.
-        internal static KeyCode KeyTeleportVictim = KeyCode.F12;   // teleport to the VICTIM's CURRENT position (tail them)
+        internal static KeyCode KeyTeleportVictim = KeyCode.F11;   // teleport to the VICTIM's CURRENT position (tail them)
         internal static KeyCode KeyTriggerMurder  = KeyCode.F4;   // force the game's next murder NOW (fast test loop)
         internal static KeyCode KeyTeleportKiller = KeyCode.F8;   // teleport to the KILLER's CURRENT position (tail them)
         internal static KeyCode KeyForceSniper    = KeyCode.None; // OFF by default (removed from config panel; handler code kept, set a KeyCode to re-enable). Was F3: create a motivated sniper case now.
@@ -128,7 +164,7 @@ namespace SODMotives
                 go.hideFlags = HideFlags.HideAndDontSave;
                 go.AddComponent<DebugHotkey>();
                 if (EnableDebugKeys)
-                    MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys ON (defaults; rebindable in the config menu -> SOD Motives / Debug Keys): F2=victim-distribution sampler (boss/landlord/other %), F3=FORCE a motivated SNIPER case now, F4=fast-forward to the game's next NATURAL case (auto-stops when it rolls; F4 again cancels), F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=TEST ACCESS (ghost + always-answer together), F8=teleport to nearest KILLER-knower, F9=case solution overlay, F10=teleport to scene, F11=to kidnap MEETING location, F12=to VICTIM's home, Home=teleport to City Hall, End=toggle fast-forward (simulation speed). (F1 reserved by the game; F2 + F5 unbound.)");
+                    MotivesPlugin.Log.LogInfo("[SODMotives] Debug keys ON (defaults; rebindable in the config menu -> SOD Motives / Debug Keys): F2=victim-distribution sampler (boss/landlord/other %), F3=FORCE a motivated SNIPER case now, F4=fast-forward to the game's next NATURAL case (auto-stops when it rolls; F4 again cancels), F6=cycle FORCE EVENT (off/affair/promotion/layoffs/eviction/rentarrears/feud/debt), F7=TEST ACCESS (ghost + always-answer together), F8=teleport to nearest KILLER-knower, F9=case solution overlay, F10=teleport to scene, F11=to VICTIM's current position, Home=teleport to City Hall, End=toggle fast-forward (simulation speed). (F1 reserved by the game; F2 + F5 unbound; kidnap MEETING teleport is off by default, rebind TeleportToMeet to use it.)");
                 else
                     MotivesPlugin.Log.LogInfo($"[SODMotives] Debug tooling OFF. {KeyCaseSolution} = case-solution overlay is always available (set it to None in [Debug Keys] to disable); enable [Debug] EnableDebugKeys in the config overlay for the full test loop (force event, teleports, ghost, etc.).");
             }
@@ -559,16 +595,16 @@ namespace SODMotives
             catch (Exception e) { log.LogWarning($"[SODMotives][F11] meet teleport error: {e}"); }
         }
 
-        // F12: teleport to the VICTIM's CURRENT position (tail them — where they are right now, not their home).
+        // F11: teleport to the VICTIM's CURRENT position (tail them — where they are right now, not their home).
         internal static void TeleportToVictim()
         {
             try
             {
                 if (!TryGetCase(out _, out Human victim, out _) || victim == null)
-                { MotivesPlugin.Log.LogInfo("[SODMotives][F12] No victim."); return; }
-                TeleportToActorCurrent(victim, "F12", "victim");
+                { MotivesPlugin.Log.LogInfo("[SODMotives][F11] No victim."); return; }
+                TeleportToActorCurrent(victim, "F11", "victim");
             }
-            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][F12] victim teleport error: {e}"); }
+            catch (Exception e) { MotivesPlugin.Log.LogWarning($"[SODMotives][F11] victim teleport error: {e}"); }
         }
 
         // Teleport the player to an actor's CURRENT position: their live node if available, else a safe spot in
@@ -676,6 +712,47 @@ namespace SODMotives
             catch { }
         }
 
+        // The murder the overlay should describe. PREFERS the case SELECTED on the board
+        // (CasePanelController.activeCase) so switching case tabs switches the F9 panel to that case; falls back
+        // to the murder controller's current murder when nothing useful is selected. Shared by TryGetCase,
+        // BuildSolution and ScenePos so every line (and the paired F8/F11 teleports) describes the same case.
+        internal static MurderController.Murder ResolveOverlayMurder()
+        {
+            var mc = MurderController.Instance;
+            if (mc == null) return null;
+            try
+            {
+                var cpc = CasePanelController.Instance;
+                Case sel = cpc != null ? cpc.activeCase : null;
+                if (sel != null && sel.caseType == Case.CaseType.murder && CaseToVictim.TryGetValue(sel.id, out int vid))
+                {
+                    var m = FindMurderByVictim(mc, vid);
+                    if (m != null) return m;
+                }
+            }
+            catch { }
+            try { return mc.GetCurrentMurder(); } catch { return null; }
+        }
+
+        // Find the Murder for a victim humanID among the controller's active + inactive murders (covers every
+        // case still on the board). Returns null if none match (e.g. the murder was de-listed).
+        internal static MurderController.Murder FindMurderByVictim(MurderController mc, int victimId)
+        {
+            try
+            {
+                var am = mc.activeMurders;
+                if (am != null)
+                    for (int i = 0; i < am.Count; i++)
+                    { var m = am[i]; try { if (m != null && m.victim != null && m.victim.humanID == victimId) return m; } catch { } }
+                var im = mc.inactiveMurders;
+                if (im != null)
+                    for (int i = 0; i < im.Count; i++)
+                    { var m = im[i]; try { if (m != null && m.victim != null && m.victim.humanID == victimId) return m; } catch { } }
+            }
+            catch { }
+            return null;
+        }
+
         private static bool TryGetCase(out Human killer, out Human victim, out string scene)
         {
             killer = null; victim = null; scene = "?";
@@ -683,7 +760,7 @@ namespace SODMotives
             if (mc == null) return false;
             try
             {
-                var murder = mc.GetCurrentMurder();
+                var murder = ResolveOverlayMurder();
                 if (murder != null)
                 {
                     killer = murder.murderer;
@@ -697,7 +774,7 @@ namespace SODMotives
             return killer != null || victim != null;
         }
 
-        internal static void BuildSolution()
+        internal static void BuildSolution(bool mirrorToLog = true)
         {
             Overlay.Clear();
             var log = MotivesPlugin.Log;
@@ -718,7 +795,7 @@ namespace SODMotives
                 // Grab the live Murder once: its preset gives the MURDER TYPE (murder / sniper / kidnap),
                 // shown next to whether the mod overrode it; its state drives the progress line below.
                 MurderController.Murder mrd = null;
-                try { mrd = MurderController.Instance != null ? MurderController.Instance.GetCurrentMurder() : null; } catch { }
+                try { mrd = ResolveOverlayMurder(); } catch { }
                 string murderType = "?";
                 try { if (mrd != null && mrd.preset != null) murderType = mrd.preset.caseType.ToString(); } catch { }
                 Overlay.Add((ours ? "CASE TYPE: motivated (mod)" : "CASE TYPE: vanilla / not overridden") + $"  [{murderType}]");
@@ -842,12 +919,56 @@ namespace SODMotives
                         try { AddKillerKnowers(killer, ScenePos(victim)); } catch { }
                     }
                 }
+
+                // An upcoming murder that has not opened its case yet can't be selected on the board, so show its
+                // essentials here too. Skipped when the main section above is already showing it.
+                AppendNextCaseStatus(mrd);
             }
             catch (Exception e) { Overlay.Add($"error: {e.Message}"); log.LogWarning($"[SODMotives][F9] {e}"); }
 
-            // Mirror to log too.
-            log.LogInfo("[SODMotives][F9] ---- case solution ----");
-            foreach (var l in Overlay) log.LogInfo("[SODMotives][F9]   " + l);
+            // Mirror to log only on an explicit F9 press (not on the live per-interval refresh, which would spam it).
+            if (mirrorToLog)
+            {
+                log.LogInfo("[SODMotives][F9] ---- case solution ----");
+                foreach (var l in Overlay) log.LogInfo("[SODMotives][F9]   " + l);
+            }
+        }
+
+        // "NEXT CASE" section: the murder the controller is currently setting up (GetCurrentMurder) when it has
+        // NOT opened its case yet -- so it has no board tab to select and would otherwise be invisible in the
+        // overlay once another case is selected. Mirrors the core current-case lines (state, killer, victim with
+        // homes, scene). `shown` is the murder the main section is already displaying; skip if it's the same one.
+        private static void AppendNextCaseStatus(MurderController.Murder shown)
+        {
+            try
+            {
+                var mc = MurderController.Instance;
+                if (mc == null) return;
+                MurderController.Murder next = null;
+                try { next = mc.GetCurrentMurder(); } catch { }
+                if (next == null || next.victim == null) return;
+                int nvid = next.victim.humanID;
+
+                // Only while it has no case yet (CaseToVictim records a victim once their case is opened).
+                foreach (var kv in CaseToVictim) if (kv.Value == nvid) return;
+                // Don't duplicate the main section if it is already showing this murder.
+                if (shown != null && shown.victim != null && shown.victim.humanID == nvid) return;
+
+                Human killer = next.murderer, victim = next.victim;
+                string scene = "?";
+                try { if (next.location != null && !string.IsNullOrEmpty(next.location.name)) scene = next.location.name; } catch { }
+                if (scene == "?") { try { if (victim.home != null) scene = victim.home.name + " (victim home)"; } catch { } }
+                bool ours = false; try { ours = MurderSelector.OverriddenVictimIds.Contains(nvid); } catch { }
+                string mtype = "?"; try { if (next.preset != null) mtype = next.preset.caseType.ToString(); } catch { }
+
+                Overlay.Add("");
+                Overlay.Add($"==== NEXT CASE — not opened yet  [{mtype}, {(ours ? "motivated (mod)" : "vanilla")}] ====");
+                try { Overlay.Add($"STATE : {next.state}"); } catch { }
+                Overlay.Add($"KILLER: {MotivesPlugin.Name(killer)}  @ {HomeName(killer)}");
+                Overlay.Add($"VICTIM: {MotivesPlugin.Name(victim)}  @ {HomeName(victim)}");
+                Overlay.Add($"SCENE : {scene}");
+            }
+            catch { }
         }
 
         // Home address name for the F9 panel (shown next to the killer/victim names so the tester can jump there).
@@ -967,8 +1088,7 @@ namespace SODMotives
         {
             try
             {
-                var mc = MurderController.Instance;
-                var m = mc != null ? mc.GetCurrentMurder() : null;
+                var m = ResolveOverlayMurder();
                 if (m != null && m.location != null && m.location.anchorNode != null) return m.location.anchorNode.position;
             }
             catch { }
@@ -1036,6 +1156,7 @@ namespace SODMotives
     {
         private static GUIStyle _style;      // F9 case-solution overlay (top-left, left-aligned)
         private static GUIStyle _hudStyle;   // debug-key indicators + clue locations (top-right, right-aligned)
+        private float _f9Refresh;            // seconds since the overlay last rebuilt (live-update throttle)
 
         public DebugHotkey(IntPtr ptr) : base(ptr) { }
 
@@ -1048,7 +1169,14 @@ namespace SODMotives
                 if (Input.GetKeyDown(DebugTools.KeyCaseSolution))
                 {
                     if (DebugTools.Show) { DebugTools.Show = false; }
-                    else { DebugTools.BuildSolution(); DebugTools.Show = true; }
+                    else { DebugTools.BuildSolution(); DebugTools.Show = true; _f9Refresh = 0f; }
+                }
+                // Live update while the overlay is open: rebuild a few times a second so murder state, clue spawns
+                // and the selected case tab are reflected without toggling F9 off/on. Log mirror off (no spam).
+                else if (DebugTools.Show)
+                {
+                    _f9Refresh += Time.unscaledDeltaTime;
+                    if (_f9Refresh >= 0.5f) { _f9Refresh = 0f; try { DebugTools.BuildSolution(false); } catch { } }
                 }
 
                 // Everything below is developer tooling — gated behind [Debug] EnableDebugKeys (default OFF).

@@ -46,6 +46,14 @@ namespace SODMotives
         internal static float FeudShare = 0.35f;        // personal feuds
         internal static float DebtShare = 0.35f;        // debts
         internal static bool StripSignatures = true;    // remove serial-killer calling card/moniker/graffiti on motivated cases
+        // CASE SPLIT: open a FRESH case for every motivated murder instead of letting the game bundle them all into
+        // its single ongoing serial-killer "Murder Case". Vanilla reuses one active murder case for every proc-gen
+        // victim (one serial killer, one case); our motivated murders each have a DIFFERENT killer, so bundling them
+        // reads as incoherent and the game's resolve questions get overwritten to the newest victim each time a body
+        // is found (the player-reported "the case switched to an unrelated killer"). With this on, each of our
+        // motivated murders gets its own case, exactly like the first murder of a fresh game. Only affects the mod's
+        // own (overridden) cases; vanilla serial murders still bundle. Read at each victim discovery.
+        internal static bool SeparateCasePerKiller = true;
 
         private static readonly Random _rng = new Random();
 
@@ -263,6 +271,13 @@ namespace SODMotives
             EventByVictim.Clear();
             UsedWorkplaceCompanies.Clear();
             UsedBuildings.Clear();
+            DebugTools.CaseToVictim.Clear();   // F9 case->victim map is per-game (caseIds restart each new game)
+            DebugTools.CaseMonikers.Clear();   // per-game unique case monikers
+            DebugTools.SolvedVictims.Clear();  // per-game solve-cleanup latch
+            DebugTools.BodiesCleared.Clear();  // per-game body-removed-on-resolve guard
+            DebugTools.ModCaseIds.Clear();     // per-game mod-case id set (steers vanilla murders away from mod cases)
+            DebugTools.VanillaCaseIds.Clear(); // per-game vanilla-bundle-case id set (the only cases vanilla murders bundle into)
+            DebugTools.VanillaSerialActive = false;  // per-game serialization flag (vanilla serial killer at large)
         }
 
         // Persistence (pass 2): replace all per-case maps with state imported from the save sidecar.
@@ -481,12 +496,12 @@ namespace SODMotives
         // preferKiller (optional): when set (SNIPER cases), the chosen killer MUST satisfy it, a
         // (candidateKiller, victim) -> bool test used to require a real sniper vantage. If none of the
         // victim's top suspects pass, the method fails (returns false) so the caller leaves the case vanilla.
-        internal static bool TryPickVictimCentric(out Human murderer, out Human victim, out List<SuspectEdge> pool, System.Func<Human, Human, bool> preferKiller = null)
+        internal static bool TryPickVictimCentric(out Human murderer, out Human victim, out List<SuspectEdge> pool, System.Func<Human, Human, bool> preferKiller = null, HashSet<int> reserved = null)
         {
             murderer = null; victim = null; pool = null;
             var g = BuildCandidateGraph();
             if (g == null) return false;
-            if (!ChooseFromGraph(g, preferKiller, out murderer, out victim, out pool, out var killerEdge, out int chosenVid))
+            if (!ChooseFromGraph(g, preferKiller, out murderer, out victim, out pool, out var killerEdge, out int chosenVid, reserved))
                 return false;
             CommitSelection(chosenVid, murderer, victim, pool, killerEdge);
             return true;
@@ -496,7 +511,7 @@ namespace SODMotives
         // killer from that victim's top pool. SIDE-EFFECT-FREE: records nothing, materializes nothing (the
         // dry-run sampler calls this in a loop). Returns false only if the graph yields no usable bucket.
         private static bool ChooseFromGraph(CandidateGraph g, System.Func<Human, Human, bool> preferKiller,
-            out Human murderer, out Human victim, out List<SuspectEdge> pool, out SuspectEdge killerEdge, out int chosenVid)
+            out Human murderer, out Human victim, out List<SuspectEdge> pool, out SuspectEdge killerEdge, out int chosenVid, HashSet<int> reserved = null)
         {
             murderer = null; victim = null; pool = null; killerEdge = default; chosenVid = 0;
             var byVictim = g.byVictim; var victimRef = g.victimRef;
@@ -506,7 +521,9 @@ namespace SODMotives
             //    be vanilla). floor = min(MinSuspects, richest) so we always have candidates.
             int floor = Math.Min(MinSuspects, g.bestCount);
             var candVictims = new List<int>();
-            foreach (var kv in byVictim) if (kv.Value.Count >= floor) candVictims.Add(kv.Key);
+            // `reserved` (NPCs already committed to an open case -- the serial killer, plus every unsolved murder's
+            // killer and victim) is never eligible as a NEW victim; see the caller.
+            foreach (var kv in byVictim) if (kv.Value.Count >= floor && (reserved == null || !reserved.Contains(kv.Key))) candVictims.Add(kv.Key);
             if (candVictims.Count == 0) return false;
 
             // DEV/TEST: restrict the victim to someone who WORKS at a specific place (DebugTools.ForceVictimWorkplace,
@@ -592,6 +609,11 @@ namespace SODMotives
             // 4b) That victim's suspects, strongest first, capped at KillerPoolSize.
             var suspects = new List<SuspectEdge>(byVictim[chosenVid].Values);
             suspects.Sort((x, y) => y.score.CompareTo(x.score));
+            // Never let a reserved NPC be one of OUR killers either -- the serial killer would put a mod case and the
+            // vanilla case on the same killer (shared name + shared solve-cleanup), and another open case's killer is
+            // already busy. If it was this victim's only suspect, leave the case vanilla (return false).
+            if (reserved != null) suspects.RemoveAll(e => e.suspect != null && reserved.Contains(e.suspect.humanID));
+            if (suspects.Count == 0) return false;
             int poolN = Math.Min(Math.Max(1, KillerPoolSize), suspects.Count);
 
             // 5) Killer among the top pool, uniform-random (every suspect is a real motivated red herring). A soft

@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.3.6
+Readme update.
+
 ## 1.3.5
 Readme update.
 

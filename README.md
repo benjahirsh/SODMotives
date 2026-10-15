@@ -6,11 +6,9 @@ Murders are now built around believable, traceable motives, with bespoke clues a
 
 **Please leave a comment on the [Steam guide](https://steamcommunity.com/sharedfiles/filedetails/?id=3804929108).** Feedback and bug reports are very welcome.
 
-I'm keeping this vague on purpose so as not to spoil the experience. The rest of this page is structured to reveal more and more about how the mod works the further down you read, so you can choose how much you'd like to know. Each section says how spoilery it is, so stop wherever you're comfortable.
+This page is structured to reveal more about how the mod works the further you read. Each section says how spoilery it is.
 
 ## How to play
-
-Some things to know before starting:
 
 - **"Do you know this person?"** In addition to the usual reply, an NPC will also share what they know about that person's involvement in events. This is your main tool for building a suspect list.
 - **"Can I talk to your partner?"** This dialog option appears when speaking to an NPC at home, which sends them to fetch their partner so you can question them too.
@@ -24,7 +22,7 @@ Some things to know before starting:
 
 ## Compatibility
 
-This mod has not been tested alongside other mods yet. It should coexist with most, but if you run into a conflict (or confirm it works well with something), a quick report is very welcome and helps me make it a good neighbour in your mod list.
+This mod has not been tested with other mods. Please let me know if you run into a conflict, or if the mod works well with another mod.
 
 ## Installation
 

@@ -1,8 +1,8 @@
 {
   "name": "Better_Leads_and_Motives",
-  "version_number": "1.3.5",
+  "version_number": "1.3.6",
   "website_url": "https://github.com/benjahirsh/SODMotives",
-  "description": "Adds believable, traceable motives that can be uncovered through deduction and NPC interrogation. Figuring out why someone was killed is now a valid lead to who killed them.",
+  "description": "Adds believable, traceable motives that can be uncovered through deduction and NPC interrogation. Figuring out why someone was killed is a valid lead to who killed them.",
   "dependencies": [
     "BepInEx-BepInExPack_IL2CPP-6.0.755",
     "TeamSpyraxi-BepInExConfigManager-1.3.1"

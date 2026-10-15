@@ -6,7 +6,7 @@ Murders are now built around believable, traceable motives, with bespoke clues a
 
 **Please leave a comment on the [Steam guide](https://steamcommunity.com/sharedfiles/filedetails/?id=3804929108).** Feedback and bug reports are very welcome.
 
-This page is structured to reveal more about how the mod works the further you read. Each section says how spoilery it is.
+This page is structured to reveal more about how the mod works the further you read.
 
 ## How to play
 
@@ -34,13 +34,13 @@ STOP HERE - that is everything you need to play.
 
 ---
 
-## Mild spoilers: what changes
+## What changes
 
 Vanilla murders are anonymous killings by a roaming serial killer. This mod instead chooses an NPC killer and victim with real reasons behind why the murder would occur. Every case has a list of genuine suspects (not fabricated ones) so the killer is never obvious. The game's normal forensic evidence (fingerprints, cameras, footprints) still decides the case, and the motive layer sits above the physical evidence, so you can know why a murder happened and use that as a lead toward solving it.
 
 ---
 
-## More spoilers: lead types
+## Lead types
 
 Traces left behind by the motivated murder:
 
@@ -50,7 +50,7 @@ Traces left behind by the motivated murder:
 
 ---
 
-## Full spoilers: the mechanics
+## The Mechanics
 
 Motives come from simulated social events:
 

@@ -8,7 +8,7 @@ libs' docs/repos (cited at the end).
 
 ## Goal
 Let a player change the mod's knobs from **inside the game**, not by hand-editing
-`BepInEx/config/com.benhirsh.sodmotives.cfg` and restarting. Ideally every existing `ConfigEntry` is
+`BepInEx/config/com.opi.sodmotives.cfg` and restarting. Ideally every existing `ConfigEntry` is
 menu-exposed before Phase D (per the plan). Decide **dependency vs roll-our-own**, then wire it.
 
 ---

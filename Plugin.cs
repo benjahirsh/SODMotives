@@ -13,10 +13,10 @@ namespace SODMotives
     // It intentionally changes NOTHING in the game yet — this is how we lock the
     // design to reality (call order, whether victim depends on murderer, and the
     // actual range/meaning of Acquaintance.like) before writing the override.
-    [BepInPlugin(Guid, "SOD Motives", "1.3.3")]
+    [BepInPlugin(Guid, "SOD Motives", "1.3.7")]
     public class MotivesPlugin : BasePlugin
     {
-        public const string Guid = "com.benhirsh.sodmotives";
+        public const string Guid = "com.opi.sodmotives";
         internal static new ManualLogSource Log;
         private Harmony _harmony;
 
@@ -30,7 +30,7 @@ namespace SODMotives
             Log = base.Log;
             Banner();
 
-            // Config (BepInEx/config/com.benhirsh.sodmotives.cfg). Every knob is bound via BindApply so it
+            // Config (BepInEx/config/com.opi.sodmotives.cfg). Every knob is bound via BindApply so it
             // stays LIVE — re-applied into its static field on any change (in-game overlay / .cfg reload).
             // An edit takes effect on the NEXT case; the [Feud] seeding caps take effect on the next NEW GAME.
 

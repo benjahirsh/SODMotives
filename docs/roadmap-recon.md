@@ -40,7 +40,7 @@ WeightExponent/SameTypePenalty}`; `WorkplaceSim.{Enable, MaxSuspects, PromotionS
 5. **(Release-cleanup tail, optional now)** flip testing defaults at the release milestone:
    `Clues/ObviousTestNames` true→false, `Flavour/VanillaCaseEvery` 0→3/4; delete the four
    legacy binds the victim-centric selector no longer reads.
-6. **Verify** the generated `com.benhirsh.sodmotives.cfg` gains the new sections with correct
+6. **Verify** the generated `com.opi.sodmotives.cfg` gains the new sections with correct
    defaults and values flow bind→static.
 
 `Gossip.cs` has no numeric knobs (hardcoded `ConnectionType` audiences — not tuning material).

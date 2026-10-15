@@ -11,7 +11,7 @@ Fixes two user-reported bugs on shipped motivated sniper cases:
 The DLL is already built + deployed to `BepInEx/plugins/SODMotives`. If you rebuild, do it with the game CLOSED.
 
 ## Config to set before testing
-In `BepInEx/config/com.benhirsh.sodmotives.cfg` (BindApply keeps an existing value, so verify, don't assume):
+In `BepInEx/config/com.opi.sodmotives.cfg` (BindApply keeps an existing value, so verify, don't assume):
 - `[Motive Mix] MotivatedSniperShare = 1`  (every sniper motivated - the shipped default)
 - `[Troubleshooting] MotiveCaseWatchdog = true`  (renamed from UnstickStalledMurders; gates the whole motive-case watchdog incl. the recovery - must be on)
 - `[Debug] EnableDebugKeys = true`  (turns on the `[sniper*]` / `[recover]` logging and the F-keys)

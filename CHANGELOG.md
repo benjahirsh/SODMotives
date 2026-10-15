@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.3.7
+Readme update. Your settings will reset to defaults on this update because the config file was renamed; re-apply any changes in the overlay (` key) if you had customised them.
+
 ## 1.3.6
 Readme update.
 

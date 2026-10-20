@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.3.8
+Fix: slowdown after loading a save. Mod no longer rescans the whole city every frame trying to relocate an injected clue.
+
 ## 1.3.7
 Readme update. Your settings will reset to defaults on this update because the config file was renamed; re-apply any changes in the overlay (` key) if you had customised them.
 

@@ -82,6 +82,18 @@ namespace SODMotives
         private static int _replayAttempts;
         private static readonly HashSet<int> _replayedIds = new HashSet<int>();
 
+        // Fallback interactable lookup, built from interactableDirectory and reused across ticks. A note whose
+        // host interactable got a new id at load is never found; without a cache that miss triggered a full
+        // ~214k-entry directory scan EVERY frame, each element access allocating an interop wrapper (~23 MB/
+        // frame of garbage -> GC thrash -> ~1 fps for minutes). Rebuilt only while the directory is still
+        // growing (interactables streaming in), throttled; once the count settles we never rebuild again.
+        private static Dictionary<int, Interactable> _interIndex;
+        private static int _interIndexDirCount = -1;
+        private static int _interIndexBuiltAttempt = -999;
+        // Wall-clock replay deadline (frame-rate independent): a never-found note can't hold the poll for
+        // minutes when fps dips. Set when the replay is armed.
+        private static float _replayDeadline;
+
         // Pass-2 gate: true from the LoadSaveState hook until OnStartGame consumes it. Lets the
         // OnStartGame seed skip itself on a load. NOT cleared by the replay tick, so it's still set
         // whichever order (tick-import vs OnStartGame) happens to run first.
@@ -453,6 +465,8 @@ namespace SODMotives
             _replayAttempts = 0;
             _replayedIds.Clear();
             _pendingEmailResync.Clear();
+            _interIndex = null; _interIndexDirCount = -1; _interIndexBuiltAttempt = -999;
+            _replayDeadline = Time.realtimeSinceStartup + 30f;   // give up ~30 s after load (wall clock, not frames)
             _loadInProgress = true;     // gate: OnStartGame will skip its re-seed for this load
             _eventsImported = false;
             _sideRead = false;
@@ -493,7 +507,14 @@ namespace SODMotives
         {
             if (!_replayPending) return;
             _replayAttempts++;
-            if (_replayAttempts > 900) { _replayPending = false; MotivesPlugin.Log.LogWarning("[SODMotives] persist: replay timed out (some notes not restored)."); return; }
+            // Give up on a wall-clock deadline (frame-rate independent). A note whose host id shifted at load is
+            // never found; the old 900-FRAME cap became ~15 min when the fallback scan dropped fps to ~1.
+            if (Time.realtimeSinceStartup > _replayDeadline || _replayAttempts > 5000)
+            {
+                _replayPending = false; _interIndex = null; _interIndexDirCount = -1;
+                MotivesPlugin.Log.LogWarning("[SODMotives] persist: replay timed out (some notes not restored).");
+                return;
+            }
 
             var city = CityData.Instance;
             if (city == null) return;
@@ -562,7 +583,7 @@ namespace SODMotives
             {
                 if (_pendingEmailResync.Count == 0)
                 {
-                    _replayPending = false;
+                    _replayPending = false; _interIndex = null; _interIndexDirCount = -1;
                     MotivesPlugin.Log.LogInfo("[SODMotives] persist: replay complete (events+maps+emails; no note records).");
                 }
                 return;   // else keep pending: an email thread is still streaming in — retry next frame
@@ -596,8 +617,8 @@ namespace SODMotives
 
             if (missing == 0 && _pendingEmailResync.Count == 0)
             {
-                _replayPending = false;
-                MotivesPlugin.Log.LogInfo($"[SODMotives] persist: replay complete — {done} note(s) restored (+ events+maps+emails).");
+                _replayPending = false; _interIndex = null; _interIndexDirCount = -1;
+                MotivesPlugin.Log.LogInfo($"[SODMotives] persist: replay complete, {done} note(s) restored (+ events+maps+emails).");
             }
             // else keep pending: interactables / email threads still streaming in — retry next frame (until timeout).
         }
@@ -720,15 +741,30 @@ namespace SODMotives
         private static T ParseEnum<T>(string s, T dflt) where T : struct
             => Enum.TryParse<T>(s, out var v) ? v : dflt;
 
+        // id -> Interactable fallback lookup (see _interIndex). Builds the index once from
+        // interactableDirectory and reuses it, instead of re-scanning ~214k interop objects every frame.
         private static Interactable FindInteractable(CityData city, int id)
         {
             try
             {
                 var dir = city.interactableDirectory;
-                if (dir != null) for (int i = 0; i < dir.Count; i++) { var it = dir[i]; if (it != null && it.id == id) return it; }
+                if (dir == null) return null;
+                // Refresh only while the directory is still growing (interactables streaming in after a load),
+                // throttled to at most once per 30 ticks so a run of misses can't rebuild every frame. Once the
+                // count settles the index is reused and the expensive scan never runs again.
+                if (_interIndex == null ||
+                    (dir.Count != _interIndexDirCount && _replayAttempts - _interIndexBuiltAttempt >= 30))
+                {
+                    var idx = new Dictionary<int, Interactable>(dir.Count);
+                    for (int i = 0; i < dir.Count; i++) { var it = dir[i]; if (it != null) idx[it.id] = it; }
+                    _interIndex = idx;
+                    _interIndexDirCount = dir.Count;
+                    _interIndexBuiltAttempt = _replayAttempts;
+                }
+                Interactable found;
+                return _interIndex.TryGetValue(id, out found) ? found : null;
             }
-            catch { }
-            return null;
+            catch { return null; }
         }
 
         // ---- MonoBehaviour host: drives the replay poll (DontDestroyOnLoad so it's alive across loads) ----

@@ -13,7 +13,7 @@ namespace SODMotives
     // It intentionally changes NOTHING in the game yet — this is how we lock the
     // design to reality (call order, whether victim depends on murderer, and the
     // actual range/meaning of Acquaintance.like) before writing the override.
-    [BepInPlugin(Guid, "SOD Motives", "1.3.8")]
+    [BepInPlugin(Guid, "SOD Motives", "1.3.9")]
     public class MotivesPlugin : BasePlugin
     {
         public const string Guid = "com.opi.sodmotives";
@@ -1340,6 +1340,50 @@ namespace SODMotives
             try { if (newLoc != null) site = newLoc.name; } catch { site = "<err>"; }
             MotivesPlugin.Log.LogInfo($"[SODMotives] [flow] SetMurderLocation -> {site}");
         }
+    }
+
+    // ===== Keep the crime-scene objective (and other death-location readers) on the staged scene =====
+    // The "Explore Reported Crime Scene" objective pins to GameplayController.NewMurderCaseNotify(newLocation),
+    // whose newLocation comes from victim.death.GetDeathLocation() -- the gameLocation of the victim's node AT THE
+    // MOMENT OF DEATH. For a motivated murder whose killer is the victim's NEIGHBOUR, the victim is killed in/at
+    // the killer's adjacent home, so the death-node location is the KILLER's home, while the body and the
+    // crime-scene tape are staged at murder.location (the victim's site, preserved by Patch_PreserveSceneStatus).
+    // The pin and its "...: <address>" text then point at and NAME the killer's home -- wrong, and a free spoiler.
+    // Vanilla's roaming serial killer always kills at murder.location, so death-node == murder.location there and
+    // this never fires. For OUR overridden victims only, report the murder's own location as the death location so
+    // the objective (and any other death-location reader) agrees with the staged scene.
+    [HarmonyPatch(typeof(Human.Death), nameof(Human.Death.GetDeathLocation))]
+    internal static class Patch_DeathLocationToScene
+    {
+        [ThreadStatic] private static bool _reentry;   // GetMurder/GetVictim must never recurse back through us
+        private static readonly HashSet<int> _pinLogged = new HashSet<int>();   // log the redirect once per victim
+
+        static void Postfix(Human.Death __instance, ref NewGameLocation __result)
+        {
+            if (_reentry || __instance == null) return;
+            try
+            {
+                _reentry = true;
+                Human v = null; try { v = __instance.GetVictim(); } catch { }
+                if (v == null || !MurderSelector.OverriddenVictimIds.Contains(v.humanID)) return;   // vanilla untouched
+                MurderController.Murder mu = null; try { mu = __instance.GetMurder(); } catch { }
+                NewGameLocation loc = null; try { loc = mu != null ? mu.location : null; } catch { }
+                if (loc == null) return;
+                if (__result == null || __result.Pointer != loc.Pointer)
+                {
+                    if (_pinLogged.Add(v.humanID))
+                    {
+                        string from = "<null>"; try { from = __result != null ? __result.name : "<null>"; } catch { }
+                        string to = "?"; try { to = loc.name; } catch { }
+                        MotivesPlugin.Log.LogInfo($"[SODMotives] crime-scene pin: redirected {MotivesPlugin.Name(v)}'s death location from '{from}' (death node) to '{to}' (staged scene) so the 'Explore Reported Crime Scene' objective points at the body, not the killer's home.");
+                    }
+                    __result = loc;   // pin the staged scene, not the death node
+                }
+            }
+            catch { }
+            finally { _reentry = false; }
+        }
+
     }
 
     // ===== Inject motive clues once the murder is actually underway =====

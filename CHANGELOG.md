@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.3.9
+Fix: corrected the reported crime scene location.
+
 ## 1.3.8
 Fix: slowdown after loading a save. Mod no longer rescans the whole city every frame trying to relocate an injected clue.
 
